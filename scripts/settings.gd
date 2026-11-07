@@ -382,6 +382,60 @@ func apply_safe(c: Control) -> void:
 	c.offset_bottom = -m[3]
 
 
+# ---------- Подсказки управления: каждая версия показывает только своё ----------
+
+signal input_mode_changed(mode: String)
+var _pad_used := false
+
+## «touch» — телефон/планшет/iPhone, «pad» — Steam Deck или геймпад на ПК, «kb» — клавиатура и мышь.
+func input_mode() -> String:
+	if is_mobile():
+		return "touch"
+	if is_deck() or _pad_used:
+		return "pad"
+	return "kb"
+
+
+func _track_input_mode(event: InputEvent) -> void:
+	if is_mobile():
+		return
+	var pad := _pad_used
+	if event is InputEventJoypadButton and event.pressed:
+		pad = true
+	elif event is InputEventJoypadMotion and absf(event.axis_value) > 0.5:
+		pad = true
+	elif (event is InputEventKey and event.pressed) or (event is InputEventMouseButton and event.pressed):
+		pad = is_deck() and event is InputEventMouseButton   # на Deck тачскрин — не повод показывать клавиатуру
+	if pad != _pad_used:
+		_pad_used = pad
+		input_mode_changed.emit(input_mode())
+
+
+const HINTS := {
+	"back": {"kb": "ESC", "pad": "B", "touch": ""},
+	"pause": {"kb": "ESC", "pad": "START", "touch": "II"},
+	"ability": {"kb": "ПРОБЕЛ", "pad": "A", "touch": "2× ТАП"},
+	"stats": {"kb": "TAB", "pad": "SELECT", "touch": "≡"},
+	"interact": {"kb": "E", "pad": "A", "touch": "ВОЙТИ"},
+	"move": {"kb": "WASD", "pad": "левый стик", "touch": "касание и сдвиг пальца"},
+	"pick": {"kb": "клавиши 1, 2, 3", "pad": "крестовина и A", "touch": "коснитесь карточки"},
+	"accept": {"kb": "ENTER", "pad": "A", "touch": ""},
+}
+
+
+## Название кнопки для действия в текущей версии управления («» — кнопки нет).
+func key(action: String) -> String:
+	return str(HINTS.get(action, {}).get(input_mode(), ""))
+
+
+## «ЗАКРЫТЬ  [ESC]» на ПК, «ЗАКРЫТЬ  [B]» на Deck, просто «ЗАКРЫТЬ» на телефоне.
+func with_key(text: String, action: String) -> String:
+	var k := key(action)
+	if k == "" or input_mode() == "touch":
+		return text
+	return "%s  [%s]" % [text, k]
+
+
 ## Вертикальный ли сейчас экран
 func is_portrait() -> bool:
 	var vs := get_window().get_visible_rect().size
@@ -476,6 +530,7 @@ func set_api(new_api: String) -> String:
 
 ## Управление для всей игры (меню, убежище, забег).
 func _input(event: InputEvent) -> void:
+	_track_input_mode(event)
 	preload("res://scripts/ui_focus.gd").on_input(event)
 
 

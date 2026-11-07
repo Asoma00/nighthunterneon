@@ -14,7 +14,7 @@ const GOLD := Color(1.0, 0.8, 0.3)
 const TIPS := [
 	"Два оружия 10 уровня можно слить в эволюцию — один раз за забег.",
 	"Столбы света в бою указывают на алтари и сундуки.",
-	"TAB (≡ на телефоне) показывает все текущие характеристики.",
+	"{stats} — все текущие характеристики героя и оружия.",
 	"Алтари мобов дают задания: выполните их ради усилений.",
 	"Боссы неуязвимы при смене фазы — используйте паузу, чтобы отойти.",
 	"Чем дольше длится забег, тем сильнее враги и их свойства.",
@@ -153,7 +153,8 @@ func go(path: String) -> void:
 	_t_go = Time.get_ticks_msec()
 	var tree := get_tree()
 	_title.text = {"res://hub.tscn": "НЕОНОВОЕ УБЕЖИЩЕ", "res://main.tscn": "В БОЙ", "res://menu.tscn": "ГЛАВНОЕ МЕНЮ"}.get(path, "ЗАГРУЗКА")
-	_tip.text = "Совет: " + TIPS[randi() % TIPS.size()]
+	var stats_k: String = Settings.key("stats")
+	_tip.text = "Совет: " + str(TIPS[randi() % TIPS.size()]).replace("{stats}", ("Кнопка " + stats_k) if Settings.input_mode() == "touch" else stats_k)
 	_setp(0.0, "Загрузка сцены…")
 	_root.visible = true
 	_root.modulate.a = 0.0

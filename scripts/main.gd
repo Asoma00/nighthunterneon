@@ -1774,7 +1774,7 @@ func _show_next_level_up() -> void:
 	_chooser = _choosers[0]
 	var ch := _build_choices(_chooser)
 	var title := _who(_chooser) + "ПОВЫШЕНИЕ УРОВНЯ"
-	var sub := ("выберите улучшение  •  клавиши 1, 2, 3" if not coop else "выбирает игрок %d  •  клавиши 1, 2, 3" % (_chooser.pid + 1))
+	var sub := ("выберите улучшение  •  " + Settings.key("pick") if not coop else "выбирает игрок %d" % (_chooser.pid + 1))
 	if net_mode == "host":
 		_net_offer(ch, title, sub)
 		return

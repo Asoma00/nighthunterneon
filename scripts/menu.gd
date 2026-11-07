@@ -61,6 +61,17 @@ func _ready() -> void:
 
 
 var _ver_label: Label
+var _hint_l: Label
+
+
+## Подсказка управления в главном меню — только для своего устройства
+func _controls_hint() -> String:
+	match Settings.input_mode():
+		"touch":
+			return "Касание и сдвиг пальца — движение   •   двойное касание — способность   •   II — пауза   •   ≡ — характеристики"
+		"pad":
+			return "Левый стик — движение   •   A — способность   •   START — пауза   •   SELECT — характеристики   •   B — назад"
+	return "WASD — движение   •   ПРОБЕЛ — способность   •   ESC — пауза   •   TAB — характеристики"
 
 
 func _on_upd_status(_t := "") -> void:
@@ -361,13 +372,11 @@ func _build_main_page() -> void:
 	quit.pressed.connect(func(): get_tree().quit())
 	v.add_child(quit)
 	_add_profile_badge()
-	var hint_text := "WASD / стик — движение   •   ПРОБЕЛ / A — способность   •   ESC / START — пауза"
-	if Settings.is_deck():
-		hint_text = "Левый стик — движение   •   A — способность   •   START — пауза   •   SELECT — характеристики"
 	if Settings.is_mobile():
-		hint_text = "Касание и сдвиг пальца — движение   •   двойное касание — способность   •   II — пауза   •   ≡ — статы"
 		quit.visible = false
-	var hint := _label(hint_text, 15, Color(0.7, 0.7, 0.85))
+	var hint := _label(_controls_hint(), 15, Color(0.7, 0.7, 0.85))
+	_hint_l = hint
+	Settings.input_mode_changed.connect(func(_m): if is_instance_valid(_hint_l): _hint_l.text = _controls_hint())
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.custom_minimum_size = Vector2(minf(1100.0, get_viewport().get_visible_rect().size.x - 60.0), 0)
@@ -919,7 +928,7 @@ func _coop_refresh(i: int) -> void:
 	sl["name_l"].add_theme_color_override("font_shadow_color", Color(c["color"], 0.8))
 	sl["info_l"].text = "%s\nОружие: %s\n%s" % [c["title"], Data.WEAPONS[c["weapon"]]["name"], c["active"]]
 	if not joined:
-		sl["state_l"].text = "Нажмите ПРОБЕЛ, ENTER\nили A на геймпаде"
+		sl["state_l"].text = "Нажмите A на геймпаде" if Settings.input_mode() != "kb" else "Нажмите ПРОБЕЛ, ENTER\nили A на геймпаде"
 	elif sl["ready"]:
 		sl["state_l"].text = "✓ ГОТОВ"
 	else:

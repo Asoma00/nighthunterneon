@@ -36,7 +36,7 @@ static func ability_hint(d: int) -> String:
 		KB_RIGHT:
 			return "ENTER"
 		ANY:
-			return "ПРОБЕЛ / A"
+			return Settings.key("ability")
 	return "A / RB"
 
 

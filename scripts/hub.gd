@@ -169,6 +169,26 @@ var _title_l: Label
 var _hint_l: Label
 
 
+## Префикс подсказки у здания: «[E]  » / «[A]  »; на телефоне — кнопка «ВОЙТИ» на экране
+func _pk() -> String:
+	return "" if Settings.input_mode() == "touch" else "[%s]  " % Settings.key("interact")
+
+
+## Нижняя подсказка управления в убежище — под текущее устройство
+func _hint_text() -> String:
+	match Settings.input_mode():
+		"touch":
+			return "Касание и сдвиг пальца — ходить   •   ВОЙТИ — открыть здание   •   II — пауза"
+		"pad":
+			return "Левый стик — ходить   •   A — открыть здание   •   START — пауза   •   B — назад"
+	return "WASD — ходить   •   E — открыть здание   •   ESC — пауза / назад"
+
+
+func _on_input_mode(_m: String) -> void:
+	if _hint_l:
+		_hint_l.text = _hint_text()
+
+
 ## Верхние надписи: на вертикальном экране — под значками, по центру
 var _safe_root: Control
 
@@ -1053,12 +1073,12 @@ func _update_interaction() -> void:
 	_near = best
 	_prompt.visible = best != ""
 	if best == "portal":
-		_prompt.text = "[E]  Портал — начать вылазку"
+		_prompt.text = _pk() + "Портал — начать вылазку"
 	elif best == "library":
-		_prompt.text = "[E]  Библиотека — всё об открытом"
+		_prompt.text = _pk() + "Библиотека — всё об открытом"
 	elif best != "":
 		var lvl := _lvl(best)
-		_prompt.text = "[E]  %s  %s" % [Meta.BUILDINGS[best]["name"], ("— построить" if lvl == 0 else "(ур. %d)" % lvl)]
+		_prompt.text = _pk() + "%s  %s" % [Meta.BUILDINGS[best]["name"], ("— построить" if lvl == 0 else "(ур. %d)" % lvl)]
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1203,7 +1223,7 @@ func _build_hud() -> void:
 	root.add_child(_hero_label)
 	_update_hero_label()
 
-	var hint := _label("Касание и сдвиг пальца — ходить   •   ВОЙТИ — открыть здание   •   II — пауза" if Settings.is_mobile() else "WASD — ходить   •   E — взаимодействовать   •   ESC — в меню", 15, Color(0.75, 0.75, 0.9))
+	var hint := _label(_hint_text(), 15, Color(0.75, 0.75, 0.9))
 	hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.offset_left = -400
@@ -1212,6 +1232,7 @@ func _build_hud() -> void:
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(hint)
 	_hint_l = hint
+	Settings.input_mode_changed.connect(_on_input_mode)
 	_layout_top()
 
 	_prompt = _label("", 22, Color.WHITE, Color(CYAN, 0.7))
@@ -1462,7 +1483,7 @@ func _centered(c: Control) -> Control:
 
 
 func _add_close() -> void:
-	var close := _button("ЗАКРЫТЬ  [ESC]", Color(0.6, 0.6, 0.75))
+	var close := _button(Settings.with_key("ЗАКРЫТЬ", "back"), Color(0.6, 0.6, 0.75))
 	close.pressed.connect(func():
 		Sound.play("click")
 		_close_panel())
@@ -1646,7 +1667,7 @@ func _fill_tree_panel(id: String) -> void:
 		up.custom_minimum_size.x = 300 if narrow else 340
 		up.pressed.connect(func(): _do_upgrade(id))
 		foot.add_child(up)
-	var close := _button("ЗАКРЫТЬ" if narrow else "ЗАКРЫТЬ  [ESC]", Color(0.6, 0.6, 0.75))
+	var close := _button("ЗАКРЫТЬ" if narrow else Settings.with_key("ЗАКРЫТЬ", "back"), Color(0.6, 0.6, 0.75))
 	close.custom_minimum_size.x = 220 if narrow else 260
 	close.pressed.connect(func():
 		Sound.play("click")

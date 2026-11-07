@@ -225,7 +225,7 @@ func _update_stats_panel(delta: float) -> void:
 		v.add_theme_constant_override("separation", 10)
 		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sc.add_child(v)
-		var t := _label("ХАРАКТЕРИСТИКИ  •  TAB / SELECT" if not Settings.is_mobile() else "ХАРАКТЕРИСТИКИ  •  ≡ — закрыть", 22, Color.WHITE, Color(CYAN, 0.7))
+		var t := _label("ХАРАКТЕРИСТИКИ  •  %s" % ("≡ — закрыть" if Settings.input_mode() == "touch" else "удерживайте " + Settings.key("stats")), 22, Color.WHITE, Color(CYAN, 0.7))
 		t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		v.add_child(t)
@@ -703,12 +703,10 @@ func _mod_color(id: String) -> Color:
 
 
 func _ab_hint(i: int) -> String:
-	if Settings.is_mobile() and main.net_mode == "" and not main.coop:
-		return "2× ТАП"
 	if main.net_mode != "":
-		return "ПРОБЕЛ / A" if i == 0 else "ИГРОК %d" % (_other().pid + 1)
+		return Settings.key("ability") if i == 0 else "ИГРОК %d" % (_other().pid + 1)
 	if not main.coop:
-		return "ПРОБЕЛ / A"
+		return Settings.key("ability")
 	return DevInput.ability_hint(Data.coop_devices[i])
 
 
@@ -804,7 +802,7 @@ func _build_level_up() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
 	_lvl_title = title
-	var sub := _label("выберите модуль  •  клавиши 1, 2, 3", 16, Color(0.75, 0.7, 0.9))
+	var sub := _label("выберите модуль  •  " + Settings.key("pick"), 16, Color(0.75, 0.7, 0.9))
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lvl_sub = sub
 	v.add_child(sub)
@@ -920,7 +918,9 @@ func _card(index: int, ch: Dictionary) -> Button:
 	return btn
 
 
-func show_level_up(choices: Array, title := "ПОВЫШЕНИЕ УРОВНЯ", sub := "выберите модуль  •  клавиши 1, 2, 3") -> void:
+func show_level_up(choices: Array, title := "ПОВЫШЕНИЕ УРОВНЯ", sub := "") -> void:
+	if sub == "":
+		sub = "выберите модуль  •  " + Settings.key("pick")
 	_lvl_t = 0.0
 	_last_choices = choices
 	_last_lvl_title = title
