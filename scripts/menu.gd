@@ -365,6 +365,13 @@ func _build_main_page() -> void:
 		Sound.play("click")
 		_show("saves"))
 	v.add_child(saves)
+	# ПК / Steam Deck / геймпад: профиль и ник — обычной кнопкой (значок в углу геймпадом не выбрать)
+	if not Settings.is_mobile():
+		var prof := _button("ПРОФИЛЬ И НИК", Color(1.0, 0.8, 0.3))
+		prof.pressed.connect(func():
+			Sound.play("click")
+			_show("profile"))
+		v.add_child(prof)
 	var settings := _button("НАСТРОЙКИ", MAGENTA)
 	settings.pressed.connect(func():
 		Sound.play("click")
@@ -664,6 +671,7 @@ func _refresh_badge() -> void:
 # ---------- Профиль игрока: ник и статистика ----------
 
 var _nick_edit: LineEdit
+var _nick_btn: Button
 var _stats_grid: GridContainer
 var _prof_hero: Control
 
@@ -697,10 +705,22 @@ func _build_profile_page() -> void:
 		Meta.save()
 		_refresh_badge())
 	nick_row.add_child(_nick_edit)
-	_vk_field(_nick_edit, "НИК ОХОТНИКА", "", func(t: String):
-		_nick_edit.text = t
-		_nick_edit.text_changed.emit(t))
-	var hint := _label("Ник виден напарнику над героем в сетевой игре", 14, Color(0.7, 0.7, 0.85))
+	if not Settings.is_mobile():
+		# Вместо поля ввода — кнопка: геймпад сразу на ней, A открывает экранную клавиатуру
+		_nick_edit.visible = false
+		_nick_btn = _button("", CYAN, 380)
+		_nick_btn.custom_minimum_size.y = 50
+		_nick_btn.pressed.connect(func():
+			Sound.play("click")
+			var start := Meta.nickname if Meta.nickname != "Охотник" else ""
+			var vk = preload("res://scripts/vkeyboard.gd").open(self, "НИК ОХОТНИКА", start, 16)
+			vk.done.connect(func(t: String):
+				_nick_edit.text = t
+				_nick_edit.text_changed.emit(t)
+				_nick_btn.text = "%s   ✎" % Meta.nickname)
+			vk.tree_exited.connect(func(): if is_instance_valid(_nick_btn): _nick_btn.grab_focus()))
+		nick_row.add_child(_nick_btn)
+	var hint := _label("Ник виден напарнику над героем в сетевой игре" if Settings.is_mobile() else "Выберите ник и нажмите A (или кликните), чтобы изменить. Ник виден напарнику в сетевой игре", 14, Color(0.7, 0.7, 0.85))
 	box.add_child(hint)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 30)
@@ -773,6 +793,9 @@ func _profile_back() -> void:
 func _fill_profile() -> void:
 	Meta.ensure_loaded()
 	_nick_edit.text = Meta.nickname
+	if _nick_btn:
+		_nick_btn.text = "%s   ✎" % Meta.nickname
+		_nick_btn.grab_focus.call_deferred()
 	for c in _stats_grid.get_children():
 		c.queue_free()
 	for c in _prof_hero.get_children():
