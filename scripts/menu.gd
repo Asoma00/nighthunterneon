@@ -695,19 +695,9 @@ func _build_profile_page() -> void:
 		Meta.save()
 		_refresh_badge())
 	nick_row.add_child(_nick_edit)
-	# Геймпад / Steam Deck: экранная клавиатура (на телефоне — системная)
-	if Settings.input_mode() != "touch":
-		var kb := _button("⌨ ВВЕСТИ", CYAN, 150)
-		kb.custom_minimum_size.y = 44
-		kb.pressed.connect(func():
-			Sound.play("click")
-			var vk = preload("res://scripts/vkeyboard.gd").open(self, "НИК ОХОТНИКА", Meta.nickname if Meta.nickname != "Охотник" else "", 16)
-			vk.done.connect(func(t: String):
-				_nick_edit.text = t
-				_nick_edit.text_changed.emit(t)
-				kb.grab_focus())
-			vk.tree_exited.connect(func(): if is_instance_valid(kb): kb.grab_focus()))
-		nick_row.add_child(kb)
+	_vk_field(_nick_edit, "НИК ОХОТНИКА", "", func(t: String):
+		_nick_edit.text = t
+		_nick_edit.text_changed.emit(t))
 	var hint := _label("Ник виден напарнику над героем в сетевой игре", 14, Color(0.7, 0.7, 0.85))
 	box.add_child(hint)
 	var row := HBoxContainer.new()
@@ -726,6 +716,45 @@ func _build_profile_page() -> void:
 		Sound.play("click")
 		_profile_back())
 	v.add_child(back)
+
+
+## Поле ввода на ПК / Steam Deck / геймпаде: нажатие (мышь, тачскрин, A/Enter) открывает
+## экранную клавиатуру — она же принимает и обычную клавиатуру. На телефоне — системная клавиатура.
+func _vk_field(edit: LineEdit, title: String, allowed: String, on_done: Callable) -> void:
+	if Settings.is_mobile():
+		return
+	edit.editable = false
+	edit.focus_mode = Control.FOCUS_ALL
+	edit.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	edit.add_theme_color_override("font_uneditable_color", Color.WHITE)
+	var foc := StyleBoxFlat.new()
+	foc.bg_color = Color(0, 0, 0, 0)
+	foc.draw_center = false
+	foc.border_color = CYAN
+	foc.set_border_width_all(3)
+	foc.set_corner_radius_all(4)
+	edit.add_theme_stylebox_override("focus", foc)
+	var opening := [false]
+	var open := func():
+		if opening[0]:
+			return
+		opening[0] = true
+		Sound.play("click")
+		var start := edit.text
+		if edit == _nick_edit and start == "Охотник":
+			start = ""
+		var vk = preload("res://scripts/vkeyboard.gd").open(self, title, start, edit.max_length if edit.max_length > 0 else 16, allowed)
+		vk.done.connect(on_done)
+		vk.tree_exited.connect(func():
+			opening[0] = false
+			if is_instance_valid(edit):
+				edit.grab_focus())
+	edit.gui_input.connect(func(ev: InputEvent):
+		var hit: bool = (ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT) \
+			or (ev is InputEventScreenTouch and ev.pressed) or ev.is_action_pressed("ui_accept")
+		if hit:
+			edit.accept_event()
+			open.call())
 
 
 ## Назад из профиля: туда, откуда пришли (из убежища — обратно в убежище).
@@ -1078,14 +1107,7 @@ func _build_net_page() -> void:
 	_net_ip.custom_minimum_size = Vector2(300, 52)
 	_net_ip.add_theme_font_size_override("font_size", 20)
 	row.add_child(_net_ip)
-	if Settings.input_mode() != "touch":
-		var ipkb := _button("⌨", CYAN, 64)
-		ipkb.pressed.connect(func():
-			Sound.play("click")
-			var vk = preload("res://scripts/vkeyboard.gd").open(self, "IP ХОСТА", _net_ip.text, 15, "0123456789.")
-			vk.done.connect(func(t: String): _net_ip.text = t)
-			vk.tree_exited.connect(func(): if is_instance_valid(ipkb): ipkb.grab_focus()))
-		row.add_child(ipkb)
+	_vk_field(_net_ip, "IP ХОСТА", "0123456789.", func(t: String): _net_ip.text = t)
 	var join_btn := _button("ПОДКЛЮЧИТЬСЯ", CYAN, 260)
 	join_btn.pressed.connect(func():
 		Sound.play("click")

@@ -81,7 +81,8 @@ func _ready() -> void:
 	_rows_box.add_theme_constant_override("separation", 6)
 	v.add_child(_rows_box)
 	var hint := Label.new()
-	hint.text = "A — нажать  •  B — закрыть  •  X — стереть  •  Y — пробел"
+	hint.text = "A — нажать  •  B — закрыть  •  X — стереть  •  Y — пробел  •  START — готово" if Settings.input_mode() != "kb" \
+		else "Печатайте на клавиатуре или нажимайте клавиши мышью  •  Enter — готово  •  Esc — закрыть"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.add_theme_color_override("font_color", Color(0.7, 0.7, 0.85))
@@ -186,8 +187,33 @@ func _finish() -> void:
 	queue_free()
 
 
+var _phys := false   # набирают на физической клавиатуре — Enter = «Готово»
+
+
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed:
+		var kc: int = event.keycode
+		if kc == KEY_BACKSPACE:
+			get_viewport().set_input_as_handled()
+			_backspace()
+			return
+		if (kc == KEY_ENTER or kc == KEY_KP_ENTER) and _phys:
+			get_viewport().set_input_as_handled()
+			_finish()
+			return
+		if kc == KEY_ESCAPE:
+			get_viewport().set_input_as_handled()
+			queue_free()
+			return
+		var u: int = event.unicode
+		if u >= 32 and not event.ctrl_pressed and not event.alt_pressed:
+			get_viewport().set_input_as_handled()
+			_phys = true
+			_type(char(u))
+			return
+		return
 	if event is InputEventJoypadButton and event.pressed:
+		_phys = false
 		match event.button_index:
 			JOY_BUTTON_B:
 				get_viewport().set_input_as_handled()

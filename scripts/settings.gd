@@ -124,11 +124,38 @@ func desktop_enemy_cap() -> int:
 
 
 ## Steam Deck (Steam выставляет SteamDeck=1; в режиме рабочего стола — SteamOS)
+var _deck_cache := -1
+
+## Steam Deck: проверяем всё, что видно и из контейнера Steam (pressure-vessel), и из Proton.
 func is_deck() -> bool:
-	if OS.get_environment("SteamDeck") == "1":
+	if _deck_cache < 0:
+		_deck_cache = 1 if _detect_deck() else 0
+	return _deck_cache == 1
+
+
+func _detect_deck() -> bool:
+	if is_mobile():
+		return false
+	for e in ["SteamDeck", "SteamOS", "STEAM_DECK"]:
+		if OS.get_environment(e) == "1":
+			return true
+	var pre: Array = [""] if OS.get_name() != "Windows" else ["Z:"]   # Proton: корень Linux = диск Z:
+	for p in pre:
+		for f in ["/etc/os-release", "/run/host/os-release"]:
+			if FileAccess.file_exists(p + f) and FileAccess.get_file_as_string(p + f).to_lower().contains("steamos"):
+				return true
+		var prod: String = p + "/sys/devices/virtual/dmi/id/product_name"
+		if FileAccess.file_exists(prod):
+			var n := FileAccess.get_file_as_string(prod).strip_edges().to_lower()
+			if n in ["jupiter", "galileo"]:
+				return true
+	for j in Input.get_connected_joypads():
+		if Input.get_joy_name(j).to_lower().contains("steam deck"):
+			return true
+	# Экран Deck 1280×800 + подключён геймпад (встроенное управление через Steam Input)
+	var scr := DisplayServer.screen_get_size()
+	if scr == Vector2i(1280, 800) and Input.get_connected_joypads().size() > 0:
 		return true
-	if OS.get_name() == "Linux" and FileAccess.file_exists("/etc/os-release"):
-		return FileAccess.get_file_as_string("/etc/os-release").to_lower().contains("steamos")
 	return false
 
 
@@ -156,6 +183,13 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_setup_input()
 	get_window().size_changed.connect(_on_window_resized)
+	# Геймпад подключён с самого начала — сразу подсказки для геймпада
+	if not is_mobile() and Input.get_connected_joypads().size() > 0:
+		_pad_used = true
+	Input.joy_connection_changed.connect(func(_d: int, connected: bool):
+		if connected and not is_mobile() and not _pad_used:
+			_pad_used = true
+			input_mode_changed.emit(input_mode()))
 	if is_deck() and not FileAccess.file_exists(PATH):
 		# Steam Deck: экран 1280×800, полный экран, средний профиль, 60 кадров
 		mode = "fullscreen"
@@ -485,8 +519,11 @@ func _track_input_mode(event: InputEvent) -> void:
 		pad = true
 	elif event is InputEventJoypadMotion and absf(event.axis_value) > 0.5:
 		pad = true
-	elif (event is InputEventKey and event.pressed) or (event is InputEventMouseButton and event.pressed):
-		pad = is_deck() and event is InputEventMouseButton   # на Deck тачскрин — не повод показывать клавиатуру
+	elif event is InputEventKey and event.pressed and not event.echo:
+		pad = false
+	elif event is InputEventMouseButton and event.pressed:
+		# Тачскрин/тачпады Deck дают «мышь» — это не повод показывать подсказки клавиатуры
+		pad = _pad_used if (is_deck() or Input.get_connected_joypads().size() > 0) else false
 	if pad != _pad_used:
 		_pad_used = pad
 		input_mode_changed.emit(input_mode())
