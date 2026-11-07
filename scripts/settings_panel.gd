@@ -77,15 +77,16 @@ func _build() -> void:
 	panel.add_child(grid)
 
 	# --- Телефон: только чёткость картинки (окна и форматы не нужны) ---
+	# Профиль графики — во всех версиях: разом выставляет все пункты ниже
+	grid.add_child(_row_label("Профиль"))
+	var pr_opt := _option(Settings.PRESET_NAMES + ["Свой"])
+	pr_opt.selected = Settings.preset if Settings.preset >= 0 else Settings.PRESET_NAMES.size()
+	pr_opt.item_selected.connect(func(i: int):
+		if i < Settings.PRESET_NAMES.size():
+			Settings.apply_preset(i)
+			_rebuild.call_deferred())
+	grid.add_child(pr_opt)
 	if Settings.is_mobile():
-		grid.add_child(_row_label("Профиль"))
-		var pr_opt := _option(Settings.PRESET_NAMES + ["Свой"])
-		pr_opt.selected = Settings.preset if Settings.preset >= 0 else Settings.PRESET_NAMES.size()
-		pr_opt.item_selected.connect(func(i: int):
-			if i < Settings.PRESET_NAMES.size():
-				Settings.apply_preset(i)
-				_rebuild.call_deferred())
-		grid.add_child(pr_opt)
 		grid.add_child(_row_label("Чёткость"))
 		var mh_opt := _option(["360p — минимум", "450p — очень быстро", "540p — быстрее", "720p — баланс", "900p", "1080p — чётче"])
 		mh_opt.selected = maxi(0, Settings.MOBILE_HEIGHTS.find(Settings.mobile_h))
@@ -102,13 +103,14 @@ func _build() -> void:
 			Settings.touch_size = i
 			Settings.save_settings())
 		grid.add_child(ts_opt)
-		_mob_opt(grid, "Свечение", ["Выключено (быстрее)", "Включено"], 1 if Settings.glow else 0, func(i): Settings.glow = i == 1)
-		_mob_opt(grid, "Погода", ["Выключена (быстрее)", "Включена"], 1 if Settings.weather else 0, func(i): Settings.weather = i == 1)
-		_mob_opt(grid, "Декор пола", ["Упрощённый", "Полный"], Settings.decor, func(i): Settings.decor = i)
-		_mob_opt(grid, "Дальность", ["Ближняя (быстрее)", "Средняя", "Полная"], Settings.view_dist, func(i): Settings.view_dist = i)
-		_mob_opt(grid, "Врагов на экране", ["Меньше, но крепче", "Обычно"], Settings.crowd, func(i): Settings.crowd = i)
 	else:
 		_build_desktop_rows(grid)
+	# Тонкие настройки нагрузки — во всех версиях (ПК, Steam Deck, телефоны, браузер)
+	_mob_opt(grid, "Свечение", ["Выключено (быстрее)", "Включено"], 1 if Settings.glow else 0, func(i): Settings.glow = i == 1)
+	_mob_opt(grid, "Погода", ["Выключена (быстрее)", "Включена"], 1 if Settings.weather else 0, func(i): Settings.weather = i == 1)
+	_mob_opt(grid, "Декор пола", ["Упрощённый", "Полный"], Settings.decor, func(i): Settings.decor = i)
+	_mob_opt(grid, "Дальность", ["Ближняя (быстрее)", "Средняя", "Полная"], Settings.view_dist, func(i): Settings.view_dist = i)
+	_mob_opt(grid, "Врагов на экране", ["Меньше, но крепче", "Обычно"], Settings.crowd, func(i): Settings.crowd = i)
 	_build_common_rows(grid)
 
 
@@ -173,11 +175,8 @@ func _build_common_rows(grid: GridContainer) -> void:
 
 	# --- Эффекты, тени, текстуры ---
 	grid.add_child(_row_label("Эффекты"))
-	var fx_names := ["Мало", "Средне", "Много"]
-	var fx_shift := 0
-	if Settings.is_mobile():
-		fx_names = ["Минимум"] + fx_names
-		fx_shift = 1
+	var fx_names := ["Минимум", "Мало", "Средне", "Много"]
+	var fx_shift := 1
 	var fx_opt := _option(fx_names)
 	fx_opt.selected = clampi(Settings.effects + fx_shift, 0, fx_names.size() - 1)
 	fx_opt.item_selected.connect(func(i: int):

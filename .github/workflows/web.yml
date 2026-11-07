@@ -36,6 +36,17 @@ jobs:
           ls -la build/web
           test -f build/web/index.wasm
 
+      - name: Пакет автообновления для ПК, Steam Deck, Android и iOS
+        run: |
+          BUILD=$(grep -oP 'BUILD := \K[0-9]+' scripts/build.gd)
+          VERSION=$(grep -oP 'VERSION := "\K[^"]+' scripts/build.gd)
+          mkdir -p build/web/update
+          "$GODOT" --headless --path . --export-pack "Linux" "build/web/update/game_${BUILD}.pck"
+          SUM=$(sha256sum "build/web/update/game_${BUILD}.pck" | cut -d' ' -f1)
+          SIZE=$(stat -c%s "build/web/update/game_${BUILD}.pck")
+          printf '{"build":%s,"version":"%s","pack":{"file":"game_%s.pck","sha256":"%s","size":%s}}\n' "$BUILD" "$VERSION" "$BUILD" "$SUM" "$SIZE" > build/web/update/version.json
+          cat build/web/update/version.json
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

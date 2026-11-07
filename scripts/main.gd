@@ -240,7 +240,7 @@ func center() -> Vector2:
 ## Куда смотрит камера: в сетевой игре — на своего героя (у каждого свой экран).
 ## Сколько врагов одновременно: на телефоне меньше (но они крепче — см. spawn_enemy)
 func max_enemies() -> int:
-	return Settings.mobile_enemy_cap() if Settings.is_mobile() else MAX_ENEMIES
+	return Settings.mobile_enemy_cap() if Settings.is_mobile() else Settings.desktop_enemy_cap()
 
 
 ## Экран загрузки ждёт, пока эта функция не вернёт true: за это время под экраном
@@ -1083,7 +1083,7 @@ func spawn_enemy(kind: String, at := Vector2.INF) -> void:
 	e.radius = info["radius"]
 	e.color = info["color"]
 	e.xp_value = info["xp"]
-	if Settings.is_mobile() and kind != "mob_altar":
+	if (Settings.is_mobile() or Settings.crowd == 0) and kind != "mob_altar":
 		# Телефон: врагов на экране меньше, но каждый крепче и даёт больше опыта —
 		# сложность и темп прокачки как на ПК, а нагрузка на процессор ниже
 		var fill := clampf(float(enemies_node.get_child_count()) / float(max_enemies()), 0.0, 1.0)

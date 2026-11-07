@@ -70,6 +70,7 @@ const PRESET_NAMES := ["Минимум (слабые телефоны)", "Низ
 ## Профиль графики для телефона: разом выставляет все параметры.
 func apply_preset(i: int) -> void:
 	preset = i
+	var keep_h := mobile_h
 	match i:
 		0:
 			mobile_h = 360; effects = -1; shadows = 0; tex_quality = "low"; glow = false
@@ -83,30 +84,52 @@ func apply_preset(i: int) -> void:
 		3:
 			mobile_h = 900; effects = 2; shadows = 1; tex_quality = "auto"; glow = true
 			weather = true; decor = 1; view_dist = 2; crowd = 1; fps = "60"
+	if not is_mobile():
+		# ПК и Steam Deck: разрешение экрана профиль не трогает, кадры — по экрану
+		mobile_h = keep_h
+		if i == 3:
+			shadows = 2
+			fps = "monitor"
+		elif i == 2:
+			shadows = 1
 	apply_display()
 	apply_graphics()
 	save_settings()
 
 
 func glow_enabled() -> bool:
-	return glow if is_mobile() else true
+	return glow
 
 
 func weather_enabled() -> bool:
-	return weather if is_mobile() else true
+	return weather
 
 
 func decor_full() -> bool:
-	return decor > 0 or not is_mobile()
+	return decor > 0
 
 
 ## Насколько далеко от центра кадра мир считается видимым (меньше — меньше работы).
 func view_k() -> float:
-	return [0.72, 0.86, 1.0][clampi(view_dist, 0, 2)] if is_mobile() else 1.0
+	return [0.72, 0.86, 1.0][clampi(view_dist, 0, 2)]
 
 
 func mobile_enemy_cap() -> int:
 	return 100 if crowd == 0 else 150
+
+
+## Сколько врагов одновременно на ПК / Steam Deck
+func desktop_enemy_cap() -> int:
+	return 200 if crowd == 0 else 320
+
+
+## Steam Deck (Steam выставляет SteamDeck=1; в режиме рабочего стола — SteamOS)
+func is_deck() -> bool:
+	if OS.get_environment("SteamDeck") == "1":
+		return true
+	if OS.get_name() == "Linux" and FileAccess.file_exists("/etc/os-release"):
+		return FileAccess.get_file_as_string("/etc/os-release").to_lower().contains("steamos")
+	return false
 
 
 ## Во сколько раз уменьшена текстура мира на телефоне (зависит от «Чёткости»)
@@ -133,6 +156,20 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_setup_input()
 	get_window().size_changed.connect(_on_window_resized)
+	if is_deck() and not FileAccess.file_exists(PATH):
+		# Steam Deck: экран 1280×800, полный экран, средний профиль, 60 кадров
+		mode = "fullscreen"
+		resolution = Vector2i.ZERO
+		fps = "60"
+		effects = 1
+		shadows = 1
+		tex_quality = "auto"
+		glow = true
+		weather = true
+		decor = 1
+		view_dist = 2
+		crowd = 0
+		preset = 2
 	if is_web():
 		# В браузере нет системных шрифтов: значки ◆ ★ ✓ → ≡ и т. п. берём из DejaVu Sans
 		var fb: Font = ThemeDB.fallback_font

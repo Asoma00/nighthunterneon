@@ -46,14 +46,28 @@ func _ready() -> void:
 	Settings.orientation_changed.connect(_on_orientation)
 	Settings.apply_safe(self)
 	Sound.set_track("menu")
-	var ver := _label("v" + str(ProjectSettings.get_setting("application/config/version", "0.2")), 14, Color(0.6, 0.6, 0.75))
-	ver.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	ver.offset_left = -120
+	# Номер сборки — в левом нижнем углу; рядом — состояние автообновления
+	var ver := _label("", 14, Color(0.6, 0.6, 0.75))
+	ver.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	ver.offset_left = 12
 	ver.offset_top = -30
-	ver.offset_right = -12
+	ver.offset_right = 900
 	ver.offset_bottom = -8
-	ver.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	ver.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	add_child(ver)
+	_ver_label = ver
+	_on_upd_status()
+	Updater.status_changed.connect(_on_upd_status)
+
+
+var _ver_label: Label
+
+
+func _on_upd_status(_t := "") -> void:
+	var s := "Сборка %s (%d)" % [Updater.version, Updater.build]
+	if Updater.status != "":
+		s += "   •   " + Updater.status
+	_ver_label.text = s
 
 
 ## Телефон повернули — пересобрать меню под новый экран, оставшись на той же странице
@@ -348,6 +362,8 @@ func _build_main_page() -> void:
 	v.add_child(quit)
 	_add_profile_badge()
 	var hint_text := "WASD / стик — движение   •   ПРОБЕЛ / A — способность   •   ESC / START — пауза"
+	if Settings.is_deck():
+		hint_text = "Левый стик — движение   •   A — способность   •   START — пауза   •   SELECT — характеристики"
 	if Settings.is_mobile():
 		hint_text = "Касание и сдвиг пальца — движение   •   двойное касание — способность   •   II — пауза   •   ≡ — статы"
 		quit.visible = false

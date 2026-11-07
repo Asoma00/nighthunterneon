@@ -37,10 +37,10 @@ jobs:
           rm -rf Payload && mkdir Payload
           cp -R NightHunterNeon.xcarchive/Products/Applications/*.app Payload/
           rm -f NightHunterNeon.ipa
-          zip -qry NightHunterNeon_v0.13_ios.ipa Payload
-          ls -la NightHunterNeon_v0.13_ios.ipa
+          zip -qry NightHunterNeon_v0.14_ios.ipa Payload
+          ls -la NightHunterNeon_v0.14_ios.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NightHunterNeon_v0.13_ios
-          path: build/NightHunterNeon_v0.13_ios.ipa
+          name: NightHunterNeon_v0.14_ios
+          path: build/NightHunterNeon_v0.14_ios.ipa
