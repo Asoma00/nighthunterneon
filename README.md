@@ -1,5 +1,8 @@
 # Ночь охотника: Неон — версия 0.14
 
+**Скачать для любого устройства:** https://asoma00.github.io/nighthunterneon/download/
+(Windows, Steam Deck / Linux, Android, а на iPhone — игра прямо в Safari)
+
 Игра работает в браузере на iPhone, установка с ПК не нужна. Здесь же лежит сборка .ipa для iOS.
 
 ## Как играть на iPhone
