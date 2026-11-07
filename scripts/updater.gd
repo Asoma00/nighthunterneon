@@ -44,9 +44,12 @@ func _init() -> void:
 
 ## Номер сборки, вшитой в установленное приложение (до подключения обновлений).
 ## Хранится в настройках проекта — пакет обновления их не меняет.
+## «0.14.1» → 14001; старый формат «0.14» → 14 (как было в сборке 0.14).
 static func _builtin_build() -> int:
 	var v := str(ProjectSettings.get_setting("application/config/version", "0.0"))
 	var parts := v.split(".")
+	if parts.size() > 2:
+		return int(parts[1]) * 1000 + int(parts[2])
 	return int(parts[1]) if parts.size() > 1 else 0
 
 

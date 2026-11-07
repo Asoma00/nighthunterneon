@@ -16,6 +16,12 @@ jobs:
           unzip -q godot.zip
           echo "GODOT=$PWD/Godot.app/Contents/MacOS/Godot" >> "$GITHUB_ENV"
 
+      - name: Версия из scripts/build.gd
+        run: |
+          echo "BUILD=$(grep -oP 'BUILD := \K[0-9]+' scripts/build.gd)" >> "$GITHUB_ENV"
+          echo "VERSION=$(grep -oP 'VERSION := "\K[^"]+' scripts/build.gd)" >> "$GITHUB_ENV"
+          sed -i "s/application\/short_version=\"[^\"]*\"/application\/short_version=\"$(grep -oP 'VERSION := "\K[^"]+' scripts/build.gd)\"/; s/application\/version=\"[^\"]*\"/application\/version=\"$(grep -oP 'BUILD := \K[0-9]+' scripts/build.gd)\"/" export_presets.cfg
+
       - name: Шаблоны экспорта iOS
         run: python3 tools/get_templates.py "$HOME/Library/Application Support/Godot/export_templates/4.7.2.stable" ios.zip
 
@@ -37,10 +43,10 @@ jobs:
           rm -rf Payload && mkdir Payload
           cp -R NightHunterNeon.xcarchive/Products/Applications/*.app Payload/
           rm -f NightHunterNeon.ipa
-          zip -qry NightHunterNeon_v0.14_ios.ipa Payload
-          ls -la NightHunterNeon_v0.14_ios.ipa
+          zip -qry NightHunterNeon_ios.ipa Payload
+          ls -la NightHunterNeon_ios.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NightHunterNeon_v0.14_ios
-          path: build/NightHunterNeon_v0.14_ios.ipa
+          name: NightHunterNeon_ios
+          path: build/NightHunterNeon_ios.ipa

@@ -64,7 +64,7 @@ var _ver_label: Label
 
 
 func _on_upd_status(_t := "") -> void:
-	var s := "Сборка %s (%d)" % [Updater.version, Updater.build]
+	var s := "Сборка %s" % Updater.version
 	if Updater.status != "":
 		s += "   •   " + Updater.status
 	_ver_label.text = s
