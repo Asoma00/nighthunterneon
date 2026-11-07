@@ -1,0 +1,46 @@
+name: Сборка iOS (IPA)
+
+on:
+  workflow_dispatch:   # запускается вручную: Actions → «Сборка iOS (IPA)» → Run workflow
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Godot 4.7.2 для macOS
+        run: |
+          curl -sSL -o godot.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_macos.universal.zip
+          unzip -q godot.zip
+          echo "GODOT=$PWD/Godot.app/Contents/MacOS/Godot" >> "$GITHUB_ENV"
+
+      - name: Шаблоны экспорта iOS
+        run: python3 tools/get_templates.py "$HOME/Library/Application Support/Godot/export_templates/4.7.2.stable" ios.zip
+
+      - name: Экспорт проекта Xcode из Godot
+        run: |
+          mkdir -p build
+          "$GODOT" --headless --path . --import || true
+          "$GODOT" --headless --path . --export-release "iOS" build/NightHunterNeon.ipa || true
+          ls -la build
+          test -d build/NightHunterNeon.xcodeproj
+
+      - name: Сборка приложения (без подписи — подпишет Sideloadly)
+        run: |
+          cd build
+          xcodebuild -project NightHunterNeon.xcodeproj -scheme NightHunterNeon \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/NightHunterNeon.xcarchive" archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" | tail -40
+          rm -rf Payload && mkdir Payload
+          cp -R NightHunterNeon.xcarchive/Products/Applications/*.app Payload/
+          rm -f NightHunterNeon.ipa
+          zip -qry NightHunterNeon_v0.13_ios.ipa Payload
+          ls -la NightHunterNeon_v0.13_ios.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NightHunterNeon_v0.13_ios
+          path: build/NightHunterNeon_v0.13_ios.ipa

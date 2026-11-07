@@ -1,0 +1,581 @@
+extends RefCounted
+## Прогресс между забегами: осколки, здания убежища, жители, открытые герои.
+## Хранится в одном из трёх слотов: user://save_1.cfg … save_3.cfg.
+
+const OLD_PATH := "user://save.cfg"
+const SLOTS_PATH := "user://slots.cfg"
+const MAX_SLOTS := 3
+
+static var slot := 0   # 0 — ещё не прочитан из slots.cfg
+
+static var loaded := false
+static var shards := 120
+static var buildings := {}
+static var followers: Array = []
+static var total_runs := 0
+static var best_time := 0.0
+static var last_reward := {}
+static var levels_cleared := 0
+static var level_best := {}
+static var nickname := "Охотник"
+static var stats := {}  # статистика профиля: kills, time, bosses, wins, deaths, reactions, max_level, best_endless, heroes{}
+static var seen := {}   # открытое в библиотеке: "w:bolt", "m:crit", "s:burn", "r:burn+chill", "a:damage"
+static var trees := {}  # "w:bolt" / "c:vega" / "m:crit" -> [id узлов]
+
+const BUILDINGS := {
+	"forge": {"name": "Рунная кузница", "desc": "+6% к урону за уровень. Здесь прокачивается оружие — у каждого своё дерево; уровень кузницы открывает ярусы.", "max": 5, "base": 60,
+		"color": Color(1.0, 0.55, 0.2), "pos": Vector3(-9, 0, -1)},
+	"hall": {"name": "Зал героев", "desc": "Здесь открываются и выбираются герои. +5% опыта в бою за уровень зала.", "max": 5, "base": 90,
+		"color": Color(1.0, 0.8, 0.3), "pos": Vector3(-7, 0, 10)},
+	"shrine": {"name": "Алтарь героев", "desc": "+10% к шансу сундука за уровень. Здесь прокачиваются герои — у каждого своё дерево; уровень алтаря открывает ярусы.", "max": 5, "base": 70,
+		"color": Color(1.0, 0.35, 0.8), "pos": Vector3(9, 0, -1)},
+	"lab": {"name": "Лаборатория модулей", "desc": "Дерево прокачки модулей. Уровень здания открывает ярусы дерева.", "max": 5, "base": 100,
+		"color": Color(0.4, 0.85, 1.0), "pos": Vector3(7, 0, 10)},
+}
+
+# ---------- Открытие героев ----------
+# Вега доступна сразу. Остальных нужно ОТКРЫТЬ в Зале героев: выполнить условие
+# и заплатить осколками. Чем дальше герой — тем сложнее условие.
+const HERO_ORDER := ["vega", "rin", "bram", "kira", "skyla", "orm", "mora", "zephyr", "iris", "kai"]
+const HERO_UNLOCK := {
+	"vega": {"cost": 0, "conds": []},
+	"rin": {"cost": 150, "conds": [["kills", 500]]},
+	"bram": {"cost": 250, "conds": [["level", 1]]},
+	"kira": {"cost": 350, "conds": [["reactions", 200], ["runs", 5]]},
+	"skyla": {"cost": 450, "conds": [["bosses", 5]]},
+	"orm": {"cost": 600, "conds": [["best_kills", 800], ["level", 2]]},
+	"mora": {"cost": 800, "conds": [["level", 3], ["kills", 5000]]},
+	"zephyr": {"cost": 1000, "conds": [["endless", 10]]},
+	"iris": {"cost": 1300, "conds": [["endless", 15], ["bosses", 20]]},
+	"kai": {"cost": 1700, "conds": [["endless", 20], ["level", 5]]},
+}
+static var heroes_owned: Array = ["vega"]
+
+# ---------- Деревья прокачки ----------
+# Дерево растёт сверху вниз: pos = (колонка, ряд), ряд = ярус - 1.
+# Ярус N требует здание ур. N. «conds» — дополнительные условия (достижения).
+const WEAPON_TREE := [
+	{"id": "dmg1", "name": "Заточка I", "desc": "+10% урона", "cost": 40, "req": [], "tier": 1, "pos": Vector2(0, 0)},
+	{"id": "cd1", "name": "Разгон", "desc": "-10% перезарядки", "cost": 60, "req": [], "tier": 1, "pos": Vector2(2, 0)},
+	{"id": "dmg2", "name": "Заточка II", "desc": "+15% урона", "cost": 110, "req": ["dmg1"], "tier": 2, "pos": Vector2(0, 1)},
+	{"id": "area1", "name": "Широкий захват", "desc": "+10% области и дальности", "cost": 100, "req": ["dmg1"], "tier": 2, "pos": Vector2(1, 1)},
+	{"id": "status", "name": "Стихийный резонанс", "desc": "+30% урона по целям со статусом", "cost": 120, "req": ["cd1"], "tier": 2, "pos": Vector2(2, 1)},
+	{"id": "speed1", "name": "Импульс", "desc": "+15% скорости снарядов", "cost": 90, "req": ["cd1"], "tier": 2, "pos": Vector2(3, 1)},
+	{"id": "dmg3", "name": "Заточка III", "desc": "+15% урона", "cost": 200, "req": ["dmg2"], "tier": 3, "pos": Vector2(0, 2), "conds": [["bosses", 3]]},
+	{"id": "count", "name": "Расширение", "desc": "+1 снаряд и +15% области", "cost": 220, "req": ["area1"], "tier": 3, "pos": Vector2(1, 2), "conds": [["kills", 1500]]},
+	{"id": "cd2", "name": "Перегрев", "desc": "-10% перезарядки", "cost": 200, "req": ["status"], "tier": 3, "pos": Vector2(2, 2)},
+	{"id": "dur", "name": "Затяжной эффект", "desc": "+25% длительности статусов", "cost": 180, "req": ["status", "speed1"], "tier": 3, "pos": Vector2(3, 2), "conds": [["reactions", 150]]},
+	{"id": "master", "name": "Мастерство", "desc": "+20% урона, оружие героя с ур. 2", "cost": 320, "req": ["dmg3", "count"], "tier": 4, "pos": Vector2(0.5, 3), "conds": [["level", 2]]},
+	{"id": "overcharge", "name": "Перегрузка", "desc": "+1 снаряд", "cost": 340, "req": ["cd2", "dur"], "tier": 4, "pos": Vector2(2.5, 3), "conds": [["endless", 10]]},
+	{"id": "legend", "name": "Легенда", "desc": "+25% урона и -10% перезарядки", "cost": 600, "req": ["master", "overcharge"], "tier": 5, "pos": Vector2(1.5, 4), "conds": [["endless", 20], ["kills", 20000]]},
+]
+const HERO_TREE := [
+	{"id": "hp1", "name": "Закалка", "desc": "+15 здоровья", "cost": 40, "req": [], "tier": 1, "pos": Vector2(0, 0)},
+	{"id": "spd1", "name": "Лёгкий шаг", "desc": "+6% скорости", "cost": 50, "req": [], "tier": 1, "pos": Vector2(2, 0)},
+	{"id": "hp2", "name": "Стойкость", "desc": "+20 здоровья", "cost": 100, "req": ["hp1"], "tier": 2, "pos": Vector2(0, 1)},
+	{"id": "regen1", "name": "Восстановление", "desc": "+0.4 здоровья в секунду", "cost": 110, "req": ["hp1"], "tier": 2, "pos": Vector2(1, 1)},
+	{"id": "magnet1", "name": "Притяжение", "desc": "+25% радиуса сбора", "cost": 90, "req": ["spd1"], "tier": 2, "pos": Vector2(2, 1)},
+	{"id": "cd", "name": "Фокус", "desc": "-15% перезарядки способности", "cost": 100, "req": ["spd1"], "tier": 2, "pos": Vector2(3, 1)},
+	{"id": "armor", "name": "Броня-кожа", "desc": "-1 к получаемому урону", "cost": 180, "req": ["hp2"], "tier": 3, "pos": Vector2(0, 2), "conds": [["kills", 1500]]},
+	{"id": "xp1", "name": "Ученик", "desc": "+10% опыта", "cost": 160, "req": ["regen1"], "tier": 3, "pos": Vector2(1, 2), "conds": [["hero_runs", 3]]},
+	{"id": "dodge1", "name": "Уворот", "desc": "+5% уклонения", "cost": 190, "req": ["magnet1"], "tier": 3, "pos": Vector2(2, 2), "conds": [["hero_runs", 5]]},
+	{"id": "power", "name": "Усиление дара", "desc": "+30% силы способности", "cost": 200, "req": ["cd"], "tier": 3, "pos": Vector2(3, 2)},
+	{"id": "awaken", "name": "Пробуждение", "desc": "Начинать забег со случайным модулем ур. 1", "cost": 300, "req": ["armor", "xp1"], "tier": 4, "pos": Vector2(0.5, 3), "conds": [["bosses", 5]]},
+	{"id": "cd2", "name": "Медитация", "desc": "-15% перезарядки способности", "cost": 320, "req": ["dodge1", "power"], "tier": 4, "pos": Vector2(2.5, 3), "conds": [["endless", 10]]},
+	{"id": "ascend", "name": "Вознесение", "desc": "+30 здоровья, +10% скорости, +20% силы способности", "cost": 600, "req": ["awaken", "cd2"], "tier": 5, "pos": Vector2(1.5, 4), "conds": [["endless", 15], ["hero_runs", 15]]},
+]
+const MODULE_TREE := [
+	{"id": "boost1", "name": "Калибровка", "desc": "Эффект модуля +25%", "cost": 50, "req": [], "tier": 1, "pos": Vector2(1, 0)},
+	{"id": "boost2", "name": "Перегрузка", "desc": "Эффект модуля ещё +25%", "cost": 120, "req": ["boost1"], "tier": 2, "pos": Vector2(0, 1)},
+	{"id": "tune", "name": "Тонкая настройка", "desc": "Эффект модуля +15%", "cost": 100, "req": ["boost1"], "tier": 2, "pos": Vector2(2, 1)},
+	{"id": "boost3", "name": "Резонанс", "desc": "Эффект модуля +25%", "cost": 220, "req": ["boost2"], "tier": 3, "pos": Vector2(0, 2), "conds": [["reactions", 300]]},
+	{"id": "preinstall", "name": "Предустановка", "desc": "Модуль ур. 1 с начала каждого забега", "cost": 260, "req": ["tune"], "tier": 3, "pos": Vector2(2, 2), "conds": [["runs", 10]]},
+	{"id": "boost4", "name": "Синхронизация", "desc": "Эффект модуля +25%", "cost": 360, "req": ["boost3", "preinstall"], "tier": 4, "pos": Vector2(1, 3), "conds": [["endless", 10]]},
+	{"id": "boost5", "name": "Сингулярность", "desc": "Эффект модуля +50%", "cost": 650, "req": ["boost4"], "tier": 5, "pos": Vector2(1, 4), "conds": [["level", 5], ["endless", 20]]},
+]
+
+const NAME_A := ["Ар", "Бел", "Вир", "Гло", "Дин", "Зе", "Ки", "Лум", "Ми", "Нок", "Ор", "Пикс", "Ру", "Сай", "Тэк", "Ул", "Фе", "Хо", "Це", "Эн"]
+const NAME_B := ["ка", "ло", "рис", "та", "вен", "ми", "сс", "ни", "ро", "кс", "ла", "ди", "рон", "ви", "эль"]
+
+const PHRASES := [
+	"Неон греет душу.", "Ещё один осколок!", "Видел Лича? Жуть...", "Чиню генератор.",
+	"Ночь будет долгой.", "Слышишь гул портала?", "Здесь безопасно.", "Удачной вылазки!",
+	"Кузня опять дымит.", "Я верю в тебя!", "Где мой паяльник?", "Пахнет озоном.",
+]
+
+
+# ---------- Слоты сохранений ----------
+
+static func slot_path(n: int) -> String:
+	return "user://save_%d.cfg" % n
+
+
+static func current_slot() -> int:
+	if slot == 0:
+		var c := ConfigFile.new()
+		slot = 1
+		if c.load(SLOTS_PATH) == OK:
+			slot = clampi(int(c.get_value("slots", "current", 1)), 1, MAX_SLOTS)
+		# Перенос старого единственного сохранения в слот 1
+		if FileAccess.file_exists(OLD_PATH) and not FileAccess.file_exists(slot_path(1)):
+			DirAccess.copy_absolute(ProjectSettings.globalize_path(OLD_PATH), ProjectSettings.globalize_path(slot_path(1)))
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(OLD_PATH))
+	return slot
+
+
+static func slot_exists(n: int) -> bool:
+	current_slot()
+	return FileAccess.file_exists(slot_path(n))
+
+
+## Краткие сведения о слоте для меню (без загрузки в игру).
+static func slot_info(n: int) -> Dictionary:
+	var cfg := ConfigFile.new()
+	if not slot_exists(n) or cfg.load(slot_path(n)) != OK:
+		return {}
+	var st: Dictionary = cfg.get_value("meta", "stats", {})
+	return {"nickname": cfg.get_value("meta", "nickname", "Охотник"),
+		"runs": cfg.get_value("meta", "runs", 0),
+		"shards": cfg.get_value("meta", "shards", 0),
+		"levels": cfg.get_value("meta", "levels_cleared", 0),
+		"time": float(st.get("time", 0.0)),
+		"saved": cfg.get_value("meta", "saved_at", "")}
+
+
+## Выбрать слот: текущий прогресс сохраняется, затем загружается выбранный
+## (пустой слот начинается с нуля и сразу создаётся на диске).
+static func switch_slot(n: int) -> void:
+	n = clampi(n, 1, MAX_SLOTS)
+	if loaded and slot_exists(current_slot()):
+		save()
+	slot = n
+	var c := ConfigFile.new()
+	c.set_value("slots", "current", n)
+	c.save(SLOTS_PATH)
+	reset()
+	ensure_loaded()
+	if not slot_exists(n):
+		save()
+
+
+static func delete_slot(n: int) -> void:
+	if slot_exists(n):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(slot_path(n)))
+	if n == current_slot():
+		reset()
+		ensure_loaded()
+
+
+## Значения нового прогресса
+static func reset() -> void:
+	loaded = false
+	shards = 120
+	buildings = {}
+	followers = []
+	heroes_owned = ["vega"]
+	total_runs = 0
+	best_time = 0.0
+	last_reward = {}
+	levels_cleared = 0
+	level_best = {}
+	nickname = "Охотник"
+	stats = {}
+	seen = {}
+	trees = {}
+
+
+static func ensure_loaded() -> void:
+	if loaded:
+		return
+	loaded = true
+	for id in BUILDINGS:
+		buildings[id] = 0
+	var cfg := ConfigFile.new()
+	if cfg.load(slot_path(current_slot())) != OK:
+		return
+	shards = cfg.get_value("meta", "shards", shards)
+	total_runs = cfg.get_value("meta", "runs", 0)
+	best_time = cfg.get_value("meta", "best_time", 0.0)
+	var b: Dictionary = cfg.get_value("meta", "buildings", {})
+	for id in b:
+		if buildings.has(id):
+			buildings[id] = b[id]
+	followers = cfg.get_value("meta", "followers", [])
+	levels_cleared = cfg.get_value("meta", "levels_cleared", 0)
+	level_best = cfg.get_value("meta", "level_best", {})
+	trees = cfg.get_value("meta", "trees", {})
+	if cfg.has_section_key("meta", "heroes_owned"):
+		heroes_owned = cfg.get_value("meta", "heroes_owned", ["vega"])
+	else:
+		# Старое сохранение: герои открывались уровнем зала — оставляем уже открытых
+		heroes_owned = []
+		var hl := int(buildings.get("hall", 0))
+		for i in HERO_ORDER.size():
+			if i <= hl:
+				heroes_owned.append(HERO_ORDER[i])
+	if not ("vega" in heroes_owned):
+		heroes_owned.push_front("vega")
+	seen = cfg.get_value("meta", "seen", {})
+	nickname = cfg.get_value("meta", "nickname", nickname)
+	stats = cfg.get_value("meta", "stats", {})
+	# Старые сохранения: всё оружие и модули уже встречались
+	if seen.is_empty() and total_runs > 0:
+		var D = preload("res://scripts/data.gd")
+		for w in D.WEAPONS:
+			seen["w:" + w] = true
+		for m in D.PASSIVES:
+			seen["m:" + m] = true
+
+
+static func save() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("meta", "shards", shards)
+	cfg.set_value("meta", "runs", total_runs)
+	cfg.set_value("meta", "best_time", best_time)
+	cfg.set_value("meta", "buildings", buildings)
+	cfg.set_value("meta", "followers", followers)
+	cfg.set_value("meta", "levels_cleared", levels_cleared)
+	cfg.set_value("meta", "level_best", level_best)
+	cfg.set_value("meta", "trees", trees)
+	cfg.set_value("meta", "heroes_owned", heroes_owned)
+	cfg.set_value("meta", "seen", seen)
+	cfg.set_value("meta", "nickname", nickname)
+	cfg.set_value("meta", "stats", stats)
+	cfg.set_value("meta", "saved_at", Time.get_datetime_string_from_system(false, true))
+	cfg.save(slot_path(current_slot()))
+
+
+## Отметить найденное для библиотеки (сохраняется вместе с итогом забега).
+static func discover(key: String) -> void:
+	if not seen.has(key):
+		seen[key] = true
+
+
+static func discovered(key: String) -> bool:
+	ensure_loaded()
+	return seen.has(key)
+
+
+static func level(id: String) -> int:
+	ensure_loaded()
+	return buildings.get(id, 0)
+
+
+static func upgrade_cost(id: String) -> int:
+	var b: Dictionary = BUILDINGS[id]
+	return int(b["base"] * pow(level(id) + 1, 1.6))
+
+
+static func can_upgrade(id: String) -> bool:
+	return level(id) < BUILDINGS[id]["max"] and shards >= upgrade_cost(id)
+
+
+static func upgrade(id: String) -> bool:
+	if not can_upgrade(id):
+		return false
+	shards -= upgrade_cost(id)
+	buildings[id] = level(id) + 1
+	save()
+	return true
+
+
+static func hero_unlocked(id: String) -> bool:
+	ensure_loaded()
+	return id == "vega" or id in heroes_owned
+
+
+## Значение показателя для условия (по всей статистике слота).
+static func stat_value(kind: String, hero := "") -> int:
+	ensure_loaded()
+	match kind:
+		"kills":
+			return int(stats.get("kills", 0))
+		"best_kills":
+			return int(stats.get("best_kills", 0))
+		"bosses":
+			return int(stats.get("bosses", 0))
+		"reactions":
+			return int(stats.get("reactions", 0))
+		"endless":
+			return int(stats.get("best_endless", 0))
+		"level":
+			return levels_cleared
+		"runs":
+			return total_runs
+		"max_level":
+			return int(stats.get("max_level", 0))
+		"hero_runs":
+			return int(stats.get("heroes", {}).get(hero, 0))
+	return 0
+
+
+static func cond_met(c: Array, hero := "") -> bool:
+	return stat_value(c[0], hero) >= int(c[1])
+
+
+static func conds_met(conds: Array, hero := "") -> bool:
+	for c in conds:
+		if not cond_met(c, hero):
+			return false
+	return true
+
+
+## Текст условия: «Убейте 1500 врагов (523 / 1500)».
+static func cond_text(c: Array, hero := "", with_progress := true) -> String:
+	var v := int(c[1])
+	var t := ""
+	match str(c[0]):
+		"kills":
+			t = "Уничтожьте %d врагов (всего)" % v
+		"best_kills":
+			t = "Уничтожьте %d врагов за один забег" % v
+		"bosses":
+			t = "Победите боссов: %d" % v
+		"reactions":
+			t = "Вызовите реакций: %d" % v
+		"endless":
+			t = "Продержитесь %d мин в бесконечном режиме" % v
+		"level":
+			t = "Пройдите уровней: %d" % v
+		"runs":
+			t = "Совершите вылазок: %d" % v
+		"max_level":
+			t = "Достигните %d уровня в забеге" % v
+		"hero_runs":
+			t = "Вылазок этим героем: %d" % v
+	if with_progress:
+		t += "  (%d / %d)" % [mini(stat_value(c[0], hero), v), v]
+	return t
+
+
+## Короткая подпись условия для кнопки узла: «боссы 1/3».
+static func cond_short(c: Array, hero := "") -> String:
+	var names := {"kills": "убийства", "best_kills": "убийств за забег", "bosses": "боссы", "reactions": "реакции",
+		"endless": "бесконечный, мин", "level": "уровни", "runs": "вылазки", "max_level": "ур. в забеге", "hero_runs": "вылазки героем"}
+	return "%s %d/%d" % [names.get(str(c[0]), str(c[0])), mini(stat_value(c[0], hero), int(c[1])), int(c[1])]
+
+
+## Первое невыполненное условие (или пустой массив).
+static func first_unmet(conds: Array, hero := "") -> Array:
+	for c in conds:
+		if not cond_met(c, hero):
+			return c
+	return []
+
+
+## Состояние героя в Зале: owned / open (можно открыть) / expensive / cond (условие не выполнено)
+static func hero_state(id: String) -> String:
+	if hero_unlocked(id):
+		return "owned"
+	var u: Dictionary = HERO_UNLOCK.get(id, {"cost": 99999, "conds": [["level", 99]]})
+	if not conds_met(u["conds"]):
+		return "cond"
+	return "open" if shards >= int(u["cost"]) else "expensive"
+
+
+static func unlock_hero(id: String) -> bool:
+	if hero_state(id) != "open":
+		return false
+	shards -= int(HERO_UNLOCK[id]["cost"])
+	heroes_owned.append(id)
+	save()
+	return true
+
+
+static func follower_cap() -> int:
+	return level("beacon") * 2
+
+
+static func recruit_cost() -> int:
+	return 30 + followers.size() * 25
+
+
+static func can_recruit() -> bool:
+	return followers.size() < follower_cap() and shards >= recruit_cost()
+
+
+static func recruit() -> Dictionary:
+	if not can_recruit():
+		return {}
+	shards -= recruit_cost()
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var f := {"name": NAME_A[rng.randi_range(0, NAME_A.size() - 1)] + NAME_B[rng.randi_range(0, NAME_B.size() - 1)],
+		"seed": rng.randi_range(1, 99999)}
+	followers.append(f)
+	save()
+	return f
+
+
+## Бонусы убежища, которые действуют в забеге.
+static func run_mods() -> Dictionary:
+	ensure_loaded()
+	return {
+		"damage": 1.0 + 0.06 * level("forge"),
+		"hp": 0.0,
+		"cooldown": 1.0,
+		"magnet": 1.0,
+		"xp": 1.0 + 0.05 * mini(level("hall"), 5),
+		"chest": 0.1 * level("shrine"),
+	}
+
+
+## Подсчёт награды за забег. Возвращает словарь с подробностями.
+static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool, level := -1, first_bonus := 0, endless_min := 0) -> Dictionary:
+	ensure_loaded()
+	var first := 0
+	if victory and level >= 0:
+		if level >= levels_cleared:
+			levels_cleared = level + 1
+			first = first_bonus
+		level_best[level] = maxf(float(level_best.get(level, 0.0)), time_alive)
+	var r := {
+		"first": first,
+		"kills": kills / 8,
+		"time": int(time_alive / 10.0),
+		"bosses": bosses * 40,
+		"victory": 100 if victory else 0,
+		"followers": 0,
+		"endless": endless_min * 25,
+	}
+	var total := 0
+	for k in r:
+		total += r[k]
+	r["total"] = total
+	shards += total
+	total_runs += 1
+	stats["kills"] = int(stats.get("kills", 0)) + kills
+	stats["time"] = float(stats.get("time", 0.0)) + time_alive
+	stats["bosses"] = int(stats.get("bosses", 0)) + bosses
+	stats["wins" if victory else "deaths"] = int(stats.get("wins" if victory else "deaths", 0)) + 1
+	stats["best_endless"] = maxi(int(stats.get("best_endless", 0)), endless_min)
+	stats["shards"] = int(stats.get("shards", 0)) + total
+	stats["best_kills"] = maxi(int(stats.get("best_kills", 0)), kills)
+	best_time = maxf(best_time, time_alive)
+	last_reward = r
+	save()
+	return r
+
+
+
+# ---------- Деревья ----------
+
+static func tree_nodes(tree_key: String) -> Array:
+	match tree_key.left(2):
+		"w:":
+			return WEAPON_TREE
+		"c:":
+			return HERO_TREE
+		"m:":
+			return MODULE_TREE
+	return []
+
+
+static func tree_building(tree_key: String) -> String:
+	return {"w:": "forge", "c:": "shrine", "m:": "lab"}.get(tree_key.left(2), "")
+
+
+static func has_node(tree_key: String, node: String) -> bool:
+	ensure_loaded()
+	return node in trees.get(tree_key, [])
+
+
+static func node_state(tree_key: String, n: Dictionary) -> String:
+	if has_node(tree_key, n["id"]):
+		return "owned"
+	if level(tree_building(tree_key)) < int(n["tier"]):
+		return "tier"
+	for r in n["req"]:
+		if not has_node(tree_key, r):
+			return "locked"
+	if not conds_met(n.get("conds", []), tree_hero(tree_key)):
+		return "cond"
+	return "open" if shards >= int(n["cost"]) else "expensive"
+
+
+## Для дерева героя «c:rin» — id героя (для условий «вылазок этим героем»).
+static func tree_hero(tree_key: String) -> String:
+	return tree_key.substr(2) if tree_key.begins_with("c:") else ""
+
+
+static func buy_node(tree_key: String, n: Dictionary) -> bool:
+	if node_state(tree_key, n) != "open":
+		return false
+	shards -= int(n["cost"])
+	if not trees.has(tree_key):
+		trees[tree_key] = []
+	trees[tree_key].append(n["id"])
+	save()
+	return true
+
+
+## Модификаторы оружия из Арсенала.
+static func weapon_mods(id: String) -> Dictionary:
+	var k := "w:" + id
+	var dmg := 1.0
+	for pair in [["dmg1", 0.10], ["dmg2", 0.15], ["dmg3", 0.15], ["master", 0.20], ["legend", 0.25]]:
+		if has_node(k, pair[0]):
+			dmg += pair[1]
+	var cd := 1.0
+	for n in ["cd1", "cd2", "legend"]:
+		if has_node(k, n):
+			cd *= 0.9
+	return {"damage": dmg, "cooldown": cd,
+		"count": int(has_node(k, "count")) + int(has_node(k, "overcharge")),
+		"area": 1.0 + (0.10 if has_node(k, "area1") else 0.0) + (0.15 if has_node(k, "count") else 0.0),
+		"status": 1.3 if has_node(k, "status") else 1.0, "master": has_node(k, "master"),
+		"duration": 1.25 if has_node(k, "dur") else 1.0, "speed": 1.15 if has_node(k, "speed1") else 1.0}
+
+
+## Модификаторы героя из Академии.
+static func hero_mods(id: String) -> Dictionary:
+	var k := "c:" + id
+	var asc := has_node(k, "ascend")
+	return {"hp": (15.0 if has_node(k, "hp1") else 0.0) + (20.0 if has_node(k, "hp2") else 0.0) + (30.0 if asc else 0.0),
+		"speed": (1.06 if has_node(k, "spd1") else 1.0) * (1.1 if asc else 1.0),
+		"ability_cd": (0.85 if has_node(k, "cd") else 1.0) * (0.85 if has_node(k, "cd2") else 1.0),
+		"power": (1.3 if has_node(k, "power") else 1.0) + (0.2 if asc else 0.0),
+		"armor": 1.0 if has_node(k, "armor") else 0.0, "awaken": has_node(k, "awaken"),
+		"regen": 0.4 if has_node(k, "regen1") else 0.0, "magnet": 1.25 if has_node(k, "magnet1") else 1.0,
+		"xp": 1.1 if has_node(k, "xp1") else 1.0, "dodge": 0.05 if has_node(k, "dodge1") else 0.0}
+
+
+## Усиление модуля из Лаборатории (множитель эффекта) и предустановка.
+static func module_boost(id: String) -> float:
+	var k := "m:" + id
+	var b := 1.0
+	for pair in [["boost1", 0.25], ["boost2", 0.25], ["tune", 0.15], ["boost3", 0.25], ["boost4", 0.25], ["boost5", 0.5]]:
+		if has_node(k, pair[0]):
+			b += pair[1]
+	return b
+
+
+static func module_preinstalled(id: String) -> bool:
+	return has_node("m:" + id, "preinstall")
+
+
+## Вся прокачка игрока для героя — отправляется хосту в сетевой игре,
+## чтобы второй игрок играл со своими улучшениями.
+## Дополнительная статистика забега (вызывается до finish_run).
+static func note_run(reactions: int, max_level: int, hero: String) -> void:
+	ensure_loaded()
+	stats["reactions"] = int(stats.get("reactions", 0)) + reactions
+	stats["max_level"] = maxi(int(stats.get("max_level", 0)), max_level)
+	var h: Dictionary = stats.get("heroes", {})
+	h[hero] = int(h.get(hero, 0)) + 1
+	stats["heroes"] = h
+
+
+static func profile(hero: String) -> Dictionary:
+	ensure_loaded()
+	var Data := preload("res://scripts/data.gd")
+	var w := {}
+	for id in Data.WEAPONS:
+		w[id] = weapon_mods(id)
+	var boost := {}
+	var pre: Array = []
+	for id in Data.PASSIVES:
+		boost[id] = module_boost(id)
+		if module_preinstalled(id):
+			pre.append(id)
+	return {"run": run_mods(), "hero": hero_mods(hero), "weapons": w, "boost": boost, "pre": pre, "nick": nickname}

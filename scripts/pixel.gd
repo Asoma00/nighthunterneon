@@ -1,0 +1,2309 @@
+extends RefCounted
+## Процедурная пиксель-графика: рисование в Image, объём, обводка,
+## генерация анимированных спрайтов, тайлов, иконок и текстур свечения.
+## Каждый спрайт состоит из двух слоёв: base (освещается светом сцены)
+## и emit (неоновые детали, светятся сами и дают bloom).
+
+const PX := 3.0
+## Растяжение «стоящих» спрайтов по высоте: компенсирует наклон камеры в 2.5D
+const STAND := 1.45
+const OUT := Color(0.04, 0.02, 0.08)
+
+static var _cache := {}
+
+
+# ============ Примитивы ============
+
+static func blank(w: int, h: int) -> Image:
+	return Image.create_empty(w, h, false, Image.FORMAT_RGBA8)
+
+
+static func px(im: Image, x: int, y: int, c: Color) -> void:
+	if x >= 0 and y >= 0 and x < im.get_width() and y < im.get_height():
+		im.set_pixel(x, y, c)
+
+
+static func pxw(im: Image, x: int, y: int, c: Color) -> void:
+	im.set_pixel(posmod(x, im.get_width()), posmod(y, im.get_height()), c)
+
+
+static func rect(im: Image, x: int, y: int, w: int, h: int, c: Color) -> void:
+	for i in range(x, x + w):
+		for j in range(y, y + h):
+			px(im, i, j, c)
+
+
+static func ellipse(im: Image, cx: float, cy: float, rx: float, ry: float, c: Color) -> void:
+	for x in range(int(floor(cx - rx)) - 1, int(ceil(cx + rx)) + 1):
+		for y in range(int(floor(cy - ry)) - 1, int(ceil(cy + ry)) + 1):
+			var dx := (x + 0.5 - cx) / rx
+			var dy := (y + 0.5 - cy) / ry
+			if dx * dx + dy * dy <= 1.0:
+				px(im, x, y, c)
+
+
+static func line(im: Image, x0: int, y0: int, x1: int, y1: int, c: Color) -> void:
+	var dx := absi(x1 - x0)
+	var dy := -absi(y1 - y0)
+	var sx := 1 if x0 < x1 else -1
+	var sy := 1 if y0 < y1 else -1
+	var err := dx + dy
+	var guard := 0
+	while guard < 500:
+		guard += 1
+		px(im, x0, y0, c)
+		if x0 == x1 and y0 == y1:
+			break
+		var e2 := 2 * err
+		if e2 >= dy:
+			err += dy
+			x0 += sx
+		if e2 <= dx:
+			err += dx
+			y0 += sy
+
+
+static func poly(im: Image, pts: PackedVector2Array, c: Color) -> void:
+	var r := Rect2(pts[0], Vector2.ZERO)
+	for p in pts:
+		r = r.expand(p)
+	for x in range(int(floor(r.position.x)), int(ceil(r.end.x)) + 1):
+		for y in range(int(floor(r.position.y)), int(ceil(r.end.y)) + 1):
+			if Geometry2D.is_point_in_polygon(Vector2(x + 0.5, y + 0.5), pts):
+				px(im, x, y, c)
+
+
+static func alpha_at(im: Image, x: int, y: int) -> float:
+	if x < 0 or y < 0 or x >= im.get_width() or y >= im.get_height():
+		return 0.0
+	return im.get_pixel(x, y).a
+
+
+# ============ Обработка ============
+
+## Вертикальный градиент: низ темнее — даёт объём.
+static func vshade(im: Image, amount: float) -> void:
+	var h := float(im.get_height())
+	for x in im.get_width():
+		for y in im.get_height():
+			var c := im.get_pixel(x, y)
+			if c.a > 0.5:
+				im.set_pixel(x, y, c.darkened(amount * y / h))
+
+
+## Свет сверху-слева: светлая кромка сверху/слева, тёмная снизу/справа.
+static func shade(im: Image, hi := 0.25, lo := 0.32) -> void:
+	var src := im.duplicate() as Image
+	for x in im.get_width():
+		for y in im.get_height():
+			var c := src.get_pixel(x, y)
+			if c.a < 0.5:
+				continue
+			if alpha_at(src, x, y - 1) < 0.5 or alpha_at(src, x - 1, y) < 0.5:
+				im.set_pixel(x, y, c.lightened(hi))
+			elif alpha_at(src, x, y + 1) < 0.5 or alpha_at(src, x + 1, y) < 0.5:
+				im.set_pixel(x, y, c.darkened(lo))
+
+
+static func outline(im: Image, c := OUT) -> void:
+	var src := im.duplicate() as Image
+	for x in im.get_width():
+		for y in im.get_height():
+			if src.get_pixel(x, y).a >= 0.5:
+				continue
+			if alpha_at(src, x + 1, y) >= 0.5 or alpha_at(src, x - 1, y) >= 0.5 \
+					or alpha_at(src, x, y + 1) >= 0.5 or alpha_at(src, x, y - 1) >= 0.5:
+				im.set_pixel(x, y, c)
+
+
+static func silhouette(im: Image) -> Image:
+	var s := blank(im.get_width(), im.get_height())
+	for x in im.get_width():
+		for y in im.get_height():
+			if im.get_pixel(x, y).a >= 0.5:
+				s.set_pixel(x, y, Color.WHITE)
+	return s
+
+
+static func tex(im: Image) -> ImageTexture:
+	return ImageTexture.create_from_image(im)
+
+
+static func hdr(c: Color, k: float) -> Color:
+	return Color(c.r * k, c.g * k, c.b * k, c.a)
+
+
+# ============ Анимированные спрайты ============
+
+const SPECS := {
+	# ключ: [ширина, высота, кадров, тень/объём, цвет обводки]
+	"hero": [22, 28, 8, true],
+	"rin": [22, 28, 8, true],
+	"bram": [24, 28, 8, true],
+	"kira": [22, 30, 8, true],
+	"skyla": [22, 28, 8, true],
+	"orm": [26, 30, 8, true],
+	"mora": [22, 28, 8, true],
+	"zephyr": [22, 30, 8, true],
+	"iris": [22, 28, 8, true],
+	"kai": [22, 26, 8, true],
+	"goblin": [16, 16, 4, true],
+	"slime": [20, 16, 4, true],
+	"slimelet": [12, 10, 4, true],
+	"spider": [24, 16, 4, true],
+	"spiderling": [14, 10, 4, true],
+	"caster": [18, 24, 4, true],
+	"bomber": [16, 16, 4, true],
+	"knight": [20, 26, 4, true],
+	"omega": [50, 54, 4, true],
+	"arrow": [16, 5, 1, false],
+	"spirit": [11, 13, 2, false],
+	"shuriken": [11, 11, 2, false],
+	"flaskp": [7, 10, 1, true],
+	"lich": [40, 46, 4, true],
+	"colossus": [50, 46, 4, true],
+	"queen": [52, 42, 4, true],
+	"chest": [18, 16, 2, true],
+	"drone": [22, 16, 2, true],
+	"shard": [9, 5, 1, false],
+	"sword": [9, 20, 1, false],
+	"imp": [18, 19, 4, true],
+	"bat": [26, 16, 4, true],
+	"ghoul": [20, 26, 4, true],
+	"wraith": [20, 26, 4, false],
+	"brute": [36, 38, 4, true],
+	"gem1": [11, 13, 1, true],
+	"gem3": [11, 13, 1, true],
+	"gem5": [11, 13, 1, true],
+	"gem9": [13, 15, 1, true],
+	"gemx": [19, 23, 1, true],
+	"heal": [11, 11, 1, true],
+	"orb": [9, 9, 1, false],
+	"blade": [18, 7, 1, false],
+	"lamp0": [14, 44, 1, true],
+	"lamp1": [14, 44, 1, true],
+	"obelisk0": [16, 34, 1, true],
+	"obelisk1": [16, 34, 1, true],
+	"obelisk2": [16, 34, 1, true],
+	"crystal0": [20, 18, 1, true],
+	"crystal1": [20, 18, 1, true],
+	"crate0": [18, 16, 1, true],
+	"crate1": [18, 16, 1, true],
+	"puddle0": [28, 12, 1, false],
+	"sign0": [18, 34, 1, true],
+	"sign1": [18, 34, 1, true],
+	"barrel0": [12, 15, 1, true],
+	"barrel1": [12, 15, 1, true],
+	"rock0": [20, 14, 1, true],
+	"rock1": [16, 12, 1, true],
+	"crystal_big0": [22, 34, 1, true],
+	"crystal_big1": [22, 34, 1, true],
+	"pillar0": [14, 36, 1, true],
+	"pillar1": [14, 24, 1, true],
+	"statue0": [18, 38, 1, true],
+	"tree0": [40, 54, 1, false],
+	"tree1": [40, 54, 1, false],
+	"tree2": [32, 44, 1, false],
+	"tree3": [40, 52, 1, false],
+	"pine2": [30, 58, 1, false],
+	"mushroom0": [16, 14, 1, true],
+	"mushroom1": [20, 18, 1, true],
+	"wreck0": [30, 18, 1, true],
+	"wreck1": [24, 22, 1, true],
+	"house0": [36, 42, 1, true],
+	"house1": [36, 42, 1, true],
+	"house2": [30, 48, 1, true],
+	"tower0": [28, 64, 1, true],
+	"wall0": [48, 30, 1, true],
+	"gate0": [48, 50, 1, true],
+	"stall0": [32, 28, 1, true],
+	"stall1": [32, 28, 1, true],
+	"well0": [22, 24, 1, true],
+	"banner0": [14, 42, 1, true],
+	"banner1": [14, 42, 1, true],
+	"lantern0": [12, 34, 1, true],
+	"pine0": [32, 62, 1, false],
+	"pine1": [26, 48, 1, false],
+	"bush0": [22, 15, 1, false],
+	"bush1": [18, 13, 1, false],
+	"cart0": [30, 20, 1, true],
+	"fence0": [32, 14, 1, true],
+	"decal_cobble": [48, 26, 1, false],
+	"decal_road": [64, 22, 1, false],
+	"decal_rune": [48, 48, 1, false],
+	"decal_grate": [24, 16, 1, false],
+	"decal_moss": [30, 18, 1, false],
+	"decal_cable": [40, 14, 1, false],
+	"decal_crater": [34, 20, 1, false],
+	"puddle1": [28, 12, 1, false],
+}
+
+
+## Возвращает {"base": [ImageTexture], "emit": [...], "flash": [...], "size": Vector2}
+static func frames(key: String) -> Dictionary:
+	if _cache.has(key):
+		return _cache[key]
+	var spec: Array = SPECS[key] if SPECS.has(key) else [18, 24, 8, true]
+	var w: int = spec[0]
+	var h: int = spec[1]
+	var count: int = spec[2]
+	var volume: bool = spec[3]
+	var result := {"base": [], "emit": [], "flash": [], "size": Vector2(w, h)}
+	for f in count:
+		var base := blank(w, h)
+		var emit := blank(w, h)
+		_paint(key, base, emit, f)
+		# Неоновые пиксели тоже часть силуэта
+		for x in w:
+			for y in h:
+				var ec := emit.get_pixel(x, y)
+				if ec.a > 0.3 and base.get_pixel(x, y).a < 0.5:
+					base.set_pixel(x, y, Color(ec.r * 0.35, ec.g * 0.35, ec.b * 0.35, 1.0))
+		if volume:
+			vshade(base, 0.35)
+			shade(base)
+		if not key.begins_with("puddle") and not key.begins_with("decal_"):
+			outline(base, Color(0.08, 0.2, 0.3) if key == "wraith" else OUT)
+		result["base"].append(tex(base))
+		result["emit"].append(tex(emit))
+		result["flash"].append(tex(silhouette(base)))
+	_cache[key] = result
+	return result
+
+
+static func _paint(key: String, b: Image, e: Image, f: int) -> void:
+	if key.begins_with("tree") or key.begins_with("pine") or key.begins_with("bush"):
+		_paint_tree(key, b, e)
+		return
+	if key in ["house0", "house1", "house2", "tower0", "wall0", "gate0", "stall0", "stall1", "well0",
+			"banner0", "banner1", "lantern0", "pine0", "pine1", "bush0", "bush1", "cart0", "fence0",
+			"decal_cobble", "decal_road"]:
+		_paint_medieval(key, b, e)
+		return
+	if key.begins_with("decal_") or key in ["sign0", "sign1", "barrel0", "barrel1", "rock0", "rock1",
+			"crystal_big0", "crystal_big1", "pillar0", "pillar1", "statue0", "tree0", "tree1", "tree2",
+			"mushroom0", "mushroom1", "wreck0", "wreck1"]:
+		_paint_env(key, b, e)
+		return
+	if key.begins_with("villager_"):
+		_paint_villager(b, e, f, int(key.substr(9)))
+		return
+	match key:
+		"hero":
+			_paint_hero(b, e, f)
+		"rin":
+			_paint_rin(b, e, f)
+		"bram":
+			_paint_bram(b, e, f)
+		"kira":
+			_paint_kira(b, e, f)
+		"lich":
+			_paint_lich(b, e, f)
+		"skyla", "orm", "mora", "zephyr", "iris", "kai":
+			_paint_hero2(key, b, e, f)
+		"goblin", "slime", "slimelet", "spider", "spiderling", "caster", "bomber", "knight":
+			_paint_mob2(key, b, e, f)
+		"omega":
+			_paint_omega(b, e, f)
+		"arrow":
+			line(e, 1, 2, 13, 2, Color(0.6, 1.0, 0.85))
+			poly(e, PackedVector2Array([Vector2(12, 0), Vector2(16, 2.5), Vector2(12, 5)]), Color(1, 1, 1))
+			line(b, 0, 1, 3, 1, Color(0.3, 0.8, 0.6))
+			line(b, 0, 3, 3, 3, Color(0.3, 0.8, 0.6))
+		"spirit":
+			var c := Color(0.75, 0.6, 1.0)
+			ellipse(e, 5.5, 5, 4, 4, Color(c, 0.85))
+			poly(e, PackedVector2Array([Vector2(1.5, 5), Vector2(9.5, 5), Vector2(7 + f, 12), Vector2(5, 9), Vector2(3 - f, 12)]), Color(c, 0.7))
+			px(e, 4, 4, Color(0.1, 0.05, 0.2))
+			px(e, 7, 4, Color(0.1, 0.05, 0.2))
+		"shuriken":
+			var c := Color(0.85, 0.88, 0.95)
+			if f == 0:
+				poly(b, PackedVector2Array([Vector2(5.5, 0), Vector2(7, 4), Vector2(11, 5.5), Vector2(7, 7), Vector2(5.5, 11), Vector2(4, 7), Vector2(0, 5.5), Vector2(4, 4)]), c)
+			else:
+				poly(b, PackedVector2Array([Vector2(1.5, 1.5), Vector2(6.5, 4), Vector2(9.5, 1.5), Vector2(7, 6.5), Vector2(9.5, 9.5), Vector2(4.5, 7), Vector2(1.5, 9.5), Vector2(4, 4.5)]), c)
+			ellipse(e, 5.5, 5.5, 1.3, 1.3, Color(1.0, 0.35, 0.35))
+		"flaskp":
+			rect(b, 3, 0, 2, 3, Color(0.6, 0.45, 0.3))
+			ellipse(b, 3.5, 6, 3.2, 3.5, Color(0.5, 0.7, 0.4, 0.9))
+			ellipse(e, 3.5, 6.5, 2, 2.2, Color(0.6, 1.0, 0.3))
+		"colossus":
+			_paint_colossus(b, e, f)
+		"queen":
+			_paint_queen(b, e, f)
+		"chest":
+			_paint_chest(b, e, f)
+		"drone":
+			_paint_drone(b, e, f)
+		"sword":
+			poly(e, PackedVector2Array([Vector2(4.5, 1), Vector2(6.5, 4), Vector2(6, 15), Vector2(3, 15), Vector2(2.5, 4)]), Color(1.0, 0.3, 0.75))
+			line(e, 4, 3, 4, 14, Color(1.0, 0.85, 1.0))
+			rect(b, 1, 15, 7, 1, Color(0.85, 0.65, 0.3))
+			rect(b, 4, 16, 1, 3, Color(0.4, 0.3, 0.3))
+		"shard":
+			poly(e, PackedVector2Array([Vector2(0, 2.5), Vector2(3, 0.5), Vector2(9, 2.5), Vector2(3, 4.5)]), Color(0.6, 0.95, 1.0))
+			line(e, 3, 2, 8, 2, Color(1, 1, 1))
+		"imp":
+			_paint_imp(b, e, f)
+		"bat":
+			_paint_bat(b, e, f)
+		"ghoul":
+			_paint_ghoul(b, e, f)
+		"wraith":
+			_paint_wraith(b, e, f)
+		"brute":
+			_paint_brute(b, e, f)
+		"gem1":
+			_paint_gem(b, e, Color(0.25, 0.6, 1.0))
+		"gem3":
+			_paint_gem(b, e, Color(0.3, 1.0, 0.55))
+		"gem5":
+			_paint_gem(b, e, Color(1.0, 0.75, 0.25))
+		"gemx":
+			# Мега-кристалл: крупная огранённая друза, алая с золотом
+			poly(b, PackedVector2Array([Vector2(9.5, 0), Vector2(18, 7), Vector2(15, 18), Vector2(9.5, 22), Vector2(4, 18), Vector2(1, 7)]), Color(0.85, 0.12, 0.25))
+			poly(b, PackedVector2Array([Vector2(9.5, 2), Vector2(15, 7), Vector2(9.5, 19), Vector2(4, 7)]), Color(1.0, 0.3, 0.4))
+			line(b, 1, 7, 18, 7, Color(1.0, 0.75, 0.4))
+			line(b, 9, 1, 9, 21, Color(1.0, 0.55, 0.5))
+			rect(e, 9, 4, 1, 12, Color(1.0, 0.85, 0.6))
+			rect(e, 6, 7, 7, 1, Color(1.0, 0.8, 0.5))
+			px(e, 6, 5, Color(1, 1, 1))
+			px(e, 13, 5, Color(1, 1, 1))
+			px(e, 9, 10, Color(1, 1, 1))
+		"gem9":
+			# Красный — самый крупный, с огранкой
+			poly(b, PackedVector2Array([Vector2(6.5, 0), Vector2(12, 5), Vector2(6.5, 14), Vector2(1, 5)]), Color(1.0, 0.2, 0.3).darkened(0.2))
+			line(b, 2, 5, 11, 5, Color(1.0, 0.5, 0.55))
+			line(b, 6, 1, 6, 12, Color(1.0, 0.35, 0.4))
+			rect(e, 6, 3, 1, 7, Color(1.0, 0.7, 0.75))
+			px(e, 4, 4, Color(1, 1, 1))
+			px(e, 8, 4, Color(1, 1, 1))
+		"heal":
+			_paint_heart(b, e)
+		"orb":
+			ellipse(e, 4.5, 4.5, 3.6, 3.6, Color(0.25, 0.75, 1.0))
+			ellipse(e, 4.5, 4.5, 2.2, 2.2, Color(0.8, 1.0, 1.0))
+		"blade":
+			poly(e, PackedVector2Array([Vector2(1, 3.5), Vector2(4, 1), Vector2(17.5, 3.5), Vector2(4, 6)]), Color(1.0, 0.25, 0.75))
+			line(e, 4, 3, 16, 3, Color(1.0, 0.85, 1.0))
+			rect(b, 0, 2, 2, 3, Color(0.8, 0.65, 0.3))
+		"lamp0", "lamp1":
+			_paint_lamp(b, e, Color(0.2, 0.95, 1.0) if key == "lamp0" else Color(1.0, 0.25, 0.75))
+		"obelisk0", "obelisk1", "obelisk2":
+			_paint_obelisk(b, e, int(key.right(1)))
+		"crystal0", "crystal1":
+			_paint_crystal(b, e, int(key.right(1)))
+		"crate0", "crate1":
+			_paint_crate(b, e, int(key.right(1)))
+		"puddle0", "puddle1":
+			ellipse(b, 14, 6, 12.5, 4.5, Color(0.06, 0.08, 0.15, 0.9))
+			ellipse(b, 14, 6, 10, 3, Color(0.08, 0.11, 0.2, 0.9))
+			var c1 := Color(0.2, 0.9, 1.0, 0.55) if key == "puddle0" else Color(1.0, 0.3, 0.8, 0.55)
+			line(e, 7, 5, 12, 5, c1)
+			line(e, 15, 7, 21, 7, Color(c1, 0.35))
+			px(e, 18, 4, Color(1, 1, 1, 0.5))
+
+
+# ---------- Герой: техномаг в капюшоне с посохом ----------
+
+static func _paint_hero(b: Image, e: Image, f: int) -> void:
+	var walk := f >= 4
+	var k := f % 4
+	var oy: int = ([0, 1, 0, 1] if walk else [0, 0, 1, 1])[k]
+	var step: int = ([1, 0, -1, 0] if walk else [0, 0, 0, 0])[k]
+	var fl: int = ([0, 1, 0, -1] if walk else [0, 0, 1, 0])[k]
+
+	var boot := Color(0.1, 0.09, 0.17)
+	var cloak := Color(0.17, 0.21, 0.5)
+	var cloak2 := Color(0.25, 0.32, 0.66)
+	var hood := Color(0.32, 0.18, 0.55)
+	var metal := Color(0.45, 0.48, 0.64)
+	var gold := Color(0.9, 0.68, 0.27)
+	var neon_m := Color(1.0, 0.25, 0.72)
+	var neon_c := Color(0.3, 1.0, 1.0)
+
+	# Ноги
+	var la := 3 if walk and k == 0 else 4
+	var lb := 3 if walk and k == 2 else 4
+	rect(b, 8 + step, 21 + (4 - la), 2, la, boot)
+	rect(b, 12 - step, 21 + (4 - lb), 2, lb, boot)
+	px(b, 9 + step, 24, metal)
+	px(b, 13 - step, 24, metal)
+
+	# Плащ
+	poly(b, PackedVector2Array([Vector2(8, 11 + oy), Vector2(15, 11 + oy),
+		Vector2(17.5, 22.5 + fl), Vector2(4.5, 22.5 - fl)]), cloak)
+	line(b, 11, 13 + oy, 10, 21, cloak2)
+	line(b, 12, 13 + oy, 12, 21, cloak2)
+	rect(b, 8, 16 + oy, 8, 1, gold)
+	# Неоновая кайма плаща
+	line(e, 15, 12 + oy, 17, 22 + fl, neon_m)
+	line(e, 5, 22 - fl, 17, 22 + fl, Color(neon_m, 0.85))
+	if k % 2 == 0:
+		px(e, 9, 19 + oy, Color(neon_c, 0.9))
+		px(e, 10, 19 + oy, Color(neon_c, 0.6))
+
+	# Наплечник и рука
+	ellipse(b, 10, 12 + oy, 3.2, 1.8, metal)
+	rect(b, 15, 14 + oy, 2, 3, cloak)
+	rect(b, 16, 16 + oy, 2, 2, Color(0.22, 0.16, 0.24))
+
+	# Капюшон и тёмное лицо
+	poly(b, PackedVector2Array([Vector2(7, 7 + oy), Vector2(4.5, 12 + oy), Vector2(9, 10 + oy)]), hood)
+	ellipse(b, 11.5, 8.5 + oy, 5, 5, hood)
+	ellipse(b, 13.2, 9.5 + oy, 2.7, 2.5, Color(0.05, 0.03, 0.1))
+	# Визор
+	rect(e, 12, 9 + oy, 4, 1, neon_c)
+	px(e, 15, 9 + oy, Color(1, 1, 1))
+
+	# Посох и кристалл
+	line(b, 18, 7 + oy, 18, 25, metal)
+	px(b, 17, 6 + oy, metal)
+	px(b, 19, 6 + oy, metal)
+	var cb: int = [0, -1, -1, 0][k]
+	ellipse(e, 18.5, 4 + oy + cb, 1.6, 2.3, Color(0.75, 0.4, 1.0))
+	px(e, 18, 4 + oy + cb, Color(1, 0.9, 1))
+
+
+# ---------- Рин: кибер-самурай ----------
+
+static func _hero_pose(f: int) -> Dictionary:
+	var walk := f >= 4
+	var k := f % 4
+	return {
+		"walk": walk, "k": k,
+		"oy": ([0, 1, 0, 1] if walk else [0, 0, 1, 1])[k],
+		"step": ([1, 0, -1, 0] if walk else [0, 0, 0, 0])[k],
+		"fl": ([0, 1, 0, -1] if walk else [0, 0, 1, 0])[k],
+	}
+
+
+static func _legs(b: Image, pose: Dictionary, x1: int, x2: int, y: int, c: Color, w := 2) -> void:
+	var step: int = pose["step"]
+	var k: int = pose["k"]
+	var la := 3 if pose["walk"] and k == 0 else 4
+	var lb := 3 if pose["walk"] and k == 2 else 4
+	rect(b, x1 + step, y + (4 - la), w, la, c)
+	rect(b, x2 - step, y + (4 - lb), w, lb, c)
+
+
+static func _paint_rin(b: Image, e: Image, f: int) -> void:
+	var p := _hero_pose(f)
+	var oy: int = p["oy"]
+	var fl: int = p["fl"]
+	var armor := Color(0.16, 0.14, 0.22)
+	var plate := Color(0.42, 0.4, 0.5)
+	var red := Color(0.75, 0.1, 0.25)
+	var neon := Color(1.0, 0.25, 0.6)
+	_legs(b, p, 8, 12, 21, Color(0.12, 0.1, 0.16))
+	# Шарф развевается
+	poly(b, PackedVector2Array([Vector2(8, 11 + oy), Vector2(3, 12 + oy + fl), Vector2(2, 15 + oy - fl), Vector2(8, 13 + oy)]), red)
+	# Корпус с пластинами
+	poly(b, PackedVector2Array([Vector2(8, 11 + oy), Vector2(15, 11 + oy), Vector2(15.5, 21.5), Vector2(7.5, 21.5)]), armor)
+	rect(b, 8, 13 + oy, 7, 2, plate)
+	rect(b, 8, 18, 3, 3, plate.darkened(0.2))
+	rect(b, 12, 18, 3, 3, plate.darkened(0.2))
+	rect(b, 8, 16 + oy, 7, 1, red)
+	line(e, 9, 15 + oy, 14, 15 + oy, Color(neon, 0.8))
+	# Катана за спиной
+	line(b, 5, 21, 13, 6 + oy, Color(0.7, 0.72, 0.8))
+	rect(b, 4, 21, 2, 2, Color(0.8, 0.6, 0.25))
+	# Шлем
+	ellipse(b, 11.5, 8 + oy, 4.6, 4.4, armor.lightened(0.1))
+	rect(b, 7, 4 + oy, 9, 2, plate)
+	poly(b, PackedVector2Array([Vector2(13, 4 + oy), Vector2(17, 1 + oy), Vector2(15, 5 + oy)]), red)
+	rect(e, 11, 8 + oy, 5, 1, neon)
+	px(e, 15, 8 + oy, Color(1, 0.8, 0.9))
+	# Рука
+	rect(b, 15, 13 + oy, 2, 4, armor)
+	px(b, 16, 17 + oy, plate)
+
+
+# ---------- Брам: рунный кузнец ----------
+
+static func _paint_bram(b: Image, e: Image, f: int) -> void:
+	var p := _hero_pose(f)
+	var oy: int = p["oy"]
+	var k: int = p["k"]
+	var iron := Color(0.36, 0.34, 0.4)
+	var leather := Color(0.35, 0.22, 0.14)
+	var beard := Color(0.75, 0.4, 0.15)
+	var rune := Color(1.0, 0.7, 0.2)
+	var ice := Color(0.5, 0.95, 1.0)
+	_legs(b, p, 7, 13, 22, Color(0.2, 0.15, 0.12), 3)
+	# Широкий корпус
+	ellipse(b, 11.5, 16 + oy, 7, 6.5, iron)
+	rect(b, 6, 18 + oy, 12, 4, leather)
+	rect(b, 6, 19 + oy, 12, 1, Color(0.8, 0.6, 0.25))
+	ellipse(b, 5.5, 12 + oy, 3, 2.5, iron.lightened(0.1))
+	ellipse(b, 17.5, 12 + oy, 3, 2.5, iron.lightened(0.1))
+	line(e, 10, 14 + oy, 13, 17 + oy, rune)
+	line(e, 13, 14 + oy, 10, 17 + oy, rune)
+	# Голова, шлем, борода
+	ellipse(b, 12, 8 + oy, 4.2, 4, Color(0.85, 0.65, 0.5))
+	ellipse(b, 12, 5.5 + oy, 4.8, 3, iron)
+	rect(b, 7, 6 + oy, 10, 1, iron.darkened(0.3))
+	poly(b, PackedVector2Array([Vector2(8, 9 + oy), Vector2(16, 9 + oy), Vector2(14, 15 + oy), Vector2(12, 16 + oy), Vector2(10, 15 + oy)]), beard)
+	px(e, 10, 8 + oy, rune)
+	px(e, 14, 8 + oy, rune)
+	# Молот с ледяным бойком
+	var hy: int = [0, 0, -1, -1][k]
+	line(b, 20, 9 + oy + hy, 20, 22, Color(0.45, 0.3, 0.2))
+	rect(b, 17, 5 + oy + hy, 7, 5, iron)
+	rect(e, 18, 6 + oy + hy, 5, 1, ice)
+	px(e, 18, 8 + oy + hy, ice)
+	px(e, 22, 8 + oy + hy, ice)
+
+
+# ---------- Кира: ведьма сети ----------
+
+static func _paint_kira(b: Image, e: Image, f: int) -> void:
+	var p := _hero_pose(f)
+	var oy: int = p["oy"]
+	var fl: int = p["fl"]
+	var k: int = p["k"]
+	var dress := Color(0.12, 0.22, 0.18)
+	var hat := Color(0.1, 0.12, 0.16)
+	var hair := Color(0.55, 0.2, 0.6)
+	var neon := Color(0.35, 1.0, 0.5)
+	_legs(b, p, 9, 12, 23, Color(0.08, 0.08, 0.12))
+	# Волосы за спиной
+	poly(b, PackedVector2Array([Vector2(7, 9 + oy), Vector2(5, 18 + oy + fl), Vector2(9, 16 + oy)]), hair)
+	# Платье-плащ
+	poly(b, PackedVector2Array([Vector2(8, 13 + oy), Vector2(14, 13 + oy), Vector2(17, 24 + fl), Vector2(5, 24 - fl)]), dress)
+	line(e, 6, 23 - fl, 16, 23 + fl, neon)
+	for y in range(15, 22, 3):
+		px(e, 11, y + oy, Color(neon, 0.8))
+		px(e, 12, y + oy + 1, Color(neon, 0.6))
+	# Лицо и волосы
+	ellipse(b, 11.5, 11 + oy, 3.4, 3.2, Color(0.9, 0.75, 0.7))
+	rect(b, 8, 9 + oy, 7, 2, hair)
+	rect(e, 11, 11 + oy, 1, 1, neon)
+	rect(e, 13, 11 + oy, 1, 1, neon)
+	# Шляпа ведьмы с неоновой лентой
+	rect(b, 5, 8 + oy, 14, 2, hat)
+	poly(b, PackedVector2Array([Vector2(8, 8 + oy), Vector2(15, 8 + oy), Vector2(13, 2 + oy), Vector2(10 + fl, 0.5 + oy)]), hat)
+	rect(e, 8, 7 + oy, 7, 1, Color(1.0, 0.3, 0.8))
+	# Парящий голо-кристалл в руке
+	var cb: int = [0, -1, -1, 0][k]
+	rect(b, 15, 15 + oy, 2, 3, dress)
+	ellipse(e, 18.5, 14 + oy + cb, 1.6, 1.6, neon)
+	px(e, 18, 14 + oy + cb, Color(1, 1, 1))
+
+
+# ---------- Боссы ----------
+
+static func _paint_lich(b: Image, e: Image, f: int) -> void:
+	var bob: int = [0, -1, -1, 0][f]
+	var robe := Color(0.18, 0.1, 0.3)
+	var bone := Color(0.85, 0.85, 0.8)
+	var neon := Color(0.6, 0.4, 1.0)
+	var cyan := Color(0.3, 1.0, 1.0)
+	var pts := PackedVector2Array([Vector2(12, 14 + bob), Vector2(28, 14 + bob)])
+	var x := 32.0
+	while x >= 8.0:
+		pts.append(Vector2(x, 41.0 + sin(x * 0.7 + f * 1.5) * 2.0 + bob))
+		x -= 3.0
+	poly(b, pts, robe)
+	line(b, 20, 18 + bob, 20, 40 + bob, robe.lightened(0.15))
+	for y in range(20, 40, 5):
+		px(e, 20, y + bob, neon)
+		px(e, 16, y + 2 + bob, Color(neon, 0.6))
+		px(e, 24, y + 2 + bob, Color(neon, 0.6))
+	# Руки-кости, парящие
+	line(b, 10, 18 + bob, 4, 24 + bob - f % 2, bone)
+	line(b, 30, 18 + bob, 36, 24 + bob - (f + 1) % 2, bone)
+	ellipse(e, 4, 26 + bob, 2, 2, Color(neon, 0.9))
+	ellipse(e, 36, 26 + bob, 2, 2, Color(neon, 0.9))
+	# Череп
+	ellipse(b, 20, 10 + bob, 6, 6, bone)
+	rect(b, 16, 14 + bob, 8, 3, bone.darkened(0.15))
+	ellipse(b, 17.5, 10 + bob, 1.8, 2, Color(0.05, 0.02, 0.08))
+	ellipse(b, 22.5, 10 + bob, 1.8, 2, Color(0.05, 0.02, 0.08))
+	px(e, 17, 10 + bob, cyan)
+	px(e, 22, 10 + bob, cyan)
+	# Корона из осколков данных
+	for i in 5:
+		var cx := 14 + i * 3
+		var hgt: int = [3, 5, 7, 5, 3][i]
+		line(e, cx, 4 + bob, cx, 4 + bob - hgt + (f + i) % 2, cyan if i % 2 == 0 else neon)
+
+
+static func _paint_colossus(b: Image, e: Image, f: int) -> void:
+	var bob: int = [0, 1, 0, 1][f]
+	var step: int = [2, 0, -2, 0][f]
+	var steel := Color(0.4, 0.38, 0.44)
+	var dark := Color(0.2, 0.18, 0.24)
+	var hot := Color(1.0, 0.5, 0.12)
+	rect(b, 15 + step, 34, 7, 10, dark)
+	rect(b, 28 - step, 34, 7, 10, dark)
+	rect(b, 13 + step, 42, 10, 3, steel)
+	rect(b, 27 - step, 42, 10, 3, steel)
+	rect(b, 12, 14 + bob, 26, 21, steel)
+	rect(b, 14, 30 + bob, 22, 5, dark)
+	ellipse(b, 9, 15 + bob, 7, 6, steel.lightened(0.08))
+	ellipse(b, 41, 15 + bob, 7, 6, steel.lightened(0.08))
+	rect(b, 3, 18 + bob, 8, 16, steel.darkened(0.1))
+	rect(b, 39, 18 + bob, 8, 16, steel.darkened(0.1))
+	rect(b, 2, 33 + bob, 10, 6, dark)
+	rect(b, 38, 33 + bob, 10, 6, dark)
+	# Голова-кабина
+	rect(b, 19, 6 + bob, 12, 9, dark)
+	rect(e, 21, 9 + bob, 8, 2, hot)
+	px(e, 25, 9 + bob, Color(1, 1, 0.8))
+	# Реактор в груди
+	ellipse(e, 25, 22 + bob, 4.5, 4.5, hot)
+	ellipse(e, 25, 22 + bob, 2.2, 2.2, Color(1, 0.95, 0.7))
+	for i in 3:
+		px(e, 15 + i * 2, 31 + bob, hot)
+		px(e, 31 + i * 2, 31 + bob, hot)
+	line(b, 13, 16 + bob, 18, 28 + bob, dark)
+	line(b, 37, 16 + bob, 32, 28 + bob, dark)
+	if f % 2 == 0:
+		px(e, 7, 12 + bob, Color(1.0, 0.2, 0.2))
+		px(e, 43, 12 + bob, Color(1.0, 0.2, 0.2))
+
+
+static func _paint_queen(b: Image, e: Image, f: int) -> void:
+	var tip: int = [2, 8, 14, 8][f]
+	var chitin := Color(0.28, 0.08, 0.22)
+	var wing := Color(0.5, 0.2, 0.6, 0.85)
+	var neon := Color(1.0, 0.3, 0.75)
+	var gold := Color(1.0, 0.8, 0.3)
+	poly(b, PackedVector2Array([Vector2(22, 16), Vector2(2, tip), Vector2(6, 22), Vector2(14, 24), Vector2(22, 22)]), wing)
+	poly(b, PackedVector2Array([Vector2(30, 16), Vector2(50, tip), Vector2(46, 22), Vector2(38, 24), Vector2(30, 22)]), wing)
+	line(e, 22, 18, 4, tip + 2, Color(neon, 0.8))
+	line(e, 30, 18, 48, tip + 2, Color(neon, 0.8))
+	# Брюшко
+	ellipse(b, 26, 31, 6, 9, chitin)
+	for y in [27, 31, 35]:
+		line(e, 22, y, 30, y, Color(neon, 0.7))
+	# Грудь и голова
+	ellipse(b, 26, 18, 6, 5, chitin.lightened(0.1))
+	ellipse(b, 26, 10, 5, 4.5, chitin.lightened(0.15))
+	ellipse(e, 23.5, 10, 1.8, 1.4, neon)
+	ellipse(e, 28.5, 10, 1.8, 1.4, neon)
+	# Корона
+	for i in 3:
+		line(e, 23 + i * 3, 6, 23 + i * 3, 3 - (i % 2) * 2, gold)
+	# Лапки
+	for i in 3:
+		line(b, 21, 17 + i * 3, 15, 21 + i * 4, chitin)
+		line(b, 31, 17 + i * 3, 37, 21 + i * 4, chitin)
+
+
+static func _paint_chest(b: Image, e: Image, f: int) -> void:
+	var metal := Color(0.3, 0.3, 0.4)
+	var trim := Color(0.85, 0.65, 0.25)
+	var neon := Color(1.0, 0.75, 0.3)
+	rect(b, 2, 7, 14, 8, metal)
+	rect(b, 2, 7, 14, 1, trim)
+	rect(b, 2, 14, 14, 1, trim)
+	rect(b, 2, 7, 1, 8, trim)
+	rect(b, 15, 7, 1, 8, trim)
+	if f == 0:
+		rect(b, 2, 3, 14, 4, metal.lightened(0.1))
+		rect(b, 2, 3, 14, 1, trim)
+		rect(e, 8, 6, 2, 3, neon)
+		line(e, 4, 11, 13, 11, Color(0.3, 0.9, 1.0, 0.8))
+	else:
+		rect(b, 2, 1, 14, 3, metal.lightened(0.1))
+		rect(e, 3, 6, 12, 2, Color(1.0, 0.95, 0.6))
+		line(e, 4, 11, 13, 11, Color(0.3, 0.9, 1.0, 0.8))
+
+
+# ---------- Бес-дрон ----------
+
+static func _paint_imp(b: Image, e: Image, f: int) -> void:
+	var bob: int = [0, -1, -1, 0][f]
+	var body := Color(0.48, 0.12, 0.25)
+	var horn := Color(0.24, 0.06, 0.14)
+	poly(b, PackedVector2Array([Vector2(5, 8 + bob), Vector2(3, 2 + bob), Vector2(8, 5 + bob)]), horn)
+	poly(b, PackedVector2Array([Vector2(13, 8 + bob), Vector2(15, 2 + bob), Vector2(10, 5 + bob)]), horn)
+	ellipse(b, 9, 10 + bob, 5.5, 5, body)
+	ellipse(b, 9, 13 + bob, 3, 1.6, Color(0.38, 0.36, 0.48))
+	line(b, 4, 11 + bob, 2, 14 + bob, horn)
+	line(b, 14, 11 + bob, 16, 14 + bob, horn)
+	ellipse(b, 10, 9 + bob, 2.2, 2.2, Color(0.05, 0.02, 0.05))
+	ellipse(e, 10, 9 + bob, 1.6, 1.6, Color(1.0, 0.3, 0.1))
+	px(e, 10, 8 + bob, Color(1.0, 0.95, 0.6))
+	rect(b, 7, 15 + bob, 1, 1, Color(0.25, 0.25, 0.3))
+	rect(b, 11, 15 + bob, 1, 1, Color(0.25, 0.25, 0.3))
+	var flame: int = [2, 3, 2, 1][f]
+	for i in flame:
+		var fc := Color(1.0, 0.9, 0.4) if i == 0 else Color(1.0, 0.45, 0.1, 0.8)
+		px(e, 7, 16 + bob + i, fc)
+		px(e, 11, 16 + bob + i, fc)
+
+
+# ---------- Неоновый нетопырь ----------
+
+static func _paint_bat(b: Image, e: Image, f: int) -> void:
+	var tip: int = [2, 6, 11, 6][f]
+	var wing := Color(0.32, 0.14, 0.5)
+	poly(b, PackedVector2Array([Vector2(11, 7), Vector2(2, tip), Vector2(4, 11), Vector2(7, 10), Vector2(10, 11.5)]), wing)
+	poly(b, PackedVector2Array([Vector2(15, 7), Vector2(24, tip), Vector2(22, 11), Vector2(19, 10), Vector2(16, 11.5)]), wing)
+	ellipse(b, 13, 8.5, 3.2, 3.6, Color(0.2, 0.1, 0.3))
+	px(b, 11, 4, Color(0.2, 0.1, 0.3))
+	px(b, 15, 4, Color(0.2, 0.1, 0.3))
+	px(b, 12, 11, Color(0.95, 0.95, 0.95))
+	px(b, 14, 11, Color(0.95, 0.95, 0.95))
+	var vein := Color(0.95, 0.3, 1.0, 0.9)
+	line(e, 10, 8, 3, tip + 1, vein)
+	line(e, 16, 8, 23, tip + 1, vein)
+	px(e, 12, 7, Color(1.0, 0.4, 0.8))
+	px(e, 14, 7, Color(1.0, 0.4, 0.8))
+
+
+# ---------- Кибер-упырь ----------
+
+static func _paint_ghoul(b: Image, e: Image, f: int) -> void:
+	var bob: int = [0, 1, 0, 1][f]
+	var step: int = [1, 0, -1, 0][f]
+	var skin := Color(0.3, 0.44, 0.3)
+	var metal := Color(0.46, 0.48, 0.58)
+	var neon := Color(0.4, 1.0, 0.45)
+	rect(b, 7 + step, 19, 2, 5, Color(0.2, 0.28, 0.22))
+	rect(b, 11 - step, 19, 2, 5, Color(0.2, 0.28, 0.22))
+	line(b, 7, 12 + bob, 4, 20 + bob, skin)
+	line(b, 8, 12 + bob, 5, 20 + bob, skin)
+	ellipse(b, 9.5, 14 + bob, 5, 5.5, skin)
+	line(b, 7, 13 + bob, 10, 13 + bob, skin.darkened(0.35))
+	line(b, 7, 15 + bob, 10, 15 + bob, skin.darkened(0.35))
+	ellipse(b, 13, 8 + bob, 3.6, 3.3, Color(0.4, 0.53, 0.38))
+	rect(b, 13, 10 + bob, 3, 1, Color(0.12, 0.06, 0.08))
+	px(b, 14, 10 + bob, Color(0.9, 0.9, 0.8))
+	rect(b, 13, 13 + bob, 2, 6, metal)
+	px(b, 12, 19 + bob, metal)
+	px(b, 15, 19 + bob, metal)
+	px(b, 14, 20 + bob, metal)
+	line(e, 14, 14 + bob, 14, 18 + bob, neon)
+	px(e, 14, 7 + bob, neon)
+	px(e, 15, 7 + bob, Color(0.85, 1.0, 0.85))
+	px(e, 6, 11 + bob, Color(neon, 0.8))
+	px(e, 6, 14 + bob, Color(neon, 0.8))
+
+
+# ---------- Глитч-призрак (голограмма) ----------
+
+static func _paint_wraith(b: Image, e: Image, f: int) -> void:
+	var body := Color(0.18, 0.36, 0.56)
+	var pts := PackedVector2Array([Vector2(5, 9), Vector2(10, 2), Vector2(15, 9), Vector2(16, 17)])
+	var x := 16.0
+	while x >= 4.0:
+		pts.append(Vector2(x, 21.0 + sin(x * 0.9 + f * 1.6) * 2.0))
+		x -= 2.0
+	pts.append(Vector2(4, 17))
+	poly(b, pts, body)
+	ellipse(b, 10, 8, 3, 2.5, Color(0.04, 0.06, 0.12))
+	px(e, 9, 8, Color(0.85, 1.0, 1.0))
+	px(e, 11, 8, Color(0.85, 1.0, 1.0))
+	for y in range(3, 25, 2):
+		for xx in b.get_width():
+			if b.get_pixel(xx, y).a > 0.5 and e.get_pixel(xx, y).a < 0.5:
+				px(e, xx, y, Color(0.3, 0.9, 1.0, 0.35))
+	# Глитч: сдвигаем пару строк
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 77 + f * 13
+	for i in 2:
+		var row := rng.randi_range(4, 21)
+		var dx := rng.randi_range(-2, 2)
+		for im in [b, e]:
+			var src := (im as Image).duplicate() as Image
+			for xx in im.get_width():
+				var sx: int = xx - dx
+				var c: Color = src.get_pixel(sx, row) if sx >= 0 and sx < im.get_width() else Color(0, 0, 0, 0)
+				(im as Image).set_pixel(xx, row, c)
+
+
+# ---------- Рунный голем (элита) ----------
+
+static func _paint_brute(b: Image, e: Image, f: int) -> void:
+	var bob: int = [0, 1, 0, 1][f]
+	var step: int = [1, 0, -1, 0][f]
+	var stone := Color(0.38, 0.34, 0.42)
+	var dark := Color(0.18, 0.16, 0.22)
+	var rune := Color(1.0, 0.55, 0.1)
+	rect(b, 11 + step, 28, 5, 8, stone.darkened(0.15))
+	rect(b, 20 - step, 28, 5, 8, stone.darkened(0.15))
+	ellipse(b, 18, 21 + bob, 10, 9, stone)
+	rect(b, 4, 17 + bob, 6, 10, stone)
+	rect(b, 26, 17 + bob, 6, 10, stone)
+	ellipse(b, 8, 15 + bob, 5, 4.5, stone.lightened(0.05))
+	ellipse(b, 28, 15 + bob, 5, 4.5, stone.lightened(0.05))
+	ellipse(b, 7, 28 + bob, 3.6, 3, stone.darkened(0.1))
+	ellipse(b, 29, 28 + bob, 3.6, 3, stone.darkened(0.1))
+	ellipse(b, 18, 10 + bob, 5, 4, stone.darkened(0.08))
+	rect(b, 13, 8 + bob, 10, 1, dark)
+	line(b, 12, 19 + bob, 14, 25 + bob, dark)
+	line(b, 24, 18 + bob, 22, 24 + bob, dark)
+	rect(e, 15, 10 + bob, 2, 1, rune)
+	rect(e, 20, 10 + bob, 2, 1, rune)
+	line(e, 18, 15 + bob, 18, 25 + bob, rune)
+	line(e, 15, 17 + bob, 21, 22 + bob, Color(rune, 0.85))
+	line(e, 21, 17 + bob, 15, 22 + bob, Color(rune, 0.85))
+	for y in [20, 23]:
+		px(e, 6, y + bob, rune)
+		px(e, 29, y + bob, rune)
+
+
+# ---------- Кристаллы опыта и сердце ----------
+
+static func _paint_gem(b: Image, e: Image, c: Color) -> void:
+	poly(b, PackedVector2Array([Vector2(5.5, 1), Vector2(10, 5), Vector2(5.5, 12), Vector2(1, 5)]), c.darkened(0.2))
+	line(b, 2, 5, 9, 5, c.lightened(0.2))
+	rect(e, 5, 4, 1, 5, c.lightened(0.45))
+	px(e, 4, 4, Color(1, 1, 1))
+
+
+static func _paint_heart(b: Image, e: Image) -> void:
+	var c := Color(0.9, 0.12, 0.3)
+	ellipse(b, 3.5, 4, 2.6, 2.6, c)
+	ellipse(b, 7.5, 4, 2.6, 2.6, c)
+	poly(b, PackedVector2Array([Vector2(1, 5), Vector2(10, 5), Vector2(5.5, 10)]), c)
+	px(e, 3, 3, Color(1, 0.8, 0.85))
+	line(e, 3, 6, 7, 6, Color(1.0, 0.4, 0.6, 0.8))
+
+
+# ---------- Окружение ----------
+
+static func _paint_lamp(b: Image, e: Image, col: Color) -> void:
+	var metal := Color(0.26, 0.27, 0.36)
+	rect(b, 4, 10, 2, 31, metal)
+	rect(b, 2, 40, 6, 3, metal.darkened(0.2))
+	rect(b, 4, 8, 8, 2, metal)
+	rect(b, 8, 9, 5, 3, metal.darkened(0.3))
+	rect(e, 8, 12, 5, 1, col)
+	px(e, 10, 13, Color(col, 0.6))
+	for y in range(16, 38, 4):
+		px(e, 5, y, Color(col, 0.7))
+
+
+static func _paint_obelisk(b: Image, e: Image, v: int) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 1000 + v
+	var stone := Color(0.3, 0.28, 0.37)
+	poly(b, PackedVector2Array([Vector2(4, 31), Vector2(12, 31), Vector2(11, 7),
+		Vector2(9.5, 4 + rng.randi_range(0, 2)), Vector2(7, 6), Vector2(5, 5 + rng.randi_range(0, 3))]), stone)
+	rect(b, 2, 30, 12, 3, stone.darkened(0.25))
+	var col := [Color(0.7, 0.35, 1.0), Color(1.0, 0.5, 0.1), Color(0.3, 0.95, 1.0)][v % 3] as Color
+	for y in range(9, 27, 5):
+		for i in 3:
+			for j in 3:
+				if rng.randf() < 0.55:
+					px(e, 7 + i, y + j, col)
+	line(b, 5, 12, 6, 16, stone.darkened(0.4))
+
+
+static func _paint_crystal(b: Image, e: Image, v: int) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 2000 + v
+	var col := Color(0.3, 0.9, 1.0) if v == 0 else Color(0.75, 0.35, 1.0)
+	ellipse(b, 10, 15, 8, 2.6, Color(0.2, 0.18, 0.25))
+	for i in 4:
+		var x := rng.randi_range(4, 15)
+		var hgt := rng.randi_range(6, 12)
+		var w := rng.randi_range(2, 3)
+		poly(b, PackedVector2Array([Vector2(x - w, 15), Vector2(x + 0.5, 15 - hgt), Vector2(x + w + 1, 15)]), col.darkened(0.55))
+		line(e, x, 16 - hgt, x, 14, col)
+		px(e, x, 16 - hgt, Color(1, 1, 1))
+
+
+static func _paint_crate(b: Image, e: Image, v: int) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 3000 + v
+	rect(b, 2, 4, 14, 10, Color(0.24, 0.25, 0.33))
+	rect(b, 2, 2, 14, 2, Color(0.33, 0.34, 0.44))
+	for y in range(6, 12, 2):
+		line(b, 4, y, 9, y, Color(0.12, 0.12, 0.17))
+	var leds := [Color(0.3, 1.0, 0.4), Color(1.0, 0.25, 0.3), Color(0.3, 0.9, 1.0)]
+	for i in 3:
+		if rng.randf() < 0.75:
+			px(e, 11 + i * 2, 6, leds[rng.randi_range(0, 2)])
+	rect(e, 11, 9, 4, 2, Color(0.25, 0.9, 1.0, 0.8))
+
+
+# ============ Земля ============
+
+static func ground() -> Dictionary:
+	if _cache.has("ground"):
+		return _cache["ground"]
+	var n := 128
+	var b := blank(n, n)
+	var e := blank(n, n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 1337
+	var slab_tone := {}
+	for x in n:
+		for y in n:
+			var key := Vector2i(x / 16, y / 16)
+			if not slab_tone.has(key):
+				slab_tone[key] = rng.randf_range(-0.02, 0.025)
+			var t: float = slab_tone[key] + rng.randf_range(-0.012, 0.012)
+			var c := Color(0.115 + t, 0.105 + t, 0.155 + t)
+			if x % 16 == 0 or y % 16 == 0:
+				c = Color(0.06, 0.05, 0.09)
+			elif x % 16 == 1 or y % 16 == 1:
+				c = c.lightened(0.06)
+			b.set_pixel(x, y, c)
+	# Трещины
+	for i in 28:
+		var p := Vector2i(rng.randi_range(0, n - 1), rng.randi_range(0, n - 1))
+		for s in rng.randi_range(5, 13):
+			pxw(b, p.x, p.y, Color(0.05, 0.045, 0.08))
+			p += Vector2i(rng.randi_range(-1, 1), rng.randi_range(0, 1))
+	# Мох и мелкий мусор
+	for i in 40:
+		var p := Vector2i(rng.randi_range(0, n - 1), rng.randi_range(0, n - 1))
+		for s in 4:
+			pxw(b, p.x + rng.randi_range(-1, 1), p.y + rng.randi_range(-1, 1), Color(0.1, 0.17, 0.13))
+	for i in 90:
+		pxw(b, rng.randi_range(0, n - 1), rng.randi_range(0, n - 1), Color(0.2, 0.19, 0.25))
+	# Неоновые дорожки-схемы
+	for i in 9:
+		var col := Color(0.2, 0.9, 1.0, 0.55) if rng.randf() < 0.6 else Color(1.0, 0.25, 0.75, 0.5)
+		var p := Vector2i(rng.randi_range(0, 7) * 16 + 8, rng.randi_range(0, 7) * 16 + 8)
+		var dir := [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP][rng.randi_range(0, 3)] as Vector2i
+		for s in rng.randi_range(20, 42):
+			pxw(e, p.x, p.y, col)
+			if rng.randf() < 0.12:
+				dir = Vector2i(dir.y, dir.x) * (1 if rng.randf() < 0.5 else -1)
+			p += dir
+		pxw(e, p.x, p.y, Color(col, 1.0))
+		pxw(e, p.x + 1, p.y, Color(col, 1.0))
+		pxw(e, p.x, p.y + 1, Color(col, 1.0))
+		pxw(e, p.x + 1, p.y + 1, Color(col, 1.0))
+	# Руны на плитах
+	for i in 7:
+		var cx := rng.randi_range(0, 7) * 16 + 6
+		var cy := rng.randi_range(0, 7) * 16 + 5
+		for gx in 3:
+			for gy in 5:
+				if rng.randf() < 0.5:
+					pxw(e, cx + gx, cy + gy, Color(0.7, 0.35, 1.0, 0.65))
+	var result := {"base": tex(b), "emit": tex(e), "size": n}
+	_cache["ground"] = result
+	return result
+
+
+# ============ Иконки для интерфейса ============
+
+## Средний цвет непрозрачных пикселей иконки — «цвет» оружия.
+static func _icon_color(im: Image) -> Color:
+	var acc := Color(0, 0, 0, 0)
+	var n := 0
+	for y in im.get_height():
+		for x in im.get_width():
+			var c := im.get_pixel(x, y)
+			if c.a > 0.5 and c.get_luminance() > 0.15:
+				acc += c
+				n += 1
+	if n == 0:
+		return Color(1, 1, 1)
+	return Color(acc.r / n, acc.g / n, acc.b / n).lightened(0.15)
+
+
+## Иконка слияния — своя для каждой пары и порядка (основа + второе оружие):
+## неоновый ромб в цветах обоих, основа крупно в центре, второе — малой печатью
+## в углу, золотые звёзды. «Голо-искры» и «Плазмо-клинки» выглядят по-разному.
+static func fusion_icon(base: String, other: String) -> ImageTexture:
+	var key := "ficon2_" + base + "+" + other
+	if _cache.has(key):
+		return _cache[key]
+	var ib: Image = icon(base).get_image()
+	var io: Image = icon(other).get_image()
+	var cb := _icon_color(ib)
+	var co := _icon_color(io)
+	var n := 28
+	var im := blank(n, n)
+	var c0 := Vector2(13.5, 13.5)
+	# Ромб: заливка — тёмная смесь, рамка — переход от цвета второго к цвету основы
+	for y in n:
+		for x in n:
+			var d := absf(x - c0.x) + absf(y - c0.y)
+			if d <= 13.0:
+				var t := float(x + y) / float(2 * n)
+				if d >= 11.5:
+					im.set_pixel(x, y, co.lerp(cb, t))
+				elif d >= 10.5:
+					im.set_pixel(x, y, Color(0.05, 0.02, 0.1))
+				else:
+					im.set_pixel(x, y, Color(0.1, 0.05, 0.18).lerp(co.darkened(0.6), 0.35 * (1.0 - t)))
+	# Основа — в центре
+	for y in 18:
+		for x in 18:
+			var c := ib.get_pixel(x, y)
+			if c.a > 0.05:
+				im.set_pixel(x + 5, y + 4, c)
+	# Второе оружие — печать 10×10 в правом нижнем углу на кружке
+	var small: Image = io.duplicate()
+	small.resize(10, 10, Image.INTERPOLATE_NEAREST)
+	for y in range(-1, 11):
+		for x in range(-1, 11):
+			var px_ := Vector2i(x + 17, y + 17)
+			if px_.x < n and px_.y < n and Vector2(x - 4.5, y - 4.5).length() <= 6.2:
+				im.set_pixel(px_.x, px_.y, Color(0.04, 0.02, 0.08) if Vector2(x - 4.5, y - 4.5).length() < 5.6 else co)
+	for y in 10:
+		for x in 10:
+			var c := small.get_pixel(x, y)
+			if c.a > 0.05 and x + 17 < n and y + 17 < n:
+				im.set_pixel(x + 17, y + 17, c)
+	# Золотые звёзды слияния
+	var gold := Color(1.0, 0.85, 0.35)
+	for p in [Vector2i(3, 3), Vector2i(2, 3), Vector2i(4, 3), Vector2i(3, 2), Vector2i(3, 4),
+			Vector2i(24, 3), Vector2i(23, 3), Vector2i(25, 3), Vector2i(24, 2), Vector2i(24, 4)]:
+		im.set_pixel(p.x, p.y, gold)
+	var t2 := tex(im)
+	_cache[key] = t2
+	return t2
+
+
+static func icon(id: String) -> ImageTexture:
+	var key := "icon_" + id
+	if _cache.has(key):
+		return _cache[key]
+	var im := blank(18, 18)
+	var clear := Color(0, 0, 0, 0)
+	match id:
+		"bolt":
+			line(im, 2, 15, 9, 8, Color(0.2, 0.5, 1.0))
+			line(im, 3, 15, 9, 9, Color(0.2, 0.5, 1.0))
+			line(im, 2, 14, 8, 8, Color(0.3, 0.7, 1.0))
+			ellipse(im, 11.5, 6.5, 4, 4, Color(0.3, 0.85, 1.0))
+			ellipse(im, 11.5, 6.5, 2, 2, Color(0.9, 1.0, 1.0))
+		"blades":
+			for d in 2:
+				line(im, 3 + d, 3, 14, 14 - d, Color(1.0, 0.3, 0.8))
+				line(im, 14 - d, 3, 3, 14 - d, Color(0.4, 0.9, 1.0))
+			rect(im, 2, 13, 3, 3, Color(0.9, 0.7, 0.3))
+			rect(im, 13, 13, 3, 3, Color(0.9, 0.7, 0.3))
+		"aura":
+			ellipse(im, 9, 9, 7.5, 7.5, Color(1.0, 0.5, 0.1))
+			ellipse(im, 9, 9, 5.5, 5.5, clear)
+			for p in [Vector2i(9, 5), Vector2i(5, 9), Vector2i(13, 9), Vector2i(9, 13)]:
+				rect(im, p.x - 1, p.y - 1, 2, 2, Color(1.0, 0.85, 0.3))
+		"lightning":
+			poly(im, PackedVector2Array([Vector2(11, 1), Vector2(4, 10), Vector2(8.5, 10), Vector2(6, 17),
+				Vector2(14, 7), Vector2(9.5, 7), Vector2(12.5, 1)]), Color(0.75, 0.9, 1.0))
+		"hp":
+			ellipse(im, 6, 7, 3.6, 3.6, Color(0.95, 0.15, 0.35))
+			ellipse(im, 12, 7, 3.6, 3.6, Color(0.95, 0.15, 0.35))
+			poly(im, PackedVector2Array([Vector2(2.5, 8), Vector2(15.5, 8), Vector2(9, 15.5)]), Color(0.95, 0.15, 0.35))
+			line(im, 4, 9, 7, 9, Color(0.4, 1.0, 1.0))
+			line(im, 7, 9, 9, 6, Color(0.4, 1.0, 1.0))
+			line(im, 9, 6, 11, 11, Color(0.4, 1.0, 1.0))
+			line(im, 11, 11, 14, 9, Color(0.4, 1.0, 1.0))
+		"speed":
+			rect(im, 5, 4, 5, 9, Color(0.3, 0.35, 0.6))
+			rect(im, 5, 11, 10, 4, Color(0.3, 0.35, 0.6))
+			line(im, 5, 15, 14, 15, Color(1.0, 0.3, 0.8))
+			for i in 3:
+				line(im, 1, 6 + i * 3, 3, 6 + i * 3, Color(0.4, 0.95, 1.0))
+		"magnet":
+			ellipse(im, 9, 8, 6.5, 6.5, Color(0.9, 0.2, 0.3))
+			ellipse(im, 9, 8, 3.5, 3.5, clear)
+			rect(im, 2, 8, 14, 7, clear)
+			rect(im, 3, 8, 3, 5, Color(0.9, 0.2, 0.3))
+			rect(im, 12, 8, 3, 5, Color(0.9, 0.2, 0.3))
+			rect(im, 3, 13, 3, 2, Color(0.85, 0.88, 0.95))
+			rect(im, 12, 13, 3, 2, Color(0.85, 0.88, 0.95))
+		"damage":
+			poly(im, PackedVector2Array([Vector2(9, 1), Vector2(14, 9), Vector2(12, 16), Vector2(6, 16),
+				Vector2(4, 10), Vector2(7, 7)]), Color(1.0, 0.35, 0.1))
+			poly(im, PackedVector2Array([Vector2(9, 7), Vector2(11.5, 12), Vector2(9, 15.5), Vector2(6.5, 12)]), Color(1.0, 0.85, 0.3))
+		"cooldown":
+			poly(im, PackedVector2Array([Vector2(4, 2), Vector2(14, 2), Vector2(9, 9)]), Color(0.3, 0.9, 1.0))
+			poly(im, PackedVector2Array([Vector2(9, 9), Vector2(14, 16), Vector2(4, 16)]), Color(0.3, 0.9, 1.0))
+			rect(im, 3, 1, 12, 1, Color(0.9, 0.7, 0.3))
+			rect(im, 3, 16, 12, 1, Color(0.9, 0.7, 0.3))
+			rect(im, 6, 13, 6, 2, Color(1.0, 0.95, 0.6))
+		"area":
+			ellipse(im, 9, 9, 7.5, 7.5, Color(0.75, 0.35, 1.0))
+			ellipse(im, 9, 9, 6, 6, clear)
+			ellipse(im, 9, 9, 3.5, 3.5, Color(0.75, 0.35, 1.0))
+			ellipse(im, 9, 9, 2, 2, clear)
+		"regen", "heal":
+			rect(im, 7, 3, 4, 12, Color(0.3, 1.0, 0.45))
+			rect(im, 3, 7, 12, 4, Color(0.3, 1.0, 0.45))
+			rect(im, 8, 4, 2, 10, Color(0.85, 1.0, 0.85))
+		"katana":
+			line(im, 3, 15, 15, 3, Color(0.85, 0.88, 0.95))
+			line(im, 4, 15, 15, 4, Color(0.6, 0.62, 0.72))
+			line(im, 8, 11, 14, 5, Color(1.0, 0.3, 0.7))
+			rect(im, 2, 13, 3, 3, Color(0.8, 0.15, 0.3))
+			line(im, 3, 11, 6, 14, Color(0.9, 0.7, 0.3))
+		"quake":
+			rect(im, 7, 7, 3, 9, Color(0.45, 0.3, 0.2))
+			rect(im, 3, 2, 11, 6, Color(0.45, 0.45, 0.55))
+			rect(im, 4, 4, 9, 2, Color(0.5, 1.0, 1.0))
+			px(im, 1, 15, Color(0.5, 1.0, 1.0))
+			px(im, 15, 15, Color(0.5, 1.0, 1.0))
+			line(im, 2, 16, 15, 16, Color(0.4, 0.8, 1.0))
+		"drones":
+			line(im, 1, 5, 7, 5, Color(0.8, 0.85, 0.95))
+			line(im, 11, 5, 17, 5, Color(0.8, 0.85, 0.95))
+			rect(im, 3, 6, 2, 2, Color(0.35, 0.38, 0.48))
+			rect(im, 13, 6, 2, 2, Color(0.35, 0.38, 0.48))
+			ellipse(im, 9, 10, 5, 3.6, Color(0.35, 0.38, 0.48))
+			ellipse(im, 9, 10, 2, 2, Color(0.4, 1.0, 0.5))
+			line(im, 9, 14, 14, 17, Color(1.0, 0.5, 0.2))
+		"ab_vega":
+			for i in 3:
+				ellipse(im, 5 + i * 3, 9, 3, 5, Color(0.3, 0.9, 1.0, 0.4 + i * 0.3))
+			line(im, 2, 15, 15, 2, Color(1.0, 1.0, 1.0))
+		"ab_rin":
+			ellipse(im, 9, 9, 7.5, 7.5, Color(1.0, 0.3, 0.7))
+			ellipse(im, 9, 9, 5.5, 5.5, clear)
+			line(im, 3, 3, 15, 15, Color(0.9, 0.92, 1.0))
+			line(im, 15, 3, 3, 15, Color(0.9, 0.92, 1.0))
+		"ab_bram":
+			poly(im, PackedVector2Array([Vector2(9, 1), Vector2(16, 4), Vector2(15, 11), Vector2(9, 17), Vector2(3, 11), Vector2(2, 4)]), Color(1.0, 0.7, 0.25))
+			poly(im, PackedVector2Array([Vector2(9, 4), Vector2(13, 6), Vector2(12.5, 10.5), Vector2(9, 14), Vector2(5.5, 10.5), Vector2(5, 6)]), Color(0.5, 0.95, 1.0))
+		"ab_kira":
+			rect(im, 2, 3, 14, 11, Color(0.15, 0.2, 0.18))
+			for y in [5, 8, 11]:
+				line(im, 4, y, 4 + (y * 3) % 9, y, Color(0.4, 1.0, 0.5))
+			rect(im, 10, 9, 4, 3, Color(1.0, 0.3, 0.7))
+		"chest":
+			rect(im, 2, 6, 14, 9, Color(0.35, 0.35, 0.45))
+			rect(im, 2, 3, 14, 4, Color(0.45, 0.45, 0.55))
+			rect(im, 2, 6, 14, 1, Color(0.9, 0.7, 0.3))
+			rect(im, 8, 6, 2, 3, Color(1.0, 0.85, 0.4))
+		"railbow":
+			line(im, 4, 2, 7, 9, Color(0.5, 0.52, 0.6))
+			line(im, 7, 9, 4, 16, Color(0.5, 0.52, 0.6))
+			line(im, 4, 2, 4, 16, Color(0.5, 1.0, 0.8))
+			line(im, 3, 9, 16, 9, Color(0.85, 1.0, 0.95))
+			poly(im, PackedVector2Array([Vector2(13, 7), Vector2(17, 9), Vector2(13, 11)]), Color(1, 1, 1))
+		"sunbeam":
+			ellipse(im, 5, 9, 3.5, 3.5, Color(1.0, 0.85, 0.4))
+			rect(im, 7, 7, 10, 4, Color(1.0, 0.75, 0.3))
+			rect(im, 7, 8, 10, 2, Color(1.0, 1.0, 0.8))
+		"spirits":
+			ellipse(im, 9, 7, 5.5, 5, Color(0.75, 0.6, 1.0))
+			poly(im, PackedVector2Array([Vector2(3.5, 8), Vector2(14.5, 8), Vector2(12, 16), Vector2(9, 12), Vector2(6, 16)]), Color(0.75, 0.6, 1.0))
+			px(im, 7, 6, Color(0.1, 0.05, 0.2))
+			px(im, 11, 6, Color(0.1, 0.05, 0.2))
+		"ball":
+			ellipse(im, 9, 9, 6, 6, Color(0.4, 0.75, 1.0))
+			ellipse(im, 9, 9, 3, 3, Color(0.9, 1.0, 1.0))
+			line(im, 1, 3, 5, 6, Color(0.8, 0.9, 1.0))
+			line(im, 13, 13, 17, 16, Color(0.8, 0.9, 1.0))
+		"flask":
+			rect(im, 7, 1, 4, 5, Color(0.6, 0.45, 0.3))
+			ellipse(im, 9, 11, 6, 6, Color(0.45, 0.65, 0.4))
+			ellipse(im, 9, 12, 4, 4, Color(0.6, 1.0, 0.3))
+		"shuriken":
+			poly(im, PackedVector2Array([Vector2(9, 1), Vector2(11, 7), Vector2(17, 9), Vector2(11, 11), Vector2(9, 17), Vector2(7, 11), Vector2(1, 9), Vector2(7, 7)]), Color(0.85, 0.88, 0.95))
+			ellipse(im, 9, 9, 2, 2, Color(1.0, 0.35, 0.35))
+		"crit":
+			ellipse(im, 9, 9, 7, 7, Color(1.0, 0.3, 0.3))
+			ellipse(im, 9, 9, 5, 5, clear)
+			line(im, 9, 1, 9, 17, Color(1.0, 0.9, 0.9))
+			line(im, 1, 9, 17, 9, Color(1.0, 0.9, 0.9))
+		"armor":
+			poly(im, PackedVector2Array([Vector2(3, 3), Vector2(15, 3), Vector2(15, 10), Vector2(9, 16), Vector2(3, 10)]), Color(0.45, 0.5, 0.62))
+			line(im, 9, 5, 9, 13, Color(0.6, 0.9, 1.0))
+			line(im, 6, 8, 12, 8, Color(0.6, 0.9, 1.0))
+		"multi":
+			for i in 3:
+				ellipse(im, 4 + i * 5, 9 - (i % 2) * 3, 2.5, 2.5, Color(0.4, 0.85, 1.0))
+		"duration":
+			ellipse(im, 9, 10, 6.5, 6.5, Color(0.8, 0.8, 0.9))
+			ellipse(im, 9, 10, 5, 5, Color(0.2, 0.2, 0.3))
+			line(im, 9, 10, 9, 6, Color(1.0, 0.85, 0.3))
+			line(im, 9, 10, 12, 11, Color(1.0, 0.85, 0.3))
+			rect(im, 7, 2, 4, 2, Color(0.8, 0.8, 0.9))
+		"vamp":
+			rect(im, 4, 4, 10, 10, Color(0.3, 0.32, 0.38))
+			ellipse(im, 9, 9, 3, 3, Color(1.0, 0.15, 0.3))
+			for i in 3:
+				px(im, 5 + i * 4, 2, Color(0.8, 0.7, 0.3))
+				px(im, 5 + i * 4, 15, Color(0.8, 0.7, 0.3))
+		"luck":
+			for c in [Vector2(6, 6), Vector2(12, 6), Vector2(6, 12), Vector2(12, 12)]:
+				ellipse(im, c.x, c.y, 3, 3, Color(0.4, 1.0, 0.5))
+			ellipse(im, 9, 9, 1.6, 1.6, Color(1.0, 0.9, 0.4))
+		"ab_skyla":
+			for i in 4:
+				line(im, 3 + i * 4, 1, 3 + i * 4 - 2, 16, Color(0.5, 1.0, 0.8))
+		"ab_orm":
+			ellipse(im, 9, 9, 7, 7, Color(1.0, 0.85, 0.4))
+			ellipse(im, 9, 9, 5, 5, clear)
+			rect(im, 8, 4, 2, 10, Color(1.0, 1.0, 0.8))
+			rect(im, 5, 7, 8, 2, Color(1.0, 1.0, 0.8))
+		"ab_mora":
+			for i in 3:
+				ellipse(im, 4 + i * 5, 8 + (i % 2) * 3, 2.5, 3, Color(0.75, 0.6, 1.0))
+		"ab_zephyr":
+			for i in 4:
+				line(im, 4 + i, 3 + i * 4, 14 - i, 3 + i * 4, Color(0.5, 0.85, 1.0))
+		"ab_iris":
+			ellipse(im, 9, 9, 7, 6, Color(0.6, 1.0, 0.3, 0.8))
+			rect(im, 8, 5, 2, 8, Color(1, 1, 1))
+			rect(im, 5, 8, 8, 2, Color(1, 1, 1))
+		"ab_kai":
+			for i in 3:
+				var a := -0.6 + i * 0.6
+				line(im, 9, 15, int(9 + sin(a) * 8), int(15 - cos(a) * 12), Color(1.0, 0.35, 0.35))
+		"academy":
+			rect(im, 3, 7, 12, 9, Color(0.5, 0.4, 0.3))
+			poly(im, PackedVector2Array([Vector2(1, 7), Vector2(9, 1), Vector2(17, 7)]), Color(1.0, 0.8, 0.3))
+		"arsenal":
+			line(im, 3, 15, 15, 3, Color(0.85, 0.88, 0.95))
+			line(im, 15, 15, 3, 3, Color(0.85, 0.88, 0.95))
+			ellipse(im, 9, 9, 3, 3, Color(1.0, 0.5, 0.2))
+		"lab":
+			rect(im, 7, 1, 4, 6, Color(0.6, 0.8, 0.9))
+			poly(im, PackedVector2Array([Vector2(7, 7), Vector2(11, 7), Vector2(16, 16), Vector2(2, 16)]), Color(0.4, 0.9, 1.0))
+		"skull":
+			ellipse(im, 9, 7.5, 6, 5.5, Color(0.9, 0.9, 0.95))
+			rect(im, 6, 11, 6, 4, Color(0.9, 0.9, 0.95))
+			ellipse(im, 6.5, 8, 1.6, 1.8, Color(1.0, 0.2, 0.5))
+			ellipse(im, 11.5, 8, 1.6, 1.8, Color(1.0, 0.2, 0.5))
+			px(im, 8, 13, Color(0.1, 0.1, 0.1))
+			px(im, 10, 13, Color(0.1, 0.1, 0.1))
+		# ---- Статусы (для библиотеки) ----
+		"st_burn":
+			poly(im, PackedVector2Array([Vector2(9, 1), Vector2(15, 10), Vector2(13, 16), Vector2(5, 16), Vector2(3, 10), Vector2(6, 6), Vector2(7, 9)]), Color(1.0, 0.45, 0.1))
+			poly(im, PackedVector2Array([Vector2(9, 7), Vector2(12, 12), Vector2(11, 16), Vector2(7, 16), Vector2(6, 12)]), Color(1.0, 0.85, 0.3))
+		"st_shock":
+			poly(im, PackedVector2Array([Vector2(11, 1), Vector2(4, 10), Vector2(8.5, 10), Vector2(6, 17), Vector2(14, 7), Vector2(9.5, 7), Vector2(12, 1)]), Color(0.45, 0.75, 1.0))
+		"st_chill":
+			for k in 3:
+				var a := PI * k / 3.0
+				line(im, int(9 - cos(a) * 7), int(9 - sin(a) * 7), int(9 + cos(a) * 7), int(9 + sin(a) * 7), Color(0.6, 0.95, 1.0))
+			ellipse(im, 9, 9, 2, 2, Color(0.9, 1.0, 1.0))
+		"st_bleed":
+			poly(im, PackedVector2Array([Vector2(9, 1), Vector2(14, 10), Vector2(9, 16), Vector2(4, 10)]), Color(0.95, 0.12, 0.25))
+			ellipse(im, 9, 11, 4.5, 4.5, Color(0.95, 0.12, 0.25))
+			px(im, 7, 9, Color(1.0, 0.6, 0.7))
+		"st_poison":
+			ellipse(im, 9, 7, 5.5, 5, Color(0.5, 1.0, 0.2))
+			rect(im, 6, 11, 6, 3, Color(0.5, 1.0, 0.2))
+			ellipse(im, 7, 7, 1.4, 1.6, Color(0.1, 0.2, 0.05))
+			ellipse(im, 11, 7, 1.4, 1.6, Color(0.1, 0.2, 0.05))
+			line(im, 3, 16, 15, 15, Color(0.4, 0.8, 0.2))
+		"st_wet":
+			poly(im, PackedVector2Array([Vector2(9, 1), Vector2(14, 10), Vector2(9, 16), Vector2(4, 10)]), Color(0.3, 0.55, 1.0))
+			ellipse(im, 9, 11, 4.5, 4.5, Color(0.3, 0.55, 1.0))
+			px(im, 7, 9, Color(0.8, 0.9, 1.0))
+		"book":
+			rect(im, 3, 3, 12, 13, Color(0.5, 0.2, 0.6))
+			rect(im, 5, 4, 9, 11, Color(0.95, 0.9, 0.8))
+			line(im, 9, 4, 9, 14, Color(0.6, 0.5, 0.45))
+			rect(im, 6, 6, 2, 1, Color(0.3, 0.9, 1.0))
+			rect(im, 11, 8, 2, 1, Color(1.0, 0.3, 0.75))
+	shade(im, 0.2, 0.25)
+	outline(im)
+	var t := tex(im)
+	_cache[key] = t
+	return t
+
+
+## Портрет героя одной картинкой: тело + неоновые детали (для кнопок и библиотеки).
+static func portrait(sprite: String, dark := false) -> ImageTexture:
+	var key := "portrait_" + sprite + ("_d" if dark else "")
+	if _cache.has(key):
+		return _cache[key]
+	var fr := frames(sprite)
+	var bi: Image = (fr["base"][0] as ImageTexture).get_image()
+	var ei: Image = (fr["emit"][0] as ImageTexture).get_image()
+	var im := bi.duplicate() as Image
+	im.convert(Image.FORMAT_RGBA8)
+	ei.convert(Image.FORMAT_RGBA8)
+	for x in im.get_width():
+		for y in im.get_height():
+			var c := im.get_pixel(x, y)
+			var e := ei.get_pixel(x, y)
+			if e.a > 0.3:
+				c = Color(e.r, e.g, e.b, 1.0)
+			if dark and c.a > 0.1:
+				c = Color(0.12, 0.1, 0.18, c.a)
+			im.set_pixel(x, y, c)
+	var t := tex(im)
+	_cache[key] = t
+	return t
+
+
+## Кольцо с рунами для «Рунного круга».
+static func rune_ring() -> ImageTexture:
+	if _cache.has("rune_ring"):
+		return _cache["rune_ring"]
+	var s := 48
+	var im := blank(s, s)
+	var c := float(s) / 2.0
+	for x in s:
+		for y in s:
+			var d := Vector2(x + 0.5 - c, y + 0.5 - c).length()
+			if d >= 21.0 and d < 23.0:
+				im.set_pixel(x, y, Color(1, 1, 1, 1))
+			elif d >= 15.0 and d < 16.0:
+				im.set_pixel(x, y, Color(1, 1, 1, 0.7))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	for i in 12:
+		var a := TAU * i / 12.0
+		var p := Vector2(c, c) + Vector2(cos(a), sin(a)) * 18.5
+		for gx in 3:
+			for gy in 3:
+				if rng.randf() < 0.6:
+					px(im, int(p.x) - 1 + gx, int(p.y) - 1 + gy, Color(1, 1, 1, 0.95))
+	var t := tex(im)
+	_cache["rune_ring"] = t
+	return t
+
+
+# ============ Мягкие текстуры (свет, свечение, тень) ============
+
+static func glow() -> GradientTexture2D:
+	if _cache.has("glow"):
+		return _cache["glow"]
+	var g := Gradient.new()
+	g.offsets = PackedFloat32Array([0.0, 0.3, 1.0])
+	g.colors = PackedColorArray([Color(1, 1, 1, 1), Color(1, 1, 1, 0.4), Color(1, 1, 1, 0)])
+	var t := GradientTexture2D.new()
+	t.gradient = g
+	t.width = 128
+	t.height = 128
+	t.fill = GradientTexture2D.FILL_RADIAL
+	t.fill_from = Vector2(0.5, 0.5)
+	t.fill_to = Vector2(1.0, 0.5)
+	_cache["glow"] = t
+	return t
+
+
+static func shadow() -> ImageTexture:
+	if _cache.has("shadow"):
+		return _cache["shadow"]
+	var im := blank(14, 6)
+	ellipse(im, 7, 3, 7, 3, Color(0, 0, 0, 0.35))
+	ellipse(im, 7, 3, 5, 2, Color(0, 0, 0, 0.6))
+	var t := tex(im)
+	_cache["shadow"] = t
+	return t
+
+
+static func raindrop() -> ImageTexture:
+	if _cache.has("rain"):
+		return _cache["rain"]
+	var im := blank(1, 6)
+	for y in 6:
+		im.set_pixel(0, y, Color(1, 1, 1, float(y + 1) / 6.0))
+	var t := tex(im)
+	_cache["rain"] = t
+	return t
+
+
+# ============ Материалы ============
+
+static func mat_unshaded() -> CanvasItemMaterial:
+	if not _cache.has("mat_u"):
+		var m := CanvasItemMaterial.new()
+		m.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
+		_cache["mat_u"] = m
+	return _cache["mat_u"]
+
+
+static func mat_add() -> CanvasItemMaterial:
+	if not _cache.has("mat_a"):
+		var m := CanvasItemMaterial.new()
+		m.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
+		m.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+		_cache["mat_a"] = m
+	return _cache["mat_a"]
+
+
+
+# ---------- Жители убежища (процедурные, по зерну) ----------
+
+static func _paint_villager(b: Image, e: Image, f: int, seed: int) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed
+	var p := _hero_pose(f)
+	var oy: int = p["oy"]
+	var fl: int = p["fl"]
+	var robes := [Color(0.22, 0.25, 0.5), Color(0.45, 0.18, 0.35), Color(0.18, 0.38, 0.32),
+		Color(0.42, 0.32, 0.2), Color(0.3, 0.3, 0.36), Color(0.5, 0.25, 0.15)]
+	var neons := [Color(0.3, 1.0, 1.0), Color(1.0, 0.3, 0.75), Color(0.4, 1.0, 0.5), Color(1.0, 0.75, 0.3), Color(0.7, 0.45, 1.0)]
+	var skins := [Color(0.95, 0.8, 0.68), Color(0.75, 0.55, 0.42), Color(0.5, 0.35, 0.28), Color(0.6, 0.75, 0.9), Color(0.7, 0.9, 0.7)]
+	var robe: Color = robes[rng.randi_range(0, robes.size() - 1)]
+	var neon: Color = neons[rng.randi_range(0, neons.size() - 1)]
+	var skin: Color = skins[rng.randi_range(0, skins.size() - 1)]
+	var hat := rng.randi_range(0, 3)
+	var plump := rng.randi_range(0, 1)
+	_legs(b, p, 7, 10, 19, Color(0.1, 0.09, 0.14))
+	# Тело
+	poly(b, PackedVector2Array([Vector2(6 - plump, 11 + oy), Vector2(12 + plump, 11 + oy),
+		Vector2(14 + plump, 20 + fl), Vector2(4 - plump, 20 - fl)]), robe)
+	rect(b, 6, 15 + oy, 7, 1, robe.darkened(0.35))
+	line(e, 5 - plump, 19 - fl, 13 + plump, 19 + fl, Color(neon, 0.8))
+	# Голова
+	ellipse(b, 9.5, 8 + oy, 3.4, 3.3, skin)
+	px(b, 8, 8 + oy, Color(0.05, 0.03, 0.08))
+	px(b, 11, 8 + oy, Color(0.05, 0.03, 0.08))
+	match hat:
+		0:  # капюшон
+			ellipse(b, 9.5, 6.5 + oy, 4.2, 3.0, robe.lightened(0.1))
+			rect(b, 6, 6 + oy, 7, 1, robe.lightened(0.1))
+		1:  # кепка с антенной
+			rect(b, 6, 4 + oy, 8, 2, Color(0.2, 0.2, 0.28))
+			rect(b, 11, 5 + oy, 4, 1, Color(0.2, 0.2, 0.28))
+			line(b, 8, 4 + oy, 7, 1 + oy, Color(0.5, 0.5, 0.6))
+			px(e, 7, 1 + oy, neon)
+		2:  # широкая шляпа
+			rect(b, 4, 5 + oy, 12, 1, Color(0.25, 0.18, 0.12))
+			rect(b, 7, 2 + oy, 6, 3, Color(0.25, 0.18, 0.12))
+			rect(e, 7, 4 + oy, 6, 1, Color(neon, 0.8))
+		3:  # визор
+			rect(b, 6, 5 + oy, 7, 2, Color(0.2, 0.2, 0.28))
+			rect(e, 7, 8 + oy, 6, 1, neon)
+	# Инструмент в руке
+	if rng.randf() < 0.5:
+		line(b, 14, 12 + oy, 14, 18 + oy, Color(0.5, 0.45, 0.4))
+		px(e, 14, 11 + oy, neon)
+
+
+
+# ---------- Окружение биомов ----------
+
+static func _paint_env(key: String, b: Image, e: Image) -> void:
+	var v := int(key.right(1)) if key.right(1).is_valid_int() else 0
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(key)
+	var cy := Color(0.3, 0.95, 1.0)
+	var mg := Color(1.0, 0.3, 0.75)
+	var vi := Color(0.7, 0.4, 1.0)
+	var gr := Color(0.4, 1.0, 0.5)
+	var og := Color(1.0, 0.6, 0.2)
+	match key:
+		"sign0", "sign1":
+			var col := mg if v == 0 else cy
+			rect(b, 8, 14, 2, 19, Color(0.25, 0.25, 0.32))
+			rect(b, 1, 2, 16, 12, Color(0.12, 0.1, 0.18))
+			for i in 2:
+				for j in 3:
+					if rng.randf() < 0.75:
+						rect(e, 3 + j * 4, 4 + i * 5, 3, 3, col)
+			line(e, 1, 2, 16, 2, Color(col, 0.7))
+			line(e, 1, 13, 16, 13, Color(col, 0.7))
+		"barrel0", "barrel1":
+			var col := Color(0.35, 0.3, 0.2) if v == 0 else Color(0.25, 0.32, 0.4)
+			rect(b, 2, 2, 8, 12, col)
+			rect(b, 2, 4, 8, 1, col.darkened(0.4))
+			rect(b, 2, 10, 8, 1, col.darkened(0.4))
+			if v == 0:
+				rect(e, 4, 6, 4, 3, Color(0.5, 1.0, 0.3, 0.9))
+			else:
+				px(e, 5, 7, cy)
+		"rock0", "rock1":
+			var w := 18 if v == 0 else 14
+			poly(b, PackedVector2Array([Vector2(1, w * 0.7), Vector2(3, 4), Vector2(w * 0.5, 1), Vector2(w - 2, 3), Vector2(w, w * 0.7)]), Color(0.24, 0.22, 0.3))
+			line(b, w / 2, 3, w / 2 + 2, 8, Color(0.14, 0.13, 0.19))
+			if rng.randf() < 0.6:
+				px(e, w / 2 - 2, 6, Color(vi, 0.8))
+		"crystal_big0", "crystal_big1":
+			var col := cy if v == 0 else vi
+			poly(b, PackedVector2Array([Vector2(7, 33), Vector2(11, 3), Vector2(15, 33)]), col.darkened(0.5))
+			poly(b, PackedVector2Array([Vector2(2, 33), Vector2(5, 15), Vector2(9, 33)]), col.darkened(0.55))
+			poly(b, PackedVector2Array([Vector2(13, 33), Vector2(18, 18), Vector2(21, 33)]), col.darkened(0.55))
+			line(e, 11, 5, 11, 30, col)
+			line(e, 5, 17, 6, 30, Color(col, 0.8))
+			line(e, 18, 20, 17, 30, Color(col, 0.8))
+			px(e, 11, 5, Color(1, 1, 1))
+		"pillar0", "pillar1":
+			var hgt := 34 if v == 0 else 22
+			var stone := Color(0.32, 0.3, 0.38)
+			rect(b, 3, 36 - hgt if v == 0 else 24 - hgt, 8, hgt - 3, stone)
+			rect(b, 1, (33 if v == 0 else 21), 12, 3, stone.darkened(0.2))
+			if v == 0:
+				rect(b, 1, 2, 12, 3, stone.darkened(0.1))
+			else:
+				poly(b, PackedVector2Array([Vector2(3, 3), Vector2(6, 1), Vector2(9, 4), Vector2(11, 2), Vector2(11, 5), Vector2(3, 5)]), stone)
+			for y in range(8 if v == 0 else 6, hgt - 4, 6):
+				px(e, 7, y, og)
+				px(e, 6, y + 1, Color(og, 0.7))
+		"statue0":
+			var stone := Color(0.34, 0.32, 0.4)
+			rect(b, 2, 33, 14, 4, stone.darkened(0.2))
+			poly(b, PackedVector2Array([Vector2(4, 33), Vector2(14, 33), Vector2(12, 12), Vector2(6, 12)]), stone)
+			ellipse(b, 9, 8, 4, 4.5, stone)
+			rect(e, 7, 8, 5, 1, cy)
+			line(b, 4, 14, 1, 22, stone)
+			line(b, 14, 14, 17, 22, stone)
+			line(e, 9, 16, 9, 28, Color(vi, 0.8))
+		"tree0", "tree1", "tree2":
+			var leaf := [Color(0.15, 0.35, 0.3), Color(0.3, 0.15, 0.35), Color(0.12, 0.25, 0.4)][v] as Color
+			var glow := [gr, mg, cy][v] as Color
+			var w := b.get_width()
+			var hgt := b.get_height()
+			rect(b, w / 2 - 2, hgt / 2, 4, hgt / 2 - 1, Color(0.22, 0.17, 0.2))
+			line(e, w / 2, hgt / 2 + 2, w / 2, hgt - 3, Color(glow, 0.5))
+			for i in 5:
+				ellipse(b, rng.randf_range(w * 0.25, w * 0.75), rng.randf_range(hgt * 0.15, hgt * 0.5), rng.randf_range(5, 8), rng.randf_range(4, 7), leaf)
+			for i in 14:
+				var x := rng.randi_range(3, w - 4)
+				var y := rng.randi_range(3, int(hgt * 0.6))
+				if b.get_pixel(x, y).a > 0.5:
+					px(e, x, y, glow)
+		"mushroom0", "mushroom1":
+			var col := [cy, mg][v] as Color
+			var n := 2 if v == 0 else 3
+			for i in n:
+				var x := 4 + i * 5 + rng.randi_range(0, 2)
+				var hgt := rng.randi_range(5, b.get_height() - 4)
+				rect(b, x, b.get_height() - hgt, 2, hgt - 1, Color(0.75, 0.72, 0.65))
+				ellipse(b, x + 1, b.get_height() - hgt, 4, 2.5, col.darkened(0.5))
+				line(e, x - 2, b.get_height() - hgt, x + 3, b.get_height() - hgt, col)
+				px(e, x, b.get_height() - hgt - 1, Color(1, 1, 1, 0.8))
+		"wreck0", "wreck1":
+			var metal := Color(0.3, 0.28, 0.33)
+			if v == 0:
+				rect(b, 2, 6, 26, 9, metal)
+				rect(b, 7, 2, 13, 5, metal.lightened(0.05))
+				ellipse(b, 7, 15, 3, 2.5, Color(0.1, 0.1, 0.12))
+				ellipse(b, 22, 15, 3, 2.5, Color(0.1, 0.1, 0.12))
+				rect(b, 9, 3, 4, 3, Color(0.08, 0.1, 0.14))
+				px(e, 27, 9, Color(1.0, 0.3, 0.2))
+				line(b, 14, 6, 17, 13, metal.darkened(0.4))
+			else:
+				ellipse(b, 12, 14, 9, 6, metal)
+				ellipse(b, 12, 7, 5, 4.5, metal.lightened(0.08))
+				rect(e, 10, 7, 4, 1, Color(cy, 0.4))
+				line(b, 4, 15, 1, 20, metal)
+				line(b, 20, 15, 23, 21, metal)
+				px(e, 6, 14, og)
+		"decal_rune":
+			var c := 24.0
+			for x in 48:
+				for y in 48:
+					var d := Vector2(x + 0.5 - c, y + 0.5 - c).length()
+					if d >= 21.0 and d < 22.5:
+						e.set_pixel(x, y, Color(vi, 0.55))
+					elif d >= 15.0 and d < 16.0:
+						e.set_pixel(x, y, Color(vi, 0.35))
+			for i in 8:
+				var a := TAU * i / 8.0
+				var p := Vector2(c, c) + Vector2(cos(a), sin(a)) * 18.5
+				for gx in 2:
+					for gy in 2:
+						if rng.randf() < 0.7:
+							px(e, int(p.x) + gx, int(p.y) + gy, Color(og, 0.7))
+			for i in 3:
+				var a := TAU * i / 3.0
+				line(e, 24, 24, int(24 + cos(a) * 15), int(24 + sin(a) * 15), Color(vi, 0.3))
+		"decal_grate":
+			rect(b, 0, 0, 24, 16, Color(0.08, 0.08, 0.11, 0.95))
+			for x in range(2, 23, 3):
+				line(b, x, 1, x, 14, Color(0.2, 0.2, 0.26, 1.0))
+			rect(e, 1, 6, 22, 4, Color(1.0, 0.45, 0.15, 0.25))
+		"decal_moss":
+			for i in 40:
+				var p := Vector2(rng.randf_range(3, 27), rng.randf_range(2, 16))
+				ellipse(b, p.x, p.y, rng.randf_range(1.0, 3.0), rng.randf_range(1.0, 2.0), Color(0.1, 0.22, 0.15, 0.8))
+			for i in 8:
+				px(e, rng.randi_range(4, 26), rng.randi_range(3, 15), Color(gr, 0.7))
+		"decal_cable":
+			var y := 7.0
+			for x in 40:
+				y = clampf(y + rng.randf_range(-0.8, 0.8), 2.0, 11.0)
+				px(b, x, int(y), Color(0.06, 0.06, 0.09))
+				px(b, x, int(y) + 1, Color(0.12, 0.12, 0.16))
+				if x % 9 == 4:
+					px(e, x, int(y), Color(cy, 0.9))
+		"decal_crater":
+			ellipse(b, 17, 10, 16, 9, Color(0.2, 0.14, 0.28, 0.22))
+			ellipse(b, 17, 10, 12, 6.5, Color(0.12, 0.09, 0.18, 0.3))
+			for i in 10:
+				var a := rng.randf() * TAU
+				px(e, int(17 + cos(a) * 9), int(10 + sin(a) * 5), Color(vi, 0.45))
+
+
+
+# ============ Пиксельные текстуры поверхностей (для 3D-убежища) ============
+
+## kind: panel — металлические панели, brick — кирпич, tile — плитка, wood — доски
+static func surface(kind: String) -> ImageTexture:
+	var key := "surf_" + kind
+	if _cache.has(key):
+		return _cache[key]
+	var n := 16
+	var im := blank(n, n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(kind)
+	for x in n:
+		for y in n:
+			var v := 0.78 + rng.randf_range(-0.04, 0.04)
+			match kind:
+				"panel":
+					if x == 0 or y == 0:
+						v = 0.45
+					elif x == 1 or y == 1:
+						v = 0.92
+					elif (x == 3 or x == n - 3) and (y == 3 or y == n - 3):
+						v = 1.0
+					elif y == 8 and x > 4 and x < 12:
+						v = 0.55
+				"brick":
+					var row := y / 4
+					var off := 4 if row % 2 == 1 else 0
+					if y % 4 == 0 or (x + off) % 8 == 0:
+						v = 0.4
+					else:
+						v += (hash(Vector2i((x + off) / 8, row)) % 7) * 0.02 - 0.06
+				"tile":
+					if x % 8 == 0 or y % 8 == 0:
+						v = 0.5
+					elif ((x / 8) + (y / 8)) % 2 == 0:
+						v -= 0.06
+				"wood":
+					if y % 5 == 0:
+						v = 0.45
+					else:
+						v += sin(x * 0.9 + y * 3.0) * 0.04
+			im.set_pixel(x, y, Color(v, v, v))
+	var t := tex(im)
+	_cache[key] = t
+	return t
+
+
+
+# ---------- Дрон-фамильяр: корпус, два винта, глаз-камера, подсветка ----------
+
+static func _paint_drone(b: Image, e: Image, f: int) -> void:
+	var metal := Color(0.32, 0.34, 0.44)
+	var dark := Color(0.16, 0.17, 0.24)
+	var neon := Color(0.4, 1.0, 0.5)
+	# Штанги к винтам
+	line(b, 5, 6, 9, 8, dark)
+	line(b, 16, 6, 12, 8, dark)
+	rect(b, 3, 5, 3, 2, metal)
+	rect(b, 16, 5, 3, 2, metal)
+	# Винты: два кадра — размытый диск и лопасти
+	var prop := Color(0.75, 0.8, 0.9, 0.85)
+	if f == 0:
+		line(b, 0, 4, 8, 4, prop)
+		line(b, 13, 4, 21, 4, prop)
+	else:
+		line(b, 2, 3, 6, 5, prop)
+		line(b, 15, 5, 19, 3, prop)
+		px(b, 4, 4, prop)
+		px(b, 17, 4, prop)
+	# Корпус
+	ellipse(b, 11, 9, 5.5, 4, metal)
+	rect(b, 7, 6, 8, 2, metal.lightened(0.2))
+	rect(b, 9, 12, 4, 2, dark)
+	# Глаз-камера
+	ellipse(b, 11, 9, 2.4, 2.4, Color(0.05, 0.05, 0.08))
+	ellipse(e, 11, 9, 1.6, 1.6, neon)
+	px(e, 10, 8, Color(0.9, 1.0, 0.9))
+	# Подсветка снизу и антенна
+	line(e, 9, 14, 13, 14, Color(neon, 0.8))
+	line(b, 14, 5, 16, 1, dark)
+	px(e, 16, 1, Color(1.0, 0.3, 0.3) if f == 0 else Color(1.0, 0.6, 0.6))
+
+
+
+# ---------- Новые герои ----------
+
+static func _paint_hero2(key: String, b: Image, e: Image, f: int) -> void:
+	var p := _hero_pose(f)
+	var oy: int = p["oy"]
+	var fl: int = p["fl"]
+	var k: int = p["k"]
+	match key:
+		"skyla":  # неоновая лучница: светлые волосы, капюшон-маска, лук-рельса
+			var cloak := Color(0.15, 0.32, 0.3)
+			var neon := Color(0.4, 1.0, 0.8)
+			_legs(b, p, 8, 12, 21, Color(0.12, 0.14, 0.16))
+			poly(b, PackedVector2Array([Vector2(8, 11 + oy), Vector2(14, 11 + oy), Vector2(16, 22 + fl), Vector2(6, 22 - fl)]), cloak)
+			line(e, 7, 21 - fl, 15, 21 + fl, neon)
+			rect(b, 8, 15 + oy, 7, 1, Color(0.7, 0.55, 0.3))
+			ellipse(b, 11.5, 8 + oy, 3.6, 3.6, Color(0.92, 0.82, 0.72))
+			poly(b, PackedVector2Array([Vector2(7, 6 + oy), Vector2(16, 6 + oy), Vector2(15, 4 + oy), Vector2(9, 3 + oy)]), Color(0.95, 0.95, 0.85))
+			poly(b, PackedVector2Array([Vector2(7, 7 + oy), Vector2(4, 15 + oy + fl), Vector2(8, 13 + oy)]), Color(0.95, 0.95, 0.85))
+			px(b, 15, 7 + oy, Color(0.92, 0.82, 0.72))
+			poly(b, PackedVector2Array([Vector2(16, 6 + oy), Vector2(18, 4 + oy), Vector2(17, 7 + oy)]), Color(0.92, 0.82, 0.72))
+			rect(e, 11, 8 + oy, 4, 1, neon)
+			# лук-рельса
+			line(b, 18, 5 + oy, 20, 13 + oy, Color(0.4, 0.42, 0.5))
+			line(b, 20, 13 + oy, 18, 21, Color(0.4, 0.42, 0.5))
+			line(e, 18, 6 + oy, 18, 20, Color(neon, 0.8))
+		"orm":  # паровой паладин: массивный корпус, котёл, нимб-шестерня
+			var brass := Color(0.62, 0.48, 0.25)
+			var steel := Color(0.42, 0.42, 0.5)
+			var holy := Color(1.0, 0.85, 0.4)
+			_legs(b, p, 8, 14, 23, steel.darkened(0.3), 3)
+			ellipse(b, 12.5, 17 + oy, 7.5, 7, steel)
+			rect(b, 7, 15 + oy, 12, 4, brass)
+			ellipse(e, 12.5, 17 + oy, 2.2, 2.2, Color(1.0, 0.6, 0.2))
+			ellipse(b, 5, 12 + oy, 3.2, 3, brass)
+			ellipse(b, 20, 12 + oy, 3.2, 3, brass)
+			rect(b, 9, 5 + oy, 8, 7, steel.lightened(0.1))
+			rect(e, 10, 8 + oy, 6, 1, holy)
+			for i in 6:
+				var a := TAU * i / 6.0 + k * 0.3
+				px(e, int(13 + cos(a) * 6), int(4 + oy + sin(a) * 2), Color(holy, 0.85))
+			rect(b, 1, 13 + oy, 3, 9, steel)
+			rect(e, 2, 14 + oy, 1, 7, Color(holy, 0.7))
+			if k % 2 == 0:
+				px(e, 17, 3 + oy, Color(0.8, 0.8, 0.85, 0.7))
+		"mora":  # некро-хакерша: тёмный балахон, череп-маска, голо-коса
+			var robe := Color(0.14, 0.1, 0.2)
+			var neon := Color(0.7, 0.5, 1.0)
+			_legs(b, p, 8, 12, 21, Color(0.08, 0.06, 0.1))
+			poly(b, PackedVector2Array([Vector2(7, 10 + oy), Vector2(15, 10 + oy), Vector2(17, 22 + fl), Vector2(5, 22 - fl)]), robe)
+			for y in range(13, 21, 3):
+				px(e, 10, y + oy, Color(neon, 0.8))
+				px(e, 12, y + oy + 1, Color(0.3, 1.0, 0.6, 0.7))
+			ellipse(b, 11, 7 + oy, 4.4, 4.2, robe.lightened(0.1))
+			ellipse(b, 12, 8 + oy, 2.6, 2.6, Color(0.85, 0.85, 0.8))
+			px(e, 11, 8 + oy, neon)
+			px(e, 13, 8 + oy, neon)
+			line(b, 18, 3 + oy, 18, 22, Color(0.3, 0.28, 0.35))
+			poly(e, PackedVector2Array([Vector2(18, 3 + oy), Vector2(12, 2 + oy), Vector2(9, 5 + oy), Vector2(14, 4 + oy)]), Color(neon, 0.9))
+		"zephyr":  # шторм-шаман: перья, маска, посох с вихрем
+			var robe := Color(0.18, 0.25, 0.42)
+			var neon := Color(0.5, 0.85, 1.0)
+			_legs(b, p, 8, 12, 23, Color(0.15, 0.12, 0.1))
+			poly(b, PackedVector2Array([Vector2(8, 12 + oy), Vector2(14, 12 + oy), Vector2(16, 24 + fl), Vector2(6, 24 - fl)]), robe)
+			for x in [7, 9, 11, 13, 15]:
+				px(b, x, 23 + (x % 2), Color(0.9, 0.85, 0.7))
+			ellipse(b, 11, 9 + oy, 3.5, 3.5, Color(0.6, 0.45, 0.35))
+			rect(b, 8, 8 + oy, 7, 2, Color(0.2, 0.2, 0.25))
+			rect(e, 9, 9 + oy, 5, 1, neon)
+			for i in 4:
+				line(b, 9 + i * 2, 6 + oy, 8 + i * 3, 1 + oy - (i % 2), [Color(0.9, 0.3, 0.3), Color(0.3, 0.6, 1.0), Color(0.9, 0.85, 0.3), Color(0.3, 0.9, 0.5)][i])
+			line(b, 18, 6 + oy, 18, 24, Color(0.45, 0.35, 0.25))
+			ellipse(e, 18, 4 + oy + [0, -1, -1, 0][k], 2.2, 2.2, Color(neon, 0.8))
+			px(e, 17 + k % 2, 3 + oy, Color(1, 1, 1))
+		"iris":  # алхимик-биотех: очки-гоглы, фартук, пояс с колбами
+			var coat := Color(0.82, 0.82, 0.78)
+			var neon := Color(0.6, 1.0, 0.3)
+			_legs(b, p, 8, 12, 21, Color(0.2, 0.18, 0.15))
+			poly(b, PackedVector2Array([Vector2(8, 11 + oy), Vector2(14, 11 + oy), Vector2(16, 22 + fl), Vector2(6, 22 - fl)]), coat)
+			rect(b, 9, 13 + oy, 5, 8, Color(0.35, 0.3, 0.25))
+			for i in 3:
+				rect(b, 7 + i * 3, 16 + oy, 2, 3, Color(0.3, 0.35, 0.3))
+				px(e, 7 + i * 3, 17 + oy, [neon, Color(1.0, 0.4, 0.6), Color(0.4, 0.8, 1.0)][i])
+			ellipse(b, 11, 8 + oy, 3.5, 3.5, Color(0.9, 0.75, 0.62))
+			rect(b, 7, 4 + oy, 8, 3, Color(0.75, 0.3, 0.2))
+			rect(b, 8, 7 + oy, 7, 2, Color(0.25, 0.25, 0.3))
+			px(e, 9, 7 + oy, neon)
+			px(e, 13, 7 + oy, neon)
+			rect(b, 16, 13 + oy, 2, 3, coat)
+			ellipse(e, 18, 12 + oy + [0, -1, -1, 0][k], 1.8, 2, neon)
+		"kai":  # кибер-ниндзя: маска, красный визор, шарф, катана-тень
+			var suit := Color(0.12, 0.12, 0.16)
+			var red := Color(1.0, 0.3, 0.3)
+			_legs(b, p, 8, 12, 19, suit.darkened(0.2))
+			poly(b, PackedVector2Array([Vector2(8, 10 + oy), Vector2(14, 10 + oy), Vector2(14.5, 19.5), Vector2(7.5, 19.5)]), suit)
+			line(e, 8, 15 + oy, 13, 15 + oy, Color(red, 0.7))
+			poly(b, PackedVector2Array([Vector2(8, 10 + oy), Vector2(2, 9 + oy + fl), Vector2(1, 12 + oy - fl), Vector2(8, 12 + oy)]), Color(0.7, 0.12, 0.15))
+			ellipse(b, 11, 6 + oy, 3.6, 3.6, suit.lightened(0.1))
+			rect(e, 10, 6 + oy, 5, 1, red)
+			px(e, 14, 6 + oy, Color(1, 0.8, 0.8))
+			line(b, 4, 18, 15, 3 + oy, Color(0.25, 0.25, 0.3))
+			px(e, 15, 3 + oy, red)
+
+
+# ---------- Новые враги ----------
+
+static func _paint_mob2(key: String, b: Image, e: Image, f: int) -> void:
+	var bob: int = [0, -1, -1, 0][f]
+	var step: int = [1, 0, -1, 0][f]
+	match key:
+		"goblin":  # кибер-гоблин с имплантом и ножом
+			var skin := Color(0.35, 0.6, 0.25)
+			rect(b, 5 + step, 12, 2, 3, skin.darkened(0.3))
+			rect(b, 9 - step, 12, 2, 3, skin.darkened(0.3))
+			ellipse(b, 8, 9 + bob, 4, 3.5, Color(0.4, 0.3, 0.2))
+			ellipse(b, 8, 5 + bob, 4, 3.4, skin)
+			poly(b, PackedVector2Array([Vector2(4, 4 + bob), Vector2(0, 2 + bob), Vector2(4, 6 + bob)]), skin)
+			poly(b, PackedVector2Array([Vector2(12, 4 + bob), Vector2(16, 2 + bob), Vector2(12, 6 + bob)]), skin)
+			px(e, 9, 5 + bob, Color(1.0, 0.3, 0.2))
+			px(b, 6, 5 + bob, Color(0.1, 0.1, 0.1))
+			line(b, 12, 9 + bob, 15, 7 + bob, Color(0.75, 0.78, 0.85))
+		"slime", "slimelet":  # нано-слизь с ядром-чипом
+			var w := b.get_width()
+			var h := b.get_height()
+			var squish: float = [0.0, 0.8, 1.2, 0.5][f]
+			ellipse(b, w / 2.0, h - h * 0.4, w * 0.45 + squish, h * 0.38 - squish * 0.5, Color(0.15, 0.55, 0.45, 0.85))
+			ellipse(e, w / 2.0, h - h * 0.4, w * 0.3, h * 0.22, Color(0.3, 1.0, 0.8, 0.35))
+			rect(e, int(w / 2.0) - 1, int(h - h * 0.45), 2, 2, Color(1.0, 0.9, 0.4))
+			px(b, int(w * 0.35), int(h * 0.45), Color(0.05, 0.05, 0.08))
+			px(b, int(w * 0.62), int(h * 0.45), Color(0.05, 0.05, 0.08))
+		"spider", "spiderling":  # мех-паук
+			var w := b.get_width()
+			var h := b.get_height()
+			var body := Color(0.3, 0.12, 0.12)
+			for i in 4:
+				var lx := int(w * 0.2) + i * int(w * 0.18)
+				var lift := (f + i) % 2
+				line(b, lx, int(h * 0.5), lx - 3, h - 2 - lift, Color(0.45, 0.45, 0.5))
+				line(b, w - lx, int(h * 0.5), w - lx + 3, h - 2 - lift, Color(0.45, 0.45, 0.5))
+			ellipse(b, w / 2.0, h * 0.45 + bob * 0.5, w * 0.28, h * 0.28, body)
+			ellipse(b, w / 2.0, h * 0.25 + bob * 0.5, w * 0.16, h * 0.18, body.lightened(0.1))
+			for i in 3:
+				px(e, int(w / 2.0) - 2 + i * 2, int(h * 0.25), Color(1.0, 0.3, 0.2))
+		"caster":  # культист-техномант с парящей сферой
+			var robe := Color(0.25, 0.12, 0.35)
+			poly(b, PackedVector2Array([Vector2(5, 9), Vector2(13, 9), Vector2(15, 23), Vector2(3, 23)]), robe)
+			ellipse(b, 9, 7 + bob, 4, 4, robe.lightened(0.15))
+			ellipse(b, 9, 8 + bob, 2.4, 2.4, Color(0.05, 0.03, 0.08))
+			px(e, 8, 8 + bob, Color(0.9, 0.5, 1.0))
+			px(e, 10, 8 + bob, Color(0.9, 0.5, 1.0))
+			for y in range(12, 22, 3):
+				px(e, 9, y, Color(0.8, 0.4, 1.0, 0.8))
+			ellipse(e, 15, 5 + bob * 2, 2.2, 2.2, Color(0.9, 0.5, 1.0))
+			px(e, 15, 5 + bob * 2, Color(1, 1, 1))
+		"bomber":  # бомба-дрон с мигающим таймером
+			ellipse(b, 8, 9, 6, 5.5, Color(0.25, 0.25, 0.3))
+			rect(b, 3, 3, 10, 2, Color(0.5, 0.5, 0.55))
+			line(b, 0, 3 + f % 2, 5, 3, Color(0.8, 0.8, 0.9, 0.8))
+			line(b, 11, 3, 16, 3 + (f + 1) % 2, Color(0.8, 0.8, 0.9, 0.8))
+			rect(b, 5, 8, 6, 3, Color(0.85, 0.6, 0.1))
+			rect(e, 6, 9, 4, 1, Color(1.0, 0.3, 0.1) if f % 2 == 0 else Color(1.0, 0.9, 0.3))
+		"knight":  # рыцарь-призрак в рунных латах со щитом
+			var plate := Color(0.4, 0.45, 0.55)
+			rect(b, 6 + step, 20, 3, 5, plate.darkened(0.3))
+			rect(b, 11 - step, 20, 3, 5, plate.darkened(0.3))
+			rect(b, 5, 9 + bob, 10, 11, plate)
+			ellipse(b, 10, 6 + bob, 4, 4, plate.lightened(0.1))
+			rect(b, 7, 6 + bob, 6, 1, Color(0.05, 0.05, 0.08))
+			rect(e, 8, 6 + bob, 4, 1, Color(0.6, 0.9, 1.0))
+			poly(b, PackedVector2Array([Vector2(1, 10 + bob), Vector2(6, 10 + bob), Vector2(6, 18 + bob), Vector2(3.5, 21 + bob), Vector2(1, 18 + bob)]), Color(0.3, 0.32, 0.42))
+			line(e, 3, 12 + bob, 3, 18 + bob, Color(0.6, 0.9, 1.0, 0.9))
+			line(e, 2, 14 + bob, 5, 14 + bob, Color(0.6, 0.9, 1.0, 0.9))
+			line(b, 15, 8 + bob, 18, 2 + bob, Color(0.75, 0.78, 0.85))
+
+
+# ---------- Финальный босс: Архимаг Омега ----------
+
+static func _paint_omega(b: Image, e: Image, f: int) -> void:
+	var bob: int = [0, -1, -1, 0][f]
+	var robe := Color(0.1, 0.15, 0.2)
+	var metal := Color(0.4, 0.42, 0.5)
+	var neon := Color(0.3, 1.0, 0.9)
+	var mag := Color(1.0, 0.3, 0.75)
+	# Мантия с проводами
+	var pts := PackedVector2Array([Vector2(16, 18 + bob), Vector2(34, 18 + bob)])
+	var x := 40.0
+	while x >= 10.0:
+		pts.append(Vector2(x, 50.0 + sin(x * 0.6 + f * 1.4) * 2.0 + bob))
+		x -= 3.0
+	poly(b, pts, robe)
+	for i in 5:
+		line(e, 18 + i * 3, 22 + bob, 15 + i * 5, 48 + bob, Color(neon if i % 2 == 0 else mag, 0.6))
+	# Механические плечи и четыре руки
+	ellipse(b, 13, 20 + bob, 6, 4.5, metal)
+	ellipse(b, 37, 20 + bob, 6, 4.5, metal)
+	for side in [-1, 1]:
+		var cx: int = 25 + side * 14
+		line(b, cx, 22 + bob, cx + side * 6, 30 + bob + f % 2, metal)
+		line(b, cx, 22 + bob, cx + side * 9, 16 + bob - f % 2, metal)
+		ellipse(e, cx + side * 6, 32 + bob, 2.2, 2.2, mag)
+		ellipse(e, cx + side * 9, 14 + bob, 2.2, 2.2, neon)
+	# Голова-маска с короной-нимбом
+	ellipse(b, 25, 12 + bob, 6, 6.5, metal.lightened(0.1))
+	rect(b, 20, 13 + bob, 11, 2, Color(0.05, 0.05, 0.08))
+	rect(e, 21, 13 + bob, 9, 1, neon)
+	px(e, 25, 9 + bob, mag)
+	for i in 7:
+		var a := PI + PI * i / 6.0
+		px(e, int(25 + cos(a) * 10), int(10 + bob + sin(a) * 6), Color(neon, 0.9))
+	# Ядро в груди
+	ellipse(e, 25, 26 + bob, 3.5, 3.5, neon)
+	ellipse(e, 25, 26 + bob, 1.6, 1.6, Color(1, 1, 1))
+
+
+
+# ---------- Средневековье + неон ----------
+
+static func _bricks(b: Image, x0: int, y0: int, w: int, h: int, c: Color, rng: RandomNumberGenerator) -> void:
+	rect(b, x0, y0, w, h, c)
+	for y in range(y0, y0 + h):
+		var row := (y - y0) / 3
+		for x in range(x0, x0 + w):
+			if (y - y0) % 3 == 0 or (x + (row % 2) * 3) % 6 == 0:
+				px(b, x, y, c.darkened(0.3))
+			elif rng.randf() < 0.06:
+				px(b, x, y, c.lightened(0.08))
+
+
+static func _paint_medieval(key: String, b: Image, e: Image) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(key) + 7
+	var stone := Color(0.36, 0.34, 0.42)
+	var wood := Color(0.32, 0.2, 0.14)
+	var plaster := Color(0.62, 0.56, 0.5)
+	var roof := Color(0.42, 0.16, 0.2)
+	var cy := Color(0.3, 0.95, 1.0)
+	var mg := Color(1.0, 0.3, 0.75)
+	var gd := Color(1.0, 0.75, 0.3)
+	var gr := Color(0.4, 1.0, 0.5)
+	match key:
+		"house0", "house1", "house2":
+			var v := int(key.right(1))
+			var w := b.get_width()
+			var h := b.get_height()
+			var neon: Color = [mg, cy, gd][v]
+			var roof_c: Color = [roof, Color(0.2, 0.25, 0.35), Color(0.3, 0.22, 0.15)][v]
+			var base_y := h - 10
+			_bricks(b, 2, base_y, w - 4, 9, stone, rng)
+			var wall_top := int(h * 0.42)
+			rect(b, 3, wall_top, w - 6, base_y - wall_top, plaster)
+			# фахверк: тёмные балки
+			for x in range(3, w - 3, 8):
+				line(b, x, wall_top, x, base_y - 1, wood)
+			line(b, 3, wall_top, w - 4, wall_top, wood)
+			line(b, 3, (wall_top + base_y) / 2, w - 4, (wall_top + base_y) / 2, wood)
+			line(b, 3, wall_top, 11, base_y - 1, wood)
+			# крутая крыша из черепицы
+			poly(b, PackedVector2Array([Vector2(0, wall_top + 1), Vector2(w / 2.0, 2), Vector2(w, wall_top + 1)]), roof_c)
+			for y in range(6, wall_top, 3):
+				line(b, int(w / 2.0 - (y - 2) * 0.85), y, int(w / 2.0 + (y - 2) * 0.85), y, roof_c.darkened(0.25))
+			# окна с тёплым и неоновым светом
+			for i in 2:
+				var wx := 7 + i * (w - 18)
+				rect(b, wx, wall_top + 5, 5, 6, Color(0.08, 0.06, 0.1))
+				rect(e, wx + 1, wall_top + 6, 3, 4, Color(1.0, 0.8, 0.45) if (i + v) % 2 == 0 else neon)
+			# дверь
+			rect(b, w / 2 - 3, base_y - 9, 6, 9 + 8, wood.darkened(0.2))
+			px(e, w / 2 + 1, base_y - 4, gd)
+			# неоновая вывеска на кронштейне и антенна на крыше
+			line(b, w - 5, wall_top + 2, w - 1, wall_top + 2, Color(0.3, 0.3, 0.35))
+			rect(b, w - 6, wall_top + 3, 6, 5, Color(0.1, 0.08, 0.14))
+			rect(e, w - 5, wall_top + 4, 4, 3, neon)
+			line(b, w / 2 + 5, 8, w / 2 + 5, 1, Color(0.4, 0.4, 0.45))
+			line(b, w / 2 + 3, 3, w / 2 + 8, 3, Color(0.4, 0.4, 0.45))
+			px(e, w / 2 + 5, 1, Color(1.0, 0.25, 0.25))
+			# кабель вдоль стены
+			for x in range(4, w - 4):
+				if x % 9 == 0:
+					px(e, x, base_y - 1, Color(neon, 0.8))
+		"tower0":
+			var w := b.get_width()
+			var h := b.get_height()
+			_bricks(b, 3, 10, w - 6, h - 12, stone, rng)
+			for x in range(2, w - 2, 5):
+				rect(b, x, 6, 3, 5, stone.lightened(0.05))
+			rect(b, 2, 9, w - 4, 2, stone.darkened(0.2))
+			# бойницы с рунным светом
+			for y in [20, 34, 48]:
+				rect(b, w / 2 - 1, y, 2, 6, Color(0.05, 0.04, 0.08))
+				rect(e, w / 2 - 1, y + 1, 2, 4, Color(0.7, 0.4, 1.0))
+			# неоновое знамя и шпиль-антенна
+			rect(b, 5, 14, 5, 14, Color(0.15, 0.1, 0.2))
+			line(e, 6, 15, 6, 26, mg)
+			line(e, 8, 15, 8, 23, Color(mg, 0.7))
+			line(b, w / 2, 6, w / 2, 0, Color(0.45, 0.45, 0.5))
+			px(e, w / 2, 0, Color(1.0, 0.25, 0.25))
+			line(e, 3, h - 3, w - 4, h - 3, Color(cy, 0.6))
+		"wall0":
+			var w := b.get_width()
+			var h := b.get_height()
+			_bricks(b, 0, 7, w, h - 8, stone, rng)
+			for x in range(0, w, 6):
+				rect(b, x, 3, 4, 5, stone.lightened(0.05))
+			for i in 3:
+				var rx := 8 + i * 15
+				for gx in 3:
+					for gy in 3:
+						if rng.randf() < 0.6:
+							px(e, rx + gx, 14 + gy, Color(0.7, 0.4, 1.0, 0.9))
+			line(e, 0, h - 3, w - 1, h - 3, Color(cy, 0.5))
+		"gate0":
+			var w := b.get_width()
+			var h := b.get_height()
+			_bricks(b, 0, 8, 14, h - 9, stone, rng)
+			_bricks(b, w - 14, 8, 14, h - 9, stone, rng)
+			_bricks(b, 14, 8, w - 28, 12, stone, rng)
+			for x in [0, 5, 10, w - 14, w - 9, w - 4]:
+				rect(b, x, 3, 4, 5, stone.lightened(0.05))
+			ellipse(b, w / 2.0, 22, 10, 6, Color(0.05, 0.04, 0.08))
+			rect(b, 14, 22, w - 28, h - 23, Color(0.05, 0.04, 0.08))
+			# энергетическая решётка ворот
+			for x in range(15, w - 14, 3):
+				line(e, x, 20, x, h - 2, Color(cy, 0.55))
+			for y in range(23, h - 1, 4):
+				line(e, 15, y, w - 15, y, Color(cy, 0.35))
+			px(e, 7, 20, gd)
+			px(e, w - 7, 20, gd)
+		"stall0", "stall1":
+			var v := int(key.right(1))
+			var w := b.get_width()
+			var h := b.get_height()
+			var cloth: Color = [Color(0.6, 0.15, 0.25), Color(0.15, 0.35, 0.55)][v]
+			line(b, 3, 8, 3, h - 2, wood)
+			line(b, w - 4, 8, w - 4, h - 2, wood)
+			poly(b, PackedVector2Array([Vector2(0, 9), Vector2(4, 2), Vector2(w - 4, 2), Vector2(w, 9)]), cloth)
+			for x in range(2, w - 2, 6):
+				rect(b, x, 3, 3, 6, cloth.lightened(0.35))
+			rect(b, 2, h - 10, w - 4, 8, wood)
+			for i in 4:
+				rect(b, 5 + i * 6, h - 13, 4, 3, [Color(0.8, 0.3, 0.2), Color(0.9, 0.8, 0.3), Color(0.4, 0.7, 0.3), Color(0.6, 0.4, 0.8)][i])
+			rect(b, w / 2 - 5, 11, 10, 5, Color(0.08, 0.06, 0.12))
+			rect(e, w / 2 - 4, 12, 8, 3, [mg, cy][v])
+		"well0":
+			var w := b.get_width()
+			_bricks(b, 2, 12, w - 4, 10, stone, rng)
+			ellipse(b, w / 2.0, 12, w / 2.0 - 2, 3, stone.darkened(0.1))
+			ellipse(e, w / 2.0, 12, w / 2.0 - 4, 2, Color(0.3, 0.9, 1.0, 0.85))
+			line(b, 3, 12, 3, 2, wood)
+			line(b, w - 4, 12, w - 4, 2, wood)
+			poly(b, PackedVector2Array([Vector2(1, 4), Vector2(w / 2.0, 0), Vector2(w - 1, 4)]), roof)
+		"banner0", "banner1":
+			var v := int(key.right(1))
+			var col: Color = [mg, cy][v]
+			line(b, 3, 2, 3, 41, Color(0.45, 0.45, 0.5))
+			px(e, 3, 1, gd)
+			poly(b, PackedVector2Array([Vector2(4, 4), Vector2(13, 4), Vector2(13, 22), Vector2(8.5, 19), Vector2(4, 22)]), Color(0.12, 0.08, 0.18))
+			line(e, 6, 7, 11, 7, col)
+			line(e, 8, 9, 8, 16, col)
+			line(e, 6, 12, 11, 12, Color(col, 0.7))
+		"lantern0":
+			line(b, 5, 8, 5, 32, Color(0.25, 0.25, 0.3))
+			rect(b, 3, 31, 5, 2, Color(0.25, 0.25, 0.3))
+			line(b, 5, 8, 9, 8, Color(0.25, 0.25, 0.3))
+			rect(b, 7, 9, 5, 6, Color(0.2, 0.18, 0.15))
+			rect(e, 8, 10, 3, 4, Color(1.0, 0.7, 0.3))
+			px(e, 9, 11, Color(0.4, 1.0, 1.0))
+		"pine0", "pine1":
+			var v := int(key.right(1))
+			var w := b.get_width()
+			var h := b.get_height()
+			var needle: Color = [Color(0.1, 0.25, 0.22), Color(0.15, 0.18, 0.3)][v]
+			var glow: Color = [gr, cy][v]
+			rect(b, w / 2 - 1, h - 9, 3, 8, Color(0.25, 0.17, 0.14))
+			for i in 4:
+				var ty := 2 + i * int((h - 10) / 4.0)
+				var tw := 4 + i * (w / 2 - 4) / 3
+				poly(b, PackedVector2Array([Vector2(w / 2.0, ty), Vector2(w / 2.0 + tw, ty + (h - 10) / 3.0), Vector2(w / 2.0 - tw, ty + (h - 10) / 3.0)]), needle.lightened(i * 0.03))
+			for i in 10:
+				var x := rng.randi_range(3, w - 4)
+				var y := rng.randi_range(4, h - 12)
+				if b.get_pixel(x, y).a > 0.5:
+					px(e, x, y, glow)
+		"bush0", "bush1":
+			var w := b.get_width()
+			var h := b.get_height()
+			for i in 4:
+				ellipse(b, rng.randf_range(4, w - 4), rng.randf_range(h * 0.45, h - 4), rng.randf_range(3, 5), rng.randf_range(3, 4), Color(0.12, 0.26, 0.2))
+			for i in 4:
+				px(e, rng.randi_range(3, w - 4), rng.randi_range(3, h - 3), Color(mg, 0.9) if i % 2 == 0 else Color(gr, 0.9))
+		"cart0":
+			rect(b, 3, 7, 22, 7, wood)
+			line(b, 25, 10, 29, 12, wood)
+			ellipse(b, 8, 15, 3.5, 3.5, Color(0.2, 0.15, 0.12))
+			ellipse(b, 20, 15, 3.5, 3.5, Color(0.2, 0.15, 0.12))
+			rect(b, 5, 2, 6, 5, Color(0.4, 0.3, 0.2))
+			rect(b, 12, 3, 6, 4, Color(0.3, 0.3, 0.36))
+			px(e, 14, 4, gr)
+			px(e, 16, 4, cy)
+		"fence0":
+			for x in range(1, 31, 5):
+				rect(b, x, 2, 2, 11, wood)
+			line(b, 0, 5, 31, 5, wood.lightened(0.1))
+			line(b, 0, 10, 31, 10, wood.lightened(0.1))
+			for x in range(3, 30, 10):
+				px(e, x, 5, Color(cy, 0.7))
+		"decal_cobble":
+			for x in 48:
+				for y in 26:
+					var d := Vector2((x - 24) / 24.0, (y - 13) / 13.0).length()
+					if d < 1.0 and rng.randf() < 0.9:
+						var st := ((x / 4) + (y / 3)) % 2
+						b.set_pixel(x, y, Color(0.22, 0.2, 0.26, 0.75 - d * 0.4) if st == 0 else Color(0.18, 0.16, 0.22, 0.75 - d * 0.4))
+						if x % 4 == 0 or y % 3 == 0:
+							b.set_pixel(x, y, Color(0.08, 0.07, 0.1, 0.7 - d * 0.4))
+		"decal_road":
+			for x in 64:
+				for y in 22:
+					if y < 2 or y > 19:
+						b.set_pixel(x, y, Color(0.12, 0.1, 0.14, 0.8))
+					else:
+						var st := ((x / 4) + (y / 3)) % 2
+						b.set_pixel(x, y, Color(0.2, 0.18, 0.24, 0.85) if st == 0 else Color(0.17, 0.15, 0.21, 0.85))
+						if x % 4 == 0 or y % 3 == 2:
+							b.set_pixel(x, y, Color(0.08, 0.07, 0.1, 0.8))
+			for x in range(4, 64, 16):
+				line(e, x, 11, x + 6, 11, Color(cy, 0.45))
+
+
+# ================= Деревья: детальный пиксель-арт =================
+## Свет падает слева сверху: три тона листвы, кора с прожилками, корни,
+## неоновые светлячки, фонарики и кабели — фэнтези с киберпанком.
+
+static func _leaf_blob(b: Image, cx: float, cy: float, rx: float, ry: float, dark: Color, mid: Color, light: Color) -> void:
+	ellipse(b, cx, cy, rx, ry, dark)
+	ellipse(b, cx - rx * 0.15, cy - ry * 0.2, rx * 0.78, ry * 0.7, mid)
+	ellipse(b, cx - rx * 0.35, cy - ry * 0.42, rx * 0.38, ry * 0.32, light)
+
+
+static func _leaf_texture(b: Image, rng: RandomNumberGenerator, dark: Color, x0: int, y0: int, x1: int, y1: int) -> void:
+	# Резные края и «дыры» в кроне: шахматная крапинка тёмным тоном
+	for i in (x1 - x0) * (y1 - y0) / 7:
+		var x := rng.randi_range(x0, x1)
+		var y := rng.randi_range(y0, y1)
+		if b.get_pixel(x, y).a > 0.5 and b.get_pixel(x, y) != dark:
+			px(b, x, y, dark)
+			if rng.randf() < 0.4:
+				px(b, x + 1, y + 1, dark)
+
+
+static func _trunk(b: Image, cx: int, top: int, bottom: int, wd: int, bark: Color) -> void:
+	for y in range(top, bottom):
+		var k := float(y - top) / maxf(1.0, bottom - top)
+		var hw := int(round(wd * 0.5 + k * k * 1.5))
+		for x in range(cx - hw, cx + hw + 1):
+			var c := bark
+			if x == cx - hw:
+				c = bark.lightened(0.18)
+			elif x >= cx + hw - 1:
+				c = bark.darkened(0.35)
+			elif (x * 3 + y) % 5 == 0:
+				c = bark.darkened(0.2)
+			px(b, x, y, c)
+	# Корни
+	line(b, cx - wd, bottom - 1, cx - wd - 3, bottom, bark.darkened(0.1))
+	line(b, cx + wd, bottom - 1, cx + wd + 3, bottom, bark.darkened(0.3))
+	line(b, cx, bottom - 1, cx + 1, bottom, bark.darkened(0.2))
+
+
+static func _paint_tree(key: String, b: Image, e: Image) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(key) + 4242
+	var w := b.get_width()
+	var h := b.get_height()
+	var gr := Color(0.35, 1.0, 0.55)
+	var mg := Color(1.0, 0.3, 0.75)
+	var cy := Color(0.3, 0.95, 1.0)
+	var gd := Color(1.0, 0.75, 0.35)
+	var bark := Color(0.3, 0.21, 0.18)
+	match key:
+		"tree0", "tree1", "tree2":
+			# Лиственное дерево: широкая крона из облаков листвы
+			var v := int(key.right(1))
+			var pal: Array = [
+				[Color(0.07, 0.2, 0.17), Color(0.12, 0.34, 0.26), Color(0.26, 0.55, 0.36), gr],
+				[Color(0.17, 0.08, 0.2), Color(0.32, 0.14, 0.36), Color(0.56, 0.26, 0.55), mg],
+				[Color(0.06, 0.14, 0.26), Color(0.1, 0.26, 0.42), Color(0.22, 0.48, 0.66), cy]][v]
+			var cx := w / 2
+			var crown_y := h * 0.36
+			_trunk(b, cx, int(h * 0.42), h - 2, 4 if v != 2 else 3, bark)
+			# Ветви, уходящие в крону
+			line(b, cx, int(h * 0.55), cx - 7, int(h * 0.4), bark)
+			line(b, cx + 1, int(h * 0.5), cx + 8, int(h * 0.36), bark.darkened(0.2))
+			var blobs := 9 if v != 2 else 7
+			var order: Array = []
+			for i in blobs:
+				var a := TAU * i / blobs + rng.randf_range(-0.3, 0.3)
+				var r := rng.randf_range(0.45, 0.85)
+				order.append(Vector2(cx + cos(a) * w * 0.3 * r, crown_y + sin(a) * h * 0.2 * r))
+			# Сначала нижние облака, потом верхние — верхние перекрывают
+			order.sort_custom(func(p, q): return p.y > q.y)
+			for p in order:
+				_leaf_blob(b, p.x, p.y, rng.randf_range(w * 0.17, w * 0.24), rng.randf_range(h * 0.12, h * 0.16), pal[0], pal[1], pal[2])
+			_leaf_blob(b, cx - 1, crown_y - h * 0.12, w * 0.22, h * 0.14, pal[0], pal[1], pal[2])
+			_leaf_texture(b, rng, pal[0], 1, 1, w - 2, int(h * 0.62))
+			# Неоновые плоды/светлячки в кроне
+			for i in 12:
+				var x := rng.randi_range(3, w - 4)
+				var y := rng.randi_range(3, int(h * 0.6))
+				if b.get_pixel(x, y).a > 0.5:
+					px(e, x, y, pal[3])
+					if i % 3 == 0:
+						px(e, x + 1, y, Color(pal[3], 0.5))
+			if v == 1:
+				# Висящий фонарик на ветке
+				line(b, cx - 7, int(h * 0.48), cx - 7, int(h * 0.56), Color(0.15, 0.12, 0.12))
+				rect(b, cx - 9, int(h * 0.56), 4, 5, Color(0.2, 0.15, 0.12))
+				rect(e, cx - 8, int(h * 0.57), 2, 3, gd)
+			elif v == 0:
+				# Кабель-лиана с огоньками вокруг ствола
+				for y in range(int(h * 0.62), h - 4, 4):
+					px(e, cx - 2 + (y / 4) % 2 * 4, y, Color(cy, 0.8))
+			else:
+				# Руна, вырезанная в коре
+				line(e, cx, int(h * 0.7), cx, int(h * 0.78), Color(cy, 0.9))
+				px(e, cx - 1, int(h * 0.72), Color(cy, 0.9))
+				px(e, cx + 1, int(h * 0.75), Color(cy, 0.9))
+		"tree3":
+			# Плакучая неоновая ива: купол и свисающие светящиеся пряди
+			var dark := Color(0.08, 0.16, 0.2)
+			var mid := Color(0.13, 0.3, 0.32)
+			var light := Color(0.3, 0.56, 0.5)
+			var cx := w / 2
+			_trunk(b, cx, int(h * 0.35), h - 2, 4, bark.darkened(0.1))
+			for i in 6:
+				var a := PI + PI * i / 5.0
+				_leaf_blob(b, cx + cos(a) * w * 0.22, h * 0.26 + sin(a) * h * 0.1, w * 0.2, h * 0.11, dark, mid, light)
+			_leaf_blob(b, cx, h * 0.2, w * 0.28, h * 0.13, dark, mid, light)
+			for i in 14:
+				var x := 3 + int((w - 6) * i / 13.0)
+				var top := int(h * 0.28) + rng.randi_range(-2, 3)
+				var bot := top + rng.randi_range(int(h * 0.22), int(h * 0.45))
+				if absi(x - cx) < 3:
+					bot = mini(bot, int(h * 0.4))
+				line(b, x, top, x + rng.randi_range(-1, 1), bot, mid if i % 2 == 0 else dark)
+				px(e, x, bot, Color(cy, 0.9) if i % 3 else Color(mg, 0.9))
+				if rng.randf() < 0.5:
+					px(e, x, bot - 3, Color(cy, 0.4))
+			_leaf_texture(b, rng, dark, 1, 1, w - 2, int(h * 0.4))
+		"pine0", "pine1", "pine2":
+			# Ель: ярусы с зубчатым краем, свет слева
+			var v := int(key.right(1))
+			var dark: Color = [Color(0.05, 0.16, 0.14), Color(0.07, 0.1, 0.2), Color(0.12, 0.1, 0.22)][v]
+			var mid: Color = [Color(0.1, 0.28, 0.22), Color(0.12, 0.2, 0.34), Color(0.18, 0.15, 0.32)][v]
+			var light: Color = [Color(0.22, 0.46, 0.34), Color(0.24, 0.38, 0.56), Color(0.38, 0.4, 0.62)][v]
+			var glow: Color = [gr, cy, Color(0.75, 0.6, 1.0)][v]
+			var cx := w / 2.0
+			var foot := h - 8
+			rect(b, int(cx) - 2, foot - 2, 4, 9, bark)
+			px(b, int(cx) + 1, foot + 2, bark.darkened(0.3))
+			var tiers := 5 if v == 0 else 4
+			for t in tiers:
+				var ty := 1 + int(t * (foot - 6) / float(tiers + 0.6))
+				var th := int((foot - ty) * 0.55) if t < tiers - 1 else foot - ty
+				th = maxi(th, 8)
+				var maxw := 3.0 + (w / 2.0 - 2.0) * (t + 1) / float(tiers)
+				for y in th:
+					var hw := maxw * (float(y) + 1.0) / th
+					if y == th - 1:
+						hw -= 1.0
+					var jag := 1.0 if (y + t) % 3 == 0 else 0.0
+					for x in range(int(cx - hw - jag), int(cx + hw + jag) + 1):
+						var rel := (x - (cx - hw)) / maxf(1.0, hw * 2.0)
+						var c := light if rel < 0.28 else (mid if rel < 0.72 else dark)
+						if y > th - 3:
+							c = dark
+						px(b, x, ty + y, c)
+				# Нижний край яруса — бахрома иголок
+				for x in range(int(cx - maxw), int(cx + maxw) + 1, 2):
+					px(b, x, ty + th, dark)
+			for i in 14:
+				var x := rng.randi_range(2, w - 3)
+				var y := rng.randi_range(4, foot - 2)
+				if b.get_pixel(x, y).a > 0.5:
+					px(e, x, y, glow if i % 4 else Color(1, 1, 1, 0.8))
+			if v == 2:
+				# Кристальный иней на кончиках ярусов
+				for t in tiers:
+					var ty := 1 + int(t * (foot - 6) / float(tiers + 0.6))
+					px(e, int(cx), ty, Color(0.9, 0.8, 1.0))
+			# Неоновая звезда-маячок на макушке
+			px(e, int(cx), 0, glow)
+		"bush0", "bush1":
+			var v := int(key.right(1))
+			var dark := Color(0.06, 0.18, 0.14) if v == 0 else Color(0.14, 0.08, 0.2)
+			var mid := Color(0.12, 0.32, 0.22) if v == 0 else Color(0.28, 0.14, 0.34)
+			var light := Color(0.26, 0.52, 0.34) if v == 0 else Color(0.5, 0.26, 0.52)
+			for i in 4:
+				_leaf_blob(b, 4 + (w - 8) * i / 3.0, h - 5 - (2 if i % 3 else 4), rng.randf_range(4, 6), rng.randf_range(3.5, 5), dark, mid, light)
+			_leaf_texture(b, rng, dark, 0, 0, w - 1, h - 1)
+			for i in 5:
+				var x := rng.randi_range(2, w - 3)
+				var y := rng.randi_range(3, h - 3)
+				if b.get_pixel(x, y).a > 0.5:
+					px(e, x, y, mg if (i + v) % 2 == 0 else gr)

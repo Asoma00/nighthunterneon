@@ -1,0 +1,52 @@
+name: Веб-версия для iPhone (GitHub Pages)
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Godot 4.7.2
+        run: |
+          curl -sSL -o godot.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -q godot.zip
+          echo "GODOT=$PWD/Godot_v4.7.2-stable_linux.x86_64" >> "$GITHUB_ENV"
+
+      - name: Шаблон веб-экспорта
+        run: python3 tools/get_templates.py "$HOME/.local/share/godot/export_templates/4.7.2.stable" web_nothreads_release.zip
+
+      - name: Экспорт веб-версии
+        run: |
+          mkdir -p build/web
+          "$GODOT" --headless --path . --import || true
+          "$GODOT" --headless --path . --export-release "Web" build/web/index.html
+          ls -la build/web
+          test -f build/web/index.wasm
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
