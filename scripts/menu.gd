@@ -88,6 +88,8 @@ func _on_orientation(_p: bool) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if not get_tree().get_nodes_in_group("vkeyboard").is_empty():
+		return
 	if event.is_action_pressed("ui_cancel") and _page_name not in ["main", "coop", "net"]:
 		get_viewport().set_input_as_handled()
 		Sound.play("click")

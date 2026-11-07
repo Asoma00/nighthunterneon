@@ -38,6 +38,9 @@ static func _collect(n: Node, out: Array) -> void:
 static func keep(root: Control, state: Dictionary) -> void:
 	if not pad_mode or root == null or not root.is_visible_in_tree():
 		return
+	# Поверх открыта экранная клавиатура — фокус принадлежит ей, не отбираем
+	if not root.get_tree().get_nodes_in_group("vkeyboard").is_empty():
+		return
 	var f := root.get_viewport().gui_get_focus_owner()
 	var list := buttons(root)
 	if list.is_empty():

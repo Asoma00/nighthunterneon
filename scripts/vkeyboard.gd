@@ -37,6 +37,7 @@ static func open(parent: Node, title: String, start_text: String, max_length := 
 
 
 func _ready() -> void:
+	add_to_group("vkeyboard")
 	layer = 125
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	var bg := ColorRect.new()
