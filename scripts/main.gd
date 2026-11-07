@@ -439,6 +439,13 @@ func _setup_view3d() -> void:
 	_orient_camera()
 	_cam3d.make_current()
 	Settings.orientation_changed.connect(_on_orientation)
+	Settings.dyn_changed.connect(_on_dyn_changed)
+	var late := Node.new()
+	late.name = "LateSync"
+	late.process_priority = 1000
+	late.set_script(preload("res://scripts/late_sync.gd"))
+	late.set("main", self)
+	add_child(late)
 
 	_plane = MeshInstance3D.new()
 	_plane.mesh = PlaneMesh.new()
@@ -509,6 +516,9 @@ func _frame_camera() -> void:
 	if Settings.is_mobile():
 		# Телефон: мир рисуется в уменьшенную текстуру — в 2–4 раза меньше пикселей
 		tk = Settings.mobile_world_scale()
+	_px = px
+	_tk_base = tk
+	tk *= _dyn_world_k()
 	if absf(tk - 1.0) > 0.01:
 		_wvp.size_2d_override = px
 		_wvp.size_2d_override_stretch = true
@@ -523,6 +533,33 @@ func _frame_camera() -> void:
 	return_after_size = false
 	_cam_offset = center / PLANE_TEXEL
 	view_radius = maxf(absf(lo.x), maxf(absf(hi.x), maxf(absf(lo.y), absf(hi.y)))) / PLANE_TEXEL
+
+
+var _px := Vector2i.ZERO
+var _tk_base := 1.0
+var _tk_applied := 1.0
+
+
+## Множитель текстуры мира от удержания кадров (Settings.dyn_k): 1.0 … 0.7
+func _dyn_world_k() -> float:
+	return lerpf(0.7, 1.0, (Settings.dyn_k - 0.5) / 0.5)
+
+
+## Кадров не хватает — уменьшаем текстуру пола и спрайтов; запас вернулся — возвращаем.
+func _on_dyn_changed(_k: float) -> void:
+	if _px == Vector2i.ZERO:
+		return
+	var tk := _tk_base * _dyn_world_k()
+	if absf(tk - _tk_applied) < 0.04:
+		return
+	_tk_applied = tk
+	if absf(tk - 1.0) > 0.01:
+		_wvp.size_2d_override = _px
+		_wvp.size_2d_override_stretch = true
+		_wvp.size = Vector2i(int(_px.x * tk), int(_px.y * tk))
+	else:
+		_wvp.size = _px
+		_wvp.size_2d_override = Vector2i.ZERO
 
 
 # ---------- Стоячие спрайты: 2D-логика, 3D-изображение ----------
@@ -912,8 +949,8 @@ func _process(delta: float) -> void:
 	if _cam_anchor:
 		_cam_anchor.position = view_center()
 	_update_shake(delta)
-	_sync_mirrors()
-	_update_beacons(delta)
+	# Отражения в 3D, маяки — в «позднем» узле, после того как все сдвинулись и камера
+	# обновилась: иначе пол и предметы рисуются со сдвигом в кадр и «шатаются».
 	_update_weather()
 	_update_music_intensity(delta)
 	if Loader.busy:

@@ -261,12 +261,16 @@ func apply_display() -> void:
 			win.size = res
 			var origin := DisplayServer.screen_get_position(DisplayServer.window_get_current_screen())
 			win.position = origin + (screen - res) / 2
-	# Игра рисуется ровно в выбранном разрешении; в полноэкранном режиме картинка
-	# растягивается на монитор с сохранением формата (4:3 — с полосами по бокам).
-	win.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT
+	# Интерфейс всегда рисуется в родном разрешении экрана (чёткий текст),
+	# а выбранное разрешение — это разрешение 3D-картинки мира (масштаб 3D).
+	# Формат сохраняется: 4:3 на широком мониторе — с полосами по бокам.
+	win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
 	win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 	win.content_scale_size = res
 	win.content_scale_factor = minf(res.x / BASE.x, res.y / BASE.y)
+	var out_h := float(res.y) if mode != "fullscreen" else minf(float(screen.y), float(screen.x) * float(res.y) / float(res.x))
+	_base_3d = clampf(float(res.y) / maxf(1.0, out_h), 0.25, 2.0)
+	_apply_3d_scale()
 
 
 func load_settings() -> void:
@@ -291,6 +295,7 @@ func load_settings() -> void:
 	view_dist = cfg.get_value("mobile", "view", view_dist)
 	crowd = cfg.get_value("mobile", "crowd", crowd)
 	preset = cfg.get_value("mobile", "preset", preset)
+	adaptive = cfg.get_value("graphics", "adaptive", adaptive)
 	touch_size = cfg.get_value("mobile", "touch_size", touch_size)
 
 
@@ -314,6 +319,7 @@ func save_settings() -> void:
 	cfg.set_value("mobile", "view", view_dist)
 	cfg.set_value("mobile", "crowd", crowd)
 	cfg.set_value("mobile", "preset", preset)
+	cfg.set_value("graphics", "adaptive", adaptive)
 	cfg.set_value("mobile", "touch_size", touch_size)
 	cfg.save(PATH)
 
@@ -335,15 +341,90 @@ func _apply_mobile_display() -> void:
 	var h := float(mini(mobile_h, int(short_px)))
 	var long_side := int(round(h * ratio / 2.0)) * 2
 	var res := Vector2i(long_side, int(h)) if screen.x >= screen.y else Vector2i(int(h), long_side)
-	win.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT
+	# Интерфейс — в родном разрешении экрана (720 единиц по короткой стороне),
+	# «Чёткость» задаёт только разрешение 3D-картинки
+	win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
 	win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
-	win.content_scale_size = res
-	win.content_scale_factor = h / BASE.y
+	win.content_scale_size = Vector2i(int(res.x * BASE.y / h), int(res.y * BASE.y / h))
+	win.content_scale_factor = 1.0
+	_base_3d = clampf(h / maxf(1.0, short_px), 0.25, 1.0)
+	_apply_3d_scale()
 	_last_portrait = screen.y > screen.x
 
 
 var _last_portrait := false
 signal orientation_changed(portrait: bool)
+
+
+# ---------- Разрешение 3D и удержание частоты кадров ----------
+
+var _base_3d := 1.0        # из настройки разрешения / чёткости
+var adaptive := true       # «Держать частоту кадров»: при просадке картинка и эффекты чуть упрощаются
+var dyn_k := 1.0           # 0.5…1.0 — текущий запас (1 — без упрощений)
+signal dyn_changed(k: float)
+var _ft := 0.0
+var _fn := 0
+var _low_t := 0.0
+var _good_t := 0.0
+var _hold_t := 0.0
+
+
+func _apply_3d_scale() -> void:
+	var vp := get_viewport()
+	if vp == null:
+		return
+	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+	vp.scaling_3d_scale = clampf(_base_3d * lerpf(0.6, 1.0, (dyn_k - 0.5) / 0.5), 0.25, 2.0)
+
+
+## Целевая частота кадров (то, что игра старается держать всегда).
+func target_fps() -> float:
+	match str(fps):
+		"monitor":
+			return float(refresh_rate())
+		"unlimited":
+			return maxf(60.0, float(refresh_rate()))
+	return maxf(20.0, float(str(fps).to_int()))
+
+
+## Следим за частотой: если кадров меньше цели — постепенно снижаем разрешение 3D,
+## размер текстуры мира и число эффектов; когда запас вернулся — возвращаем качество.
+func _track_fps(delta: float) -> void:
+	if not adaptive or DisplayServer.get_name() == "headless":
+		if dyn_k != 1.0:
+			dyn_k = 1.0
+			_apply_3d_scale()
+			dyn_changed.emit(dyn_k)
+		return
+	_ft += delta
+	_fn += 1
+	_hold_t = maxf(0.0, _hold_t - delta)
+	if _ft < 0.5:
+		return
+	var now_fps := float(_fn) / _ft
+	_ft = 0.0
+	_fn = 0
+	var target := target_fps()
+	if Loader.busy or get_tree().paused:
+		return   # загрузка и пауза — не показатель
+	if now_fps < target * 0.93:
+		_low_t += 0.5
+		_good_t = 0.0
+	else:
+		_low_t = 0.0
+		_good_t += 0.5
+	var k := dyn_k
+	if _low_t >= 1.0 and dyn_k > 0.5:
+		k = maxf(0.5, dyn_k - 0.1)
+		_low_t = 0.0
+		_hold_t = 12.0   # после просадки качество возвращаем не сразу
+	elif _good_t >= 6.0 and _hold_t <= 0.0 and dyn_k < 1.0:
+		k = minf(1.0, dyn_k + 0.05)
+		_good_t = 0.0
+	if k != dyn_k:
+		dyn_k = k
+		_apply_3d_scale()
+		dyn_changed.emit(dyn_k)
 
 
 ## Телефон повернули: пересчитать картинку и сообщить сценам, чтобы перестроили интерфейс
@@ -470,9 +551,13 @@ func apply_graphics() -> void:
 
 ## Множитель количества эффектов.
 func fx_k() -> float:
-	if effects < 0:
-		return 0.18   # «Минимум» — только самые нужные вспышки
-	return [0.35, 0.65, 1.0][clampi(effects, 0, 2)]
+	var k: float = 0.18 if effects < 0 else [0.35, 0.65, 1.0][clampi(effects, 0, 2)]
+	# При просадке кадров эффектов становится меньше (но урон и логика — те же)
+	return k * lerpf(0.45, 1.0, (dyn_k - 0.5) / 0.5)
+
+
+func _process(delta: float) -> void:
+	_track_fps(delta)
 
 
 ## Во сколько раз текстура мира чётче базовой — зависит от разрешения экрана.

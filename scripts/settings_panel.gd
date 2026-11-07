@@ -87,7 +87,7 @@ func _build() -> void:
 			_rebuild.call_deferred())
 	grid.add_child(pr_opt)
 	if Settings.is_mobile():
-		grid.add_child(_row_label("Чёткость"))
+		grid.add_child(_row_label("Чёткость 3D"))
 		var mh_opt := _option(["360p — минимум", "450p — очень быстро", "540p — быстрее", "720p — баланс", "900p", "1080p — чётче"])
 		mh_opt.selected = maxi(0, Settings.MOBILE_HEIGHTS.find(Settings.mobile_h))
 		mh_opt.item_selected.connect(func(i: int):
@@ -111,6 +111,7 @@ func _build() -> void:
 	_mob_opt(grid, "Декор пола", ["Упрощённый", "Полный"], Settings.decor, func(i): Settings.decor = i)
 	_mob_opt(grid, "Дальность", ["Ближняя (быстрее)", "Средняя", "Полная"], Settings.view_dist, func(i): Settings.view_dist = i)
 	_mob_opt(grid, "Врагов на экране", ["Меньше, но крепче", "Обычно"], Settings.crowd, func(i): Settings.crowd = i)
+	_mob_opt(grid, "Держать кадры", ["Нет", "Да — упрощать при просадке"], 1 if Settings.adaptive else 0, func(i): Settings.adaptive = i == 1)
 	_build_common_rows(grid)
 
 
@@ -127,7 +128,7 @@ func _build_desktop_rows(grid: GridContainer) -> void:
 	_aspect_opt.item_selected.connect(func(_i: int): _fill_resolutions(Vector2i.ZERO))
 	grid.add_child(_aspect_opt)
 
-	grid.add_child(_row_label("Разрешение"))
+	grid.add_child(_row_label("Разрешение 3D"))
 	_res_opt = _option([])
 	grid.add_child(_res_opt)
 	_fill_resolutions(Settings.resolution)

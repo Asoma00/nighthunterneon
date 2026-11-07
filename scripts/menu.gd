@@ -695,6 +695,19 @@ func _build_profile_page() -> void:
 		Meta.save()
 		_refresh_badge())
 	nick_row.add_child(_nick_edit)
+	# Геймпад / Steam Deck: экранная клавиатура (на телефоне — системная)
+	if Settings.input_mode() != "touch":
+		var kb := _button("⌨ ВВЕСТИ", CYAN, 150)
+		kb.custom_minimum_size.y = 44
+		kb.pressed.connect(func():
+			Sound.play("click")
+			var vk = preload("res://scripts/vkeyboard.gd").open(self, "НИК ОХОТНИКА", Meta.nickname if Meta.nickname != "Охотник" else "", 16)
+			vk.done.connect(func(t: String):
+				_nick_edit.text = t
+				_nick_edit.text_changed.emit(t)
+				kb.grab_focus())
+			vk.tree_exited.connect(func(): if is_instance_valid(kb): kb.grab_focus()))
+		nick_row.add_child(kb)
 	var hint := _label("Ник виден напарнику над героем в сетевой игре", 14, Color(0.7, 0.7, 0.85))
 	box.add_child(hint)
 	var row := HBoxContainer.new()
@@ -1065,6 +1078,14 @@ func _build_net_page() -> void:
 	_net_ip.custom_minimum_size = Vector2(300, 52)
 	_net_ip.add_theme_font_size_override("font_size", 20)
 	row.add_child(_net_ip)
+	if Settings.input_mode() != "touch":
+		var ipkb := _button("⌨", CYAN, 64)
+		ipkb.pressed.connect(func():
+			Sound.play("click")
+			var vk = preload("res://scripts/vkeyboard.gd").open(self, "IP ХОСТА", _net_ip.text, 15, "0123456789.")
+			vk.done.connect(func(t: String): _net_ip.text = t)
+			vk.tree_exited.connect(func(): if is_instance_valid(ipkb): ipkb.grab_focus()))
+		row.add_child(ipkb)
 	var join_btn := _button("ПОДКЛЮЧИТЬСЯ", CYAN, 260)
 	join_btn.pressed.connect(func():
 		Sound.play("click")
