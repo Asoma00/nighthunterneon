@@ -210,7 +210,7 @@ func _process(delta: float) -> void:
 			_portraits.remove_at(k)
 	for entry in _portraits:
 		var fr: Dictionary = entry[1]
-		var idx := int(_t * (10.0 if entry[3] else 4.0)) % 4 + (4 if entry[3] else 0)
+		var idx := Pixel.hero_frame(fr, "run" if entry[3] else "idle", _t)
 		(entry[0] as TextureRect).texture = fr["base"][idx]
 		(entry[2] as TextureRect).texture = fr["emit"][idx]
 

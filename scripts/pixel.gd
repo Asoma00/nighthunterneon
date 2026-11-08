@@ -137,16 +137,17 @@ static func hdr(c: Color, k: float) -> Color:
 
 const SPECS := {
 	# ключ: [ширина, высота, кадров, тень/объём, цвет обводки]
-	"hero": [22, 28, 8, true],
-	"rin": [22, 28, 8, true],
-	"bram": [24, 28, 8, true],
-	"kira": [22, 30, 8, true],
-	"skyla": [22, 28, 8, true],
-	"orm": [26, 30, 8, true],
-	"mora": [22, 28, 8, true],
-	"zephyr": [22, 30, 8, true],
-	"iris": [22, 28, 8, true],
-	"kai": [22, 26, 8, true],
+	# Герои: детальный риг 32×40, 16 кадров; на экране — в масштабе 0.7 (тот же размер, больше деталей)
+	"hero": [32, 40, 16, true, 0.7],
+	"rin": [32, 40, 16, true, 0.7],
+	"bram": [32, 40, 16, true, 0.7],
+	"kira": [32, 40, 16, true, 0.7],
+	"skyla": [32, 40, 16, true, 0.7],
+	"orm": [32, 40, 16, true, 0.7],
+	"mora": [32, 40, 16, true, 0.7],
+	"zephyr": [32, 40, 16, true, 0.7],
+	"iris": [32, 40, 16, true, 0.7],
+	"kai": [32, 40, 16, true, 0.7],
 	"goblin": [16, 16, 4, true],
 	"slime": [20, 16, 4, true],
 	"slimelet": [12, 10, 4, true],
@@ -251,7 +252,7 @@ static func frames(key: String) -> Dictionary:
 	var h: int = spec[1]
 	var count: int = spec[2]
 	var volume: bool = spec[3]
-	var result := {"base": [], "emit": [], "flash": [], "size": Vector2(w, h)}
+	var result := {"base": [], "emit": [], "flash": [], "size": Vector2(w, h), "k": float(spec[4]) if spec.size() > 4 else 1.0}
 	for f in count:
 		var base := blank(w, h)
 		var emit := blank(w, h)
@@ -290,6 +291,9 @@ static func _paint(key: String, b: Image, e: Image, f: int) -> void:
 		return
 	if key.begins_with("villager_"):
 		_paint_villager(b, e, f, int(key.substr(9)))
+		return
+	if key in HERO_KEYS:
+		_paint_hero_rig(key, b, e, f)
 		return
 	match key:
 		"hero":
@@ -2345,3 +2349,447 @@ static func _paint_tree(key: String, b: Image, e: Image) -> void:
 				var y := rng.randi_range(3, h - 3)
 				if b.get_pixel(x, y).a > 0.5:
 					px(e, x, y, mg if (i + v) % 2 == 0 else gr)
+
+
+# ================= Герои: детальный риг 32×40, 16 кадров =================
+# Кадры: 0–3 покой (дыхание), 4–9 бег, 10–13 атака (замах, удар, доводка, возврат),
+# 14–15 получение урона. Герой смотрит вправо, отражение — flip_h.
+
+const HERO_KEYS := ["hero", "rin", "bram", "kira", "skyla", "orm", "mora", "zephyr", "iris", "kai"]
+const HERO_ANIM := {"idle": [0, 4], "run": [4, 6], "attack": [10, 4], "hurt": [14, 2]}
+
+## Внешность: цвета и «детали» каждого героя.
+const LOOKS := {
+	"hero": {"skin": Color(0.05, 0.03, 0.1), "main": Color(0.2, 0.24, 0.55), "trim": Color(0.9, 0.68, 0.27),
+		"legs": Color(0.14, 0.12, 0.25), "boots": Color(0.1, 0.09, 0.17), "back": "cloak", "back_c": Color(0.17, 0.2, 0.5),
+		"head": "hood", "head_c": Color(0.32, 0.18, 0.55), "neon": Color(0.3, 1.0, 1.0), "neon2": Color(1.0, 0.25, 0.72),
+		"weapon": "staff", "w_c": Color(0.45, 0.48, 0.64), "gem": Color(0.75, 0.4, 1.0), "build": 0},
+	"rin": {"skin": Color(0.9, 0.75, 0.65), "main": Color(0.16, 0.14, 0.22), "trim": Color(0.75, 0.1, 0.25),
+		"legs": Color(0.12, 0.1, 0.16), "boots": Color(0.3, 0.28, 0.36), "back": "scarf", "back_c": Color(0.78, 0.1, 0.25),
+		"head": "samurai", "head_c": Color(0.3, 0.28, 0.36), "neon": Color(1.0, 0.25, 0.6), "neon2": Color(1.0, 0.7, 0.85),
+		"weapon": "katana", "w_c": Color(0.78, 0.8, 0.88), "gem": Color(1.0, 0.25, 0.6), "build": 0},
+	"bram": {"skin": Color(0.9, 0.68, 0.55), "main": Color(0.36, 0.34, 0.4), "trim": Color(0.9, 0.55, 0.2),
+		"legs": Color(0.3, 0.2, 0.14), "boots": Color(0.2, 0.15, 0.1), "back": "none", "back_c": Color(0.35, 0.22, 0.14),
+		"head": "dwarf", "head_c": Color(0.45, 0.44, 0.5), "hair": Color(0.8, 0.42, 0.15), "neon": Color(1.0, 0.65, 0.2),
+		"neon2": Color(0.4, 0.85, 1.0), "weapon": "hammer", "w_c": Color(0.4, 0.4, 0.48), "gem": Color(1.0, 0.6, 0.2), "build": 2},
+	"kira": {"skin": Color(0.88, 0.76, 0.68), "main": Color(0.12, 0.16, 0.14), "trim": Color(0.4, 1.0, 0.5),
+		"legs": Color(0.1, 0.12, 0.12), "boots": Color(0.08, 0.1, 0.1), "back": "cape_short", "back_c": Color(0.1, 0.2, 0.15),
+		"head": "witch", "head_c": Color(0.1, 0.12, 0.14), "hair": Color(0.3, 0.9, 0.55), "neon": Color(0.4, 1.0, 0.5),
+		"neon2": Color(0.8, 1.0, 0.85), "weapon": "wand", "w_c": Color(0.3, 0.32, 0.4), "gem": Color(0.4, 1.0, 0.5), "build": 0},
+	"skyla": {"skin": Color(0.92, 0.82, 0.72), "main": Color(0.16, 0.36, 0.34), "trim": Color(0.7, 0.55, 0.3),
+		"legs": Color(0.12, 0.14, 0.16), "boots": Color(0.25, 0.2, 0.15), "back": "quiver", "back_c": Color(0.4, 0.3, 0.2),
+		"head": "hood_white", "head_c": Color(0.92, 0.92, 0.86), "hair": Color(0.95, 0.95, 0.88), "neon": Color(0.45, 1.0, 0.8),
+		"neon2": Color(0.8, 1.0, 0.95), "weapon": "bow", "w_c": Color(0.42, 0.44, 0.52), "gem": Color(0.45, 1.0, 0.8), "build": 0},
+	"orm": {"skin": Color(0.85, 0.7, 0.6), "main": Color(0.45, 0.45, 0.52), "trim": Color(0.75, 0.58, 0.28),
+		"legs": Color(0.32, 0.32, 0.4), "boots": Color(0.28, 0.26, 0.32), "back": "cape", "back_c": Color(0.6, 0.15, 0.15),
+		"head": "great_helm", "head_c": Color(0.55, 0.55, 0.62), "neon": Color(1.0, 0.85, 0.4), "neon2": Color(1.0, 0.6, 0.2),
+		"weapon": "mace", "w_c": Color(0.62, 0.48, 0.25), "gem": Color(1.0, 0.85, 0.4), "build": 2},
+	"mora": {"skin": Color(0.85, 0.85, 0.8), "main": Color(0.14, 0.1, 0.2), "trim": Color(0.45, 0.3, 0.65),
+		"legs": Color(0.08, 0.06, 0.1), "boots": Color(0.08, 0.06, 0.1), "back": "robe", "back_c": Color(0.12, 0.08, 0.18),
+		"head": "skull", "head_c": Color(0.18, 0.12, 0.25), "neon": Color(0.7, 0.5, 1.0), "neon2": Color(0.3, 1.0, 0.6),
+		"weapon": "scythe", "w_c": Color(0.3, 0.28, 0.35), "gem": Color(0.7, 0.5, 1.0), "build": 0},
+	"zephyr": {"skin": Color(0.62, 0.46, 0.36), "main": Color(0.18, 0.26, 0.45), "trim": Color(0.9, 0.85, 0.7),
+		"legs": Color(0.15, 0.12, 0.1), "boots": Color(0.25, 0.2, 0.16), "back": "robe", "back_c": Color(0.15, 0.22, 0.4),
+		"head": "feathers", "head_c": Color(0.2, 0.2, 0.25), "neon": Color(0.5, 0.85, 1.0), "neon2": Color(1.0, 1.0, 1.0),
+		"weapon": "orbstaff", "w_c": Color(0.45, 0.35, 0.25), "gem": Color(0.5, 0.85, 1.0), "build": 0},
+	"iris": {"skin": Color(0.9, 0.75, 0.62), "main": Color(0.84, 0.84, 0.8), "trim": Color(0.35, 0.3, 0.25),
+		"legs": Color(0.2, 0.18, 0.15), "boots": Color(0.3, 0.22, 0.16), "back": "coat", "back_c": Color(0.78, 0.78, 0.74),
+		"head": "goggles", "head_c": Color(0.25, 0.25, 0.3), "hair": Color(0.8, 0.3, 0.2), "neon": Color(0.6, 1.0, 0.3),
+		"neon2": Color(1.0, 0.4, 0.6), "weapon": "flask", "w_c": Color(0.6, 0.8, 0.9), "gem": Color(0.6, 1.0, 0.3), "build": 0},
+	"kai": {"skin": Color(0.12, 0.12, 0.16), "main": Color(0.12, 0.12, 0.16), "trim": Color(0.7, 0.12, 0.15),
+		"legs": Color(0.1, 0.1, 0.13), "boots": Color(0.08, 0.08, 0.1), "back": "scarf", "back_c": Color(0.72, 0.12, 0.15),
+		"head": "ninja", "head_c": Color(0.15, 0.15, 0.2), "neon": Color(1.0, 0.3, 0.3), "neon2": Color(1.0, 0.8, 0.8),
+		"weapon": "blade", "w_c": Color(0.35, 0.35, 0.42), "gem": Color(1.0, 0.3, 0.3), "build": 1},
+}
+
+
+static func hero_frame(fr: Dictionary, state: String, t: float) -> int:
+	var n: int = fr["base"].size()
+	if n < 16:
+		# старые 8-кадровые спрайты: 0–3 покой, 4–7 ходьба
+		return (4 + int(t * 10.0) % 4) if state == "run" else int(t * 4.0) % 4
+	var a: Array = HERO_ANIM.get(state, HERO_ANIM["idle"])
+	var spd := {"idle": 4.0, "run": 12.0, "attack": 14.0, "hurt": 10.0}.get(state, 4.0) as float
+	return int(a[0]) + int(t * spd) % int(a[1])
+
+
+## Поза кадра: смещения тела, ноги, руки, наклон.
+static func _rig_pose(f: int, melee: bool) -> Dictionary:
+	var p := {"bob": 0.0, "lean": 0.0, "fx": 0.0, "fl": 0.0, "bx": 0.0, "bl": 0.0,
+		"af": 0.35, "ab": -0.25, "state": "idle", "k": 0, "sway": 0.0, "blink": false}
+	if f < 4:
+		p["bob"] = [0.0, 0.0, 1.0, 1.0][f]
+		p["af"] = 0.35 + [0.0, 0.05, 0.1, 0.05][f]
+		p["sway"] = [0.0, 1.0, 1.0, 0.0][f]
+		p["blink"] = f == 3
+	elif f < 10:
+		var k := f - 4
+		var ph := TAU * k / 6.0
+		p["state"] = "run"
+		p["k"] = k
+		p["bob"] = -absf(sin(ph)) * 1.5 + 1.0
+		p["lean"] = 1.0
+		p["fx"] = sin(ph) * 4.0
+		p["fl"] = maxf(0.0, cos(ph)) * 2.5
+		p["bx"] = -sin(ph) * 4.0
+		p["bl"] = maxf(0.0, -cos(ph)) * 2.5
+		p["af"] = -sin(ph) * 0.9 + 0.2
+		p["ab"] = sin(ph) * 0.9
+		p["sway"] = 2.0 + sin(ph)
+	elif f < 14:
+		var k := f - 10
+		p["state"] = "attack"
+		p["k"] = k
+		if melee:
+			p["af"] = [-2.5, 1.5, 2.2, 0.9][k]
+			p["lean"] = [-1.0, 2.0, 2.0, 0.5][k]
+		else:
+			p["af"] = [0.9, 1.57, 1.45, 0.9][k]
+			p["lean"] = [0.0, 1.0, 0.5, 0.0][k]
+		p["ab"] = [-0.6, 0.3, 0.4, -0.2][k]
+		p["fx"] = [0.0, 2.0, 2.0, 1.0][k]
+		p["bx"] = [0.0, -2.0, -2.0, -1.0][k]
+		p["sway"] = [0.0, 1.0, 2.0, 1.0][k]
+	else:
+		var k := f - 14
+		p["state"] = "hurt"
+		p["k"] = k
+		p["lean"] = -2.0 - k
+		p["bob"] = 1.0
+		p["af"] = -1.2
+		p["ab"] = -1.6
+		p["fx"] = -1.0
+		p["bx"] = -3.0
+		p["sway"] = -1.0
+		p["blink"] = true
+	return p
+
+
+static func _limb(im: Image, a: Vector2, c: Vector2, w: int, col: Color) -> void:
+	for i in w:
+		for j in w:
+			line(im, int(round(a.x)) + i - w / 2, int(round(a.y)) + j - w / 2, int(round(c.x)) + i - w / 2, int(round(c.y)) + j - w / 2, col)
+
+
+static func _paint_hero_rig(key: String, b: Image, e: Image, f: int) -> void:
+	var L: Dictionary = LOOKS[key]
+	var weapon: String = L["weapon"]
+	var melee := weapon in ["katana", "hammer", "scythe", "blade", "mace"]
+	var P := _rig_pose(f, melee)
+	var build: int = L["build"]          # 0 — обычный, 1 — худой, 2 — массивный
+	var bob: float = P["bob"]
+	var lean: float = P["lean"]
+	var cx := 15.0 + lean
+	var ground := 38.0
+	var hip_y := 29.0 + bob
+	var sh_y := 19.0 + bob
+	var tw := 4.0 + (1.5 if build == 2 else (-0.5 if build == 1 else 0.0))   # полуширина корпуса
+	var neon: Color = L["neon"]
+	var neon2: Color = L["neon2"]
+	var main_c: Color = L["main"]
+	var trim: Color = L["trim"]
+	var st: String = P["state"]
+	var k: int = P["k"]
+
+	# --- Спина: плащ / шарф / колчан / роба ---
+	var back: String = L["back"]
+	var bc: Color = L["back_c"]
+	var sway: float = P["sway"]
+	match back:
+		"cloak", "cape", "robe", "coat":
+			var low := ground - (1.0 if back == "robe" else (4.0 if back == "coat" else 3.0))
+			poly(b, PackedVector2Array([Vector2(cx - tw + 1, sh_y - 1), Vector2(cx + tw - 1, sh_y - 1),
+				Vector2(cx + tw - 2 - sway, low), Vector2(cx - tw - 4 - sway * 1.5, low + 1)]), bc)
+			line(b, int(cx - tw - 3 - sway), int(low), int(cx - 1), int(sh_y + 2), bc.lightened(0.15))
+			if back == "cloak":
+				line(e, int(cx - tw - 4 - sway * 1.5), int(low + 1), int(cx + tw - 2 - sway), int(low), Color(neon2, 0.9))
+		"cape_short":
+			poly(b, PackedVector2Array([Vector2(cx - tw, sh_y - 1), Vector2(cx + tw - 2, sh_y - 1),
+				Vector2(cx - 1 - sway, hip_y + 1), Vector2(cx - tw - 3 - sway, hip_y)]), bc)
+			line(e, int(cx - tw - 3 - sway), int(hip_y), int(cx - 1 - sway), int(hip_y + 1), Color(neon, 0.8))
+		"scarf":
+			poly(b, PackedVector2Array([Vector2(cx - 1, sh_y - 2), Vector2(cx - 8 - sway * 2.0, sh_y - 1 + sway * 0.5),
+				Vector2(cx - 10 - sway * 2.0, sh_y + 3 - sway * 0.5), Vector2(cx - 1, sh_y + 1)]), bc)
+			px(b, int(cx - 10 - sway * 2.0), int(sh_y + 4), bc.darkened(0.2))
+		"quiver":
+			rect(b, int(cx - tw - 2), int(sh_y - 2), 3, 10, bc)
+			for i in 3:
+				line(b, int(cx - tw - 2) + i, int(sh_y - 2), int(cx - tw - 3) + i, int(sh_y - 6), Color(0.85, 0.85, 0.8))
+				px(e, int(cx - tw - 3) + i, int(sh_y - 6), neon)
+
+	# --- Задняя нога и рука ---
+	var legs_c: Color = L["legs"]
+	var boots_c: Color = L["boots"]
+	var lw := 3 if build == 2 else 2
+	var hb := Vector2(cx - 1.5, hip_y)
+	var fb := Vector2(cx - 2 + float(P["bx"]), ground - float(P["bl"]))
+	_limb(b, hb, fb, lw, legs_c.darkened(0.25))
+	rect(b, int(fb.x) - 1, int(fb.y) - 1, 4, 2, boots_c.darkened(0.2))
+	var sb := Vector2(cx - tw + 1, sh_y + 1)
+	var ab: float = P["ab"]
+	var hand_b := sb + Vector2(sin(ab), cos(ab)) * 7.0
+	_limb(b, sb, hand_b, 2, main_c.darkened(0.3))
+	px(b, int(hand_b.x), int(hand_b.y), Color(L["skin"]).darkened(0.2))
+
+	# --- Корпус ---
+	poly(b, PackedVector2Array([Vector2(cx - tw, sh_y), Vector2(cx + tw, sh_y),
+		Vector2(cx + tw - 0.5, hip_y + 1), Vector2(cx - tw + 0.5, hip_y + 1)]), main_c)
+	# юбка / полы одежды
+	if back in ["robe", "coat", "cloak"] or key in ["kira", "iris", "mora", "zephyr"]:
+		poly(b, PackedVector2Array([Vector2(cx - tw, hip_y - 1), Vector2(cx + tw, hip_y - 1),
+			Vector2(cx + tw + 1 + sway * 0.3, hip_y + 5), Vector2(cx - tw - 1 + sway * 0.3, hip_y + 5)]), main_c.darkened(0.1))
+	# пояс и пряжка
+	rect(b, int(cx - tw), int(hip_y - 2), int(tw * 2), 2, trim.darkened(0.2))
+	px(b, int(cx), int(hip_y - 2), trim.lightened(0.3))
+	# нагрудник / детали
+	match key:
+		"rin", "orm", "kai":
+			rect(b, int(cx - tw + 1), int(sh_y + 2), int(tw * 2 - 2), 2, Color(main_c).lightened(0.25))
+			rect(b, int(cx - tw + 1), int(sh_y + 6), int(tw * 2 - 2), 1, trim)
+		"bram":
+			rect(b, int(cx - 2), int(sh_y + 2), 5, int(hip_y - sh_y - 3), Color(0.35, 0.22, 0.14))   # фартук
+			px(e, int(cx), int(sh_y + 5), neon)
+		"iris":
+			for i in 3:
+				rect(b, int(cx - tw + 1 + i * 3), int(hip_y - 4), 2, 3, Color(0.3, 0.35, 0.3))
+				px(e, int(cx - tw + 1 + i * 3), int(hip_y - 3), [neon, neon2, Color(0.4, 0.8, 1.0)][i])
+		"mora":
+			for y in range(int(sh_y + 2), int(hip_y), 3):
+				px(e, int(cx - 1), y, Color(neon, 0.8))
+				px(e, int(cx + 1), y + 1, Color(neon2, 0.7))
+		"hero":
+			rect(b, int(cx - tw + 1), int(sh_y + 4), int(tw * 2 - 2), 1, trim)
+			if f % 2 == 0:
+				px(e, int(cx - 1), int(sh_y + 7), Color(neon, 0.9))
+		_:
+			rect(b, int(cx - tw + 1), int(sh_y + 4), int(tw * 2 - 2), 1, trim)
+	# неоновая кайма корпуса
+	line(e, int(cx + tw - 1), int(sh_y + 1), int(cx + tw - 1), int(hip_y - 3), Color(neon, 0.75))
+	# наплечник
+	ellipse(b, cx + tw - 1.5, sh_y + 0.5, 2.6 + (1.0 if build == 2 else 0.0), 1.8, trim if key in ["orm", "bram"] else main_c.lightened(0.2))
+
+	# --- Передняя нога ---
+	var hf := Vector2(cx + 1.5, hip_y)
+	var ff := Vector2(cx + 2 + float(P["fx"]), ground - float(P["fl"]))
+	_limb(b, hf, ff, lw, legs_c)
+	rect(b, int(ff.x) - 1, int(ff.y) - 1, 4, 2, boots_c)
+	px(b, int(ff.x) + 2, int(ff.y), boots_c.lightened(0.2))
+
+	# --- Голова ---
+	var hx := cx + 1.0 + (0.5 if st == "attack" and k == 1 else 0.0)
+	var hy := sh_y - 5.0
+	var skin: Color = L["skin"]
+	var head: String = L["head"]
+	var hc: Color = L["head_c"]
+	var blink: bool = P["blink"]
+	match head:
+		"hood":
+			poly(b, PackedVector2Array([Vector2(hx - 4, hy - 2), Vector2(hx - 7 - sway, hy + 4), Vector2(hx - 2, hy + 3)]), hc)
+			ellipse(b, hx, hy, 5.2, 5.0, hc)
+			ellipse(b, hx + 1.5, hy + 1.0, 3.0, 2.8, skin)
+			if not blink:
+				rect(e, int(hx), int(hy + 1), 4, 1, neon)
+				px(e, int(hx + 3), int(hy + 1), Color.WHITE)
+		"samurai":
+			ellipse(b, hx, hy, 4.6, 4.6, skin)
+			rect(b, int(hx - 5), int(hy - 5), 10, 3, hc)
+			ellipse(b, hx - 1, hy - 1, 4.8, 3.4, hc.darkened(0.2))
+			poly(b, PackedVector2Array([Vector2(hx + 1, hy - 5), Vector2(hx + 6, hy - 9), Vector2(hx + 4, hy - 4)]), trim)
+			rect(b, int(hx - 1), int(hy + 2), 6, 2, hc)
+			if not blink:
+				rect(e, int(hx), int(hy), 4, 1, neon)
+		"dwarf":
+			ellipse(b, hx, hy + 0.5, 4.8, 4.6, skin)
+			ellipse(b, hx - 0.5, hy - 2.5, 5.2, 3.0, hc)
+			rect(b, int(hx - 5), int(hy - 2), 11, 1, hc.darkened(0.25))
+			for i in 2:
+				px(b, int(hx - 5 + i * 10), int(hy - 5), Color(0.85, 0.8, 0.7))
+			poly(b, PackedVector2Array([Vector2(hx - 2, hy + 1), Vector2(hx + 5, hy + 1), Vector2(hx + 3, hy + 8 + bob * 0.5), Vector2(hx - 1, hy + 7)]), L["hair"])
+			if not blink:
+				px(e, int(hx + 2), int(hy), neon)
+			px(e, int(hx), int(hy - 3), Color(neon2, 0.9))
+		"witch":
+			ellipse(b, hx, hy + 0.5, 4.4, 4.4, skin)
+			poly(b, PackedVector2Array([Vector2(hx - 4, hy + 2), Vector2(hx - 6 - sway, hy + 7), Vector2(hx - 2, hy + 4)]), L["hair"])
+			rect(b, int(hx - 7), int(hy - 3), 14, 2, hc)
+			poly(b, PackedVector2Array([Vector2(hx - 4, hy - 3), Vector2(hx + 4, hy - 3), Vector2(hx - 3 - sway, hy - 12)]), hc)
+			line(e, int(hx - 4), int(hy - 4), int(hx + 3), int(hy - 4), neon)
+			if not blink:
+				px(e, int(hx + 2), int(hy + 1), neon)
+		"hood_white":
+			ellipse(b, hx, hy, 5.0, 5.0, hc)
+			ellipse(b, hx + 1.5, hy + 1.0, 3.0, 3.0, skin)
+			poly(b, PackedVector2Array([Vector2(hx - 4, hy), Vector2(hx - 7 - sway, hy + 8), Vector2(hx - 2, hy + 5)]), L["hair"])
+			poly(b, PackedVector2Array([Vector2(hx + 3, hy - 3), Vector2(hx + 6, hy - 6), Vector2(hx + 5, hy - 2)]), hc)
+			if not blink:
+				rect(e, int(hx + 1), int(hy + 1), 3, 1, neon)
+		"great_helm":
+			rect(b, int(hx - 4), int(hy - 4), 9, 9, hc)
+			rect(b, int(hx - 4), int(hy - 5), 9, 1, hc.lightened(0.2))
+			rect(b, int(hx), int(hy - 1), 5, 1, Color(0.1, 0.1, 0.12))
+			if not blink:
+				rect(e, int(hx + 1), int(hy - 1), 4, 1, neon)
+			for i in 6:
+				var a := TAU * i / 6.0 + f * 0.25
+				px(e, int(hx + cos(a) * 7.0), int(hy - 7 + sin(a) * 2.0), Color(neon, 0.85))
+		"skull":
+			ellipse(b, hx - 0.5, hy - 0.5, 5.4, 5.2, hc)
+			ellipse(b, hx + 1, hy + 0.5, 3.0, 3.0, skin)
+			px(b, int(hx + 2), int(hy + 3), Color(0.2, 0.2, 0.2))
+			if not blink:
+				px(e, int(hx), int(hy), neon)
+				px(e, int(hx + 2), int(hy), neon)
+		"feathers":
+			ellipse(b, hx, hy + 0.5, 4.2, 4.2, skin)
+			rect(b, int(hx - 4), int(hy - 1), 9, 2, hc)
+			if not blink:
+				rect(e, int(hx - 1), int(hy), 5, 1, neon)
+			var fc := [Color(0.9, 0.3, 0.3), Color(0.3, 0.6, 1.0), Color(0.9, 0.85, 0.3), Color(0.3, 0.9, 0.5), Color(0.9, 0.9, 0.9)]
+			for i in 5:
+				line(b, int(hx - 3 + i * 2), int(hy - 3), int(hx - 5 + i * 3 - sway), int(hy - 9 - (i % 2) * 2), fc[i])
+		"goggles":
+			ellipse(b, hx, hy + 0.5, 4.4, 4.4, skin)
+			ellipse(b, hx - 1, hy - 2.5, 5.0, 3.0, L["hair"])
+			poly(b, PackedVector2Array([Vector2(hx - 4, hy - 1), Vector2(hx - 7 - sway, hy + 4), Vector2(hx - 3, hy + 3)]), L["hair"])
+			rect(b, int(hx - 2), int(hy - 1), 7, 2, hc)
+			px(e, int(hx), int(hy - 1), neon)
+			px(e, int(hx + 3), int(hy - 1), neon)
+		"ninja":
+			ellipse(b, hx, hy, 4.4, 4.4, hc)
+			rect(b, int(hx - 4), int(hy - 1), 9, 1, Color(L["trim"]))
+			line(b, int(hx - 4), int(hy - 1), int(hx - 8 - sway), int(hy - 2 + sway), L["trim"])
+			if not blink:
+				rect(e, int(hx), int(hy + 1), 4, 1, neon)
+				px(e, int(hx + 3), int(hy + 1), neon2)
+	if st == "hurt":
+		# Зажмуренные глаза-«крестики»
+		px(b, int(hx + 1), int(hy), Color(0.95, 0.95, 1.0))
+		px(b, int(hx + 3), int(hy), Color(0.95, 0.95, 1.0))
+
+	# --- Передняя рука и оружие ---
+	var sf := Vector2(cx + tw - 1, sh_y + 1)
+	var af: float = P["af"]
+	var dir := Vector2(sin(af), cos(af))
+	var hand := sf + dir * 7.0
+	_limb(b, sf, hand, 2 if build != 2 else 3, main_c.lightened(0.05))
+	rect(b, int(hand.x), int(hand.y), 2, 2, skin if key not in ["kai", "orm"] else main_c.lightened(0.3))
+	_hero_weapon(weapon, L, b, e, hand, dir, st, k, f, hand_b)
+
+
+static func _hero_weapon(weapon: String, L: Dictionary, b: Image, e: Image, h: Vector2, dir: Vector2, st: String, k: int, f: int, hb := Vector2.ZERO) -> void:
+	var wc: Color = L["w_c"]
+	var gem: Color = L["gem"]
+	var neon: Color = L["neon"]
+	var up := Vector2(0, -1)
+	var attacking := st == "attack"
+	var strike := attacking and (k == 1 or k == 2)
+	match weapon:
+		"staff", "orbstaff":
+			var d := dir if attacking else up
+			var a := h - d * 7.0
+			var t := h + d * (12.0 if attacking else 13.0)
+			if not attacking:
+				a = Vector2(h.x + 1, 38)
+				t = Vector2(h.x + 1, h.y - 13)
+			line(b, int(a.x), int(a.y), int(t.x), int(t.y), wc)
+			line(b, int(a.x) + 1, int(a.y), int(t.x) + 1, int(t.y), wc.darkened(0.3))
+			var cb: int = [0, -1, -1, 0][f % 4]
+			if weapon == "staff":
+				px(b, int(t.x) - 1, int(t.y) + 1, wc)
+				px(b, int(t.x) + 2, int(t.y) + 1, wc)
+				ellipse(e, t.x + 0.5, t.y - 1.5 + cb, 2.0, 2.8, gem)
+				px(e, int(t.x), int(t.y) - 2 + cb, Color(1, 0.9, 1))
+			else:
+				ellipse(e, t.x + 0.5, t.y - 2 + cb, 2.6, 2.6, Color(gem, 0.85))
+				px(e, int(t.x) + (f % 2), int(t.y) - 3 + cb, Color.WHITE)
+				for i in 3:
+					var ang := TAU * i / 3.0 + f * 0.8
+					px(e, int(t.x + cos(ang) * 4.0), int(t.y - 2 + sin(ang) * 2.0), Color(gem, 0.7))
+			if strike:
+				ellipse(e, t.x + d.x * 3.0, t.y + d.y * 3.0, 3.5 - k, 3.5 - k, Color(gem, 0.9))
+		"katana", "blade":
+			var ln := 13.0 if weapon == "katana" else 9.0
+			if attacking:
+				var t := h + dir * ln
+				line(b, int(h.x), int(h.y), int(t.x), int(t.y), wc)
+				line(e, int(h.x + dir.x * 3), int(h.y + dir.y * 3), int(t.x), int(t.y), Color(neon, 0.85))
+				rect(b, int(h.x) - 1, int(h.y) - 1, 2, 2, L["trim"])
+				if k == 1:
+					# Дуга удара
+					for i in 7:
+						var ang := -1.2 + i * 0.4
+						var pp := h + Vector2(sin(ang + 0.6), -cos(ang + 0.6)) * (ln + 2.0)
+						px(e, int(pp.x), int(pp.y), Color(neon, 0.9 - i * 0.08))
+			else:
+				# В ножнах / за спиной по диагонали
+				line(b, int(h.x) - 8, int(h.y) + 2, int(h.x) + 3, int(h.y) - 10, wc.darkened(0.2))
+				rect(b, int(h.x) - 9, int(h.y) + 2, 2, 2, L["trim"])
+				if weapon == "blade":
+					px(e, int(h.x) + 3, int(h.y) - 10, neon)
+		"hammer":
+			var d := dir if attacking else Vector2(0.35, -1).normalized()
+			var t := h + d * 10.0
+			_limb(b, h - d * 3.0, t, 2, Color(0.45, 0.3, 0.18))
+			var side := Vector2(-d.y, d.x)
+			poly(b, PackedVector2Array([t + side * 4 - d, t + side * 4 + d * 3, t - side * 4 + d * 3, t - side * 4 - d]), wc)
+			px(e, int(t.x + d.x), int(t.y + d.y), L["neon"])
+			px(e, int(t.x + side.x * 2), int(t.y + side.y * 2), L["neon2"])
+			if strike and k == 1:
+				for i in 5:
+					px(e, int(t.x) - 2 + i, 38, Color(L["neon"], 0.8))
+		"mace":
+			# щит на задней руке рисуем поверх корпуса
+			# Щит — на задней руке, слева от корпуса
+			var s0 := hb + Vector2(-3, -4)
+			poly(b, PackedVector2Array([s0 + Vector2(-3, -4), s0 + Vector2(3, -4), s0 + Vector2(3, 3), s0 + Vector2(0, 6), s0 + Vector2(-3, 3)]), wc)
+			line(e, int(s0.x), int(s0.y - 3), int(s0.x), int(s0.y + 4), Color(neon, 0.8))
+			var d := dir if attacking else Vector2(0.2, -1).normalized()
+			var t := h + d * 9.0
+			_limb(b, h, t, 2, Color(0.5, 0.5, 0.58))
+			ellipse(b, t.x, t.y, 2.5, 2.5, L["trim"])
+			px(e, int(t.x), int(t.y), neon)
+		"scythe":
+			var d := dir if attacking else up
+			var a := h - d * 8.0
+			var t := h + d * 12.0
+			if not attacking:
+				a = Vector2(h.x + 1, 38)
+				t = Vector2(h.x + 1, h.y - 14)
+			line(b, int(a.x), int(a.y), int(t.x), int(t.y), wc)
+			var side := Vector2(-d.y, d.x) if attacking else Vector2(-1, 0)
+			poly(e, PackedVector2Array([t, t + side * 8.0 + Vector2(0, 2), t + side * 5.0 + Vector2(0, 3), t + Vector2(0, 2)]), Color(L["neon"], 0.9))
+		"wand":
+			var d := dir if attacking else Vector2(0.4, -1).normalized()
+			var t := h + d * 6.0
+			line(b, int(h.x), int(h.y), int(t.x), int(t.y), wc)
+			ellipse(e, t.x, t.y, 1.5, 1.5, gem)
+			if strike:
+				for i in 4:
+					px(e, int(t.x + d.x * (3 + i * 2)), int(t.y + d.y * (3 + i * 2)), Color(gem, 0.9 - i * 0.2))
+			# голо-дрон над плечом
+			var dy: int = [0, -1, -1, 0][f % 4]
+			rect(b, int(h.x) - 9, int(h.y) - 15 + dy, 4, 2, Color(0.3, 0.32, 0.4))
+			px(e, int(h.x) - 8, int(h.y) - 14 + dy, gem)
+		"bow":
+			var d := Vector2(1, 0)
+			var side := Vector2(-d.y, d.x)
+			var c := h + d * 2.0
+			var tip_a := c - side * 8.0
+			var tip_b := c + side * 8.0
+			line(b, int(c.x), int(c.y), int(tip_a.x), int(tip_a.y), wc)
+			line(b, int(c.x), int(c.y), int(tip_b.x), int(tip_b.y), wc)
+			var pull := (3.0 if (attacking and k == 0) else (1.0 if attacking and k == 3 else 0.0))
+			var mid := c - d * (2.0 + pull)
+			line(e, int(tip_a.x), int(tip_a.y), int(mid.x), int(mid.y), Color(neon, 0.8))
+			line(e, int(mid.x), int(mid.y), int(tip_b.x), int(tip_b.y), Color(neon, 0.8))
+			if attacking and k <= 1:
+				line(e, int(mid.x), int(mid.y), int(c.x + d.x * 8.0), int(c.y + d.y * 8.0), Color(1, 1, 1, 0.9))
+		"flask":
+			var d := dir if attacking else Vector2(0.3, 1).normalized()
+			var t := h + d * 2.0
+			ellipse(b, t.x, t.y + 1, 2.4, 2.6, Color(0.6, 0.8, 0.9, 0.9))
+			rect(b, int(t.x) - 1, int(t.y) - 3, 2, 2, Color(0.5, 0.4, 0.3))
+			ellipse(e, t.x, t.y + 1.5, 1.6, 1.6, gem)
+			if strike:
+				for i in 3:
+					px(e, int(t.x + d.x * (4 + i * 2)), int(t.y + d.y * (4 + i * 2) - i), Color(gem, 0.8))

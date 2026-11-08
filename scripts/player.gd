@@ -226,7 +226,7 @@ func _ready() -> void:
 
 	_body = Sprite2D.new()
 	_body.texture = _frames["base"][0]
-	_body.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND)
+	_body.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND) * float(_frames.get("k", 1.0))
 	_body.offset = Vector2(0, -size.y / 2.0 + 3.0)
 	add_child(_body)
 	_emit = Sprite2D.new()
@@ -313,6 +313,7 @@ func net_state(d: Array, own_progress := false) -> void:
 	facing = d[1]
 	if d[2] < hp - 0.5:
 		_flash = 0.15
+		_hurt_t = 0.3
 	hp = d[2]
 	max_hp = d[3]
 	moving = d[5]
@@ -1100,6 +1101,7 @@ func combo(weapon: String, pos: Vector2) -> void:
 # ================= Активные способности =================
 
 func _use_ability() -> void:
+	_attack_t = ATTACK_T
 	ability_left = ability_cd * cooldown_mult
 	Sound.play("ability", -4.0, 1.0 + randf_range(-0.05, 0.05))
 	main.screen_flash(0.12)
@@ -1174,7 +1176,7 @@ func _use_ability() -> void:
 			main.zones_node.add_child(z)
 		"kai":
 			_invuln = maxf(_invuln, 0.8)
-			Fx.afterimage(main, position, _body.texture, _body.offset, _body.flip_h, Color(1.0, 0.3, 0.3))
+			Fx.afterimage(main, position, _body.texture, _body.offset, _body.flip_h, Color(1.0, 0.3, 0.3), float(_frames.get("k", 1.0)))
 			_shurikens(12, 18.0 * damage_mult * power, 520.0, false, true)
 		"kira":
 			main.glitch_flash()
@@ -1192,7 +1194,7 @@ func _update_ability(delta: float) -> void:
 		_dash_t -= delta
 		var prev := position
 		position += _dash_dir * 1400.0 * delta
-		Fx.afterimage(main, prev, _body.texture, _body.offset, _body.flip_h, Color(0.3, 0.9, 1.0))
+		Fx.afterimage(main, prev, _body.texture, _body.offset, _body.flip_h, Color(0.3, 0.9, 1.0), float(_frames.get("k", 1.0)))
 		for e in main.get_enemies():
 			if not e.can_be_hit() or _dash_hit.has(e.get_instance_id()):
 				continue
@@ -1220,15 +1222,21 @@ func _update_ability(delta: float) -> void:
 func _animate(delta: float) -> void:
 	_anim_t += delta
 	var f: int
-	if moving:
-		f = 4 + int(_anim_t * 10.0) % 4
+	_attack_t = maxf(0.0, _attack_t - delta)
+	_hurt_t = maxf(0.0, _hurt_t - delta)
+	if _hurt_t > 0.0 and _frames["base"].size() >= 16:
+		f = 14 + int((0.3 - _hurt_t) * 10.0) % 2
+	elif _attack_t > 0.0 and _frames["base"].size() >= 16:
+		f = 10 + clampi(int((1.0 - _attack_t / ATTACK_T) * 4.0), 0, 3)
+	elif moving:
+		f = Pixel.hero_frame(_frames, "run", _anim_t)
 		_dust_t -= delta
 		if _dust_t <= 0.0:
 			_dust_t = 0.3
 			Fx.burst(main, position + Vector2(0, 8), [Color(0.45, 0.42, 0.55, 0.35), Color(0.3, 0.25, 0.4, 0.0)],
 				2, 30.0, 0.35, 2.0, false, Vector2(0, -10), -facing, 40.0)
 	else:
-		f = int(_anim_t * 4.0) % 4
+		f = Pixel.hero_frame(_frames, "idle", _anim_t)
 	_body.texture = _frames["base"][f]
 	_emit.texture = _frames["flash"][f] if _flash > 0.0 else _frames["emit"][f]
 	_emit.modulate = Pixel.hdr(Color(1.0, 0.4, 0.45), 2.5) if _flash > 0.0 else Pixel.hdr(Color.WHITE, 1.8)
@@ -1407,6 +1415,7 @@ func take_damage(amount: float) -> void:
 	hp -= amount
 	_invuln = 0.6
 	_flash = 0.15
+	_hurt_t = 0.3
 	main.shake(7.0)
 	main.hurt_flash_for(self)
 	Sound.play("hurt", -2.0, 1.0, 0.1)
@@ -1636,7 +1645,15 @@ func _update_weapons(delta: float) -> void:
 								_fire_once(wid, stats(wid)))
 
 
+## Анимация атаки: замах — удар — доводка — возврат.
+const ATTACK_T := 0.26
+var _attack_t := 0.0
+var _hurt_t := 0.0
+
+
 func _fire_once(id: String, s: Dictionary) -> void:
+	if _attack_t <= 0.0:
+		_attack_t = ATTACK_T
 	main.attacker = self
 	_src = id
 	match id:

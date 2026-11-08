@@ -937,17 +937,18 @@ func _animate_decor(delta: float) -> void:
 func _sprite_pair(parent: Node3D, frames: Dictionary) -> Array:
 	var base := Sprite3D.new()
 	base.texture = frames["base"][0]
-	base.pixel_size = SPRITE_PX
+	var px_size: float = SPRITE_PX * float(frames.get("k", 1.0))
+	base.pixel_size = px_size
 	base.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	base.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	base.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
 	base.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	var h: float = frames["size"].y * SPRITE_PX
+	var h: float = frames["size"].y * px_size
 	base.position.y = h / 2.0
 	parent.add_child(base)
 	var emit := Sprite3D.new()
 	emit.texture = frames["emit"][0]
-	emit.pixel_size = SPRITE_PX
+	emit.pixel_size = px_size
 	emit.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	emit.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	emit.shaded = false
@@ -1019,7 +1020,7 @@ func _update_avatar(delta: float) -> void:
 	if absf(dir.x) > 0.1:
 		_facing_left = dir.x < 0.0
 	_av_t += delta
-	var f := (4 + int(_av_t * 10.0) % 4) if moving else int(_av_t * 4.0) % 4
+	var f := Pixel.hero_frame(_av_frames, "run" if moving else "idle", _av_t)
 	_av_base.texture = _av_frames["base"][f]
 	_av_emit.texture = _av_frames["emit"][f]
 	_av_base.flip_h = _facing_left
@@ -1472,6 +1473,7 @@ func _hero_card(hid: String) -> Control:
 	var tt := _label(hc["title"], 12, Color(0.75, 0.75, 0.9))
 	tt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(tt)
+	card.tooltip_text = Data.HERO_LORE.get(hid, "")
 	var u: Dictionary = Meta.HERO_UNLOCK.get(hid, {"cost": 0, "conds": []})
 	if st != "owned":
 		for c in u["conds"]:
@@ -1845,7 +1847,7 @@ func _net_tick(delta: float) -> void:
 		_bd_emit = pair[1]
 	_buddy.position = _buddy.position.lerp(b["pos"], 1.0 - exp(-12.0 * delta))
 	_bd_t += delta
-	var f := (4 + int(_bd_t * 10.0) % 4) if b["moving"] else int(_bd_t * 4.0) % 4
+	var f := Pixel.hero_frame(_bd_frames, "run" if b["moving"] else "idle", _bd_t)
 	_bd_base.texture = _bd_frames["base"][f]
 	_bd_emit.texture = _bd_frames["emit"][f]
 	_bd_base.flip_h = b["left"]
@@ -2558,6 +2560,15 @@ func _lib_article(art: VBoxContainer, tab: String, key: String) -> void:
 		"heroes":
 			var c: Dictionary = Data.CHARACTERS[key]
 			_lib_head(art, Pixel.portrait(c["sprite"]), 5.0, c["name"], c["title"], c["color"])
+			_section(art, "История")
+			art.add_child(_para(Data.HERO_LORE.get(key, ""), Color(0.9, 0.85, 1.0), 15))
+			var steps: Array = Quests.HERO_QUESTS.get(key, [])
+			var done_n := Quests.hero_step(key)
+			for i in steps.size():
+				if i < done_n:
+					art.add_child(_para("✓ «%s» — %s" % [steps[i][2], steps[i][3]], GOLD, 14))
+				elif i == done_n:
+					art.add_child(_para("• Личное задание «%s»: %s (только этим героем, доска заданий)" % [steps[i][2], Quests.desc({"k": steps[i][0], "g": steps[i][1]})], Color(0.7, 0.9, 1.0), 14))
 			_section(art, "Характеристики")
 			_icon_line(art, Pixel.icon("hp"), "Здоровье: %d" % int(c["hp"]))
 			_icon_line(art, Pixel.icon("speed"), "Скорость: %d" % int(c["speed"]))

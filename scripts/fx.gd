@@ -340,13 +340,13 @@ static func beam(main: Node, a: Vector2, b: Vector2, color: Color, ha := 0.9, hb
 
 
 ## Фантомный след героя (для рывка).
-static func afterimage(main: Node, pos: Vector2, tex: Texture2D, offset: Vector2, flip: bool, color: Color) -> void:
+static func afterimage(main: Node, pos: Vector2, tex: Texture2D, offset: Vector2, flip: bool, color: Color, k := 1.0) -> void:
 	var s := Sprite2D.new()
 	s.texture = tex
 	s.position = pos
 	s.offset = offset
 	s.flip_h = flip
-	s.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND)
+	s.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND) * k
 	s.material = Pixel.mat_add()
 	s.modulate = Pixel.hdr(color, 1.5)
 	s.z_index = 2
