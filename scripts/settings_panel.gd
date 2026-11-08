@@ -151,6 +151,8 @@ func _build_desktop_rows(grid: GridContainer) -> void:
 
 func _build_common_rows(grid: GridContainer) -> void:
 	var v := self
+	if not Settings.is_mobile():
+		_mob_opt(grid, "Взгляд героя", ["Автоприцел", "Мышь / правый стик"], 1 if Settings.manual_aim else 0, func(i): Settings.manual_aim = i == 1)
 	# --- Кадры и синхронизация ---
 	grid.add_child(_row_label("Кадры в секунду"))
 	var fps_names: Array = []

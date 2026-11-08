@@ -1523,14 +1523,14 @@ func _start_run() -> void:
 func _fill_portal() -> void:
 	var c: Dictionary = Data.CHARACTERS[Data.selected_character]
 	_panel_box.add_child(_centered(_label(Data.CHAPTER_NAME.to_upper(), 30, Color.WHITE, Color(MAGENTA, 0.8))))
-	_panel_box.add_child(_centered(_label("Герой: %s — %s   •   пройдено %d / %d" % [c["name"], c["title"], Meta.levels_cleared, Data.LEVELS.size()], 17, c["color"])))
+	_panel_box.add_child(_centered(_label(("Герой: %s — %s\nпройдено %d / %d" if _portrait() else "Герой: %s — %s   •   пройдено %d / %d") % [c["name"], c["title"], Meta.levels_cleared, Data.LEVELS.size()], 17, c["color"])))
 	if Net.mode == "host":
 		var ok: bool = Net.lobby.get("client", false)
 		var hc: Dictionary = Data.CHARACTERS.get(Net.peer_hero, Data.CHARACTERS["vega"])
 		var t := ("Сетевая вылазка вдвоём  •  Игрок 2: %s — %s" % [hc["name"], hc["title"]]) if ok else "Ждём второго игрока — он должен подключиться к вашей игре"
 		_panel_box.add_child(_centered(_label(t, 17, Color(1.0, 0.45, 0.8) if ok else Color(0.7, 0.7, 0.85))))
 	var grid := GridContainer.new()
-	grid.columns = 5
+	grid.columns = 2 if _portrait() else 5   # вертикальный экран: уровни в две колонки, ничего не вылезает
 	grid.add_theme_constant_override("h_separation", 10)
 	grid.add_theme_constant_override("v_separation", 10)
 	for i in Data.LEVELS.size():
@@ -1559,7 +1559,7 @@ func _fill_portal() -> void:
 		grid.add_child(b)
 	_panel_box.add_child(_centered(grid))
 	var m := Meta.run_mods()
-	var bonus := "Бонусы убежища:  урон ×%.2f   шанс сундука +%d%%" % [m["damage"], int(m["chest"] * 100.0)]
+	var bonus := ("Бонусы убежища:\nурон ×%.2f   шанс сундука +%d%%" if _portrait() else "Бонусы убежища:  урон ×%.2f   шанс сундука +%d%%") % [m["damage"], int(m["chest"] * 100.0)]
 	_panel_box.add_child(_centered(_label(bonus, 14, Color(0.8, 0.8, 0.95))))
 	_add_close()
 
@@ -1795,7 +1795,7 @@ func _fill_client_hall() -> void:
 	_panel_box.add_child(_centered(_label("ВАШИ ГЕРОИ", 30, GOLD, Color(GOLD, 0.6))))
 	_panel_box.add_child(_centered(_label("Открыты по вашему сохранению", 15, Color(0.75, 0.75, 0.9))))
 	var row := GridContainer.new()
-	row.columns = 5
+	row.columns = 3 if _portrait() else 5
 	row.add_theme_constant_override("h_separation", 10)
 	row.add_theme_constant_override("v_separation", 10)
 	for hid in Data.CHARACTERS:

@@ -101,6 +101,7 @@ var _view3d: Node3D
 var _cam3d: Camera3D
 var _plane: MeshInstance3D
 var _cam_offset := Vector2.ZERO
+var _look := Vector2.ZERO
 var _bill_root: Node3D
 var _mirror_root: Node3D
 var return_after_size := false
@@ -665,6 +666,22 @@ func slash3d(pos: Vector2, angle: float, arc: float, radius_px: float, color: Co
 
 
 ## Позиция в корне зеркал (мировые координаты, без сдвига камеры).
+## Точка экрана → точка мира (луч из 3D-камеры на плоскость пола).
+func screen_to_world(sp: Vector2) -> Vector2:
+	if _cam3d == null or _mirror_root == null:
+		return Vector2.INF
+	var o := _cam3d.project_ray_origin(sp)
+	var n := _cam3d.project_ray_normal(sp)
+	var py := _plane.global_position.y
+	if absf(n.y) < 0.0001:
+		return Vector2.INF
+	var t := (py - o.y) / n.y
+	if t < 0.0:
+		return Vector2.INF
+	var w := o + n * t - _mirror_root.global_position
+	return Vector2(w.x, w.z) / PLANE_TEXEL
+
+
 func _bl(p: Vector2, height := 0.0) -> Vector3:
 	return Vector3(p.x * PLANE_TEXEL, height, p.y * PLANE_TEXEL)
 
@@ -1013,7 +1030,11 @@ func _update_shake(delta: float) -> void:
 	# Защита: после долгого зависания плавная камера может «улететь» — возвращаем её
 	if not camera.get_screen_center_position().is_finite():
 		camera.reset_smoothing()
-	camera.offset = _cam_offset + Vector2(randf_range(-1, 1), randf_range(-1, 1)) * _shake
+	# Взгляд: камера чуть смещается туда, куда смотрит герой
+	var me: Node2D = players[1] if (net_mode == "client" and players.size() > 1) else players[0]
+	var want: Vector2 = me.aim * 110.0 if (me.get("aim") != null and not coop) else Vector2.ZERO
+	_look = _look.lerp(want, 1.0 - exp(-3.5 * get_process_delta_time()))
+	camera.offset = _cam_offset + _look + Vector2(randf_range(-1, 1), randf_range(-1, 1)) * _shake
 
 
 ## Красная вспышка экрана только у того, чьего героя ударили.
@@ -1159,7 +1180,8 @@ func get_enemies() -> Array[Node]:
 	return enemies_node.get_children()
 
 
-func nearest_enemies_to(pos: Vector2, count: int, max_dist: float, exclude: Node) -> Array:
+## aim — взгляд героя: враги по направлению взгляда в приоритете, сзади — в последнюю очередь.
+func nearest_enemies_to(pos: Vector2, count: int, max_dist: float, exclude: Node, aim := Vector2.ZERO) -> Array:
 	var list: Array = []
 	var max_sq := max_dist * max_dist
 	for e in enemies_node.get_children():
@@ -1167,6 +1189,10 @@ func nearest_enemies_to(pos: Vector2, count: int, max_dist: float, exclude: Node
 			continue
 		var d: float = pos.distance_squared_to(e.position)
 		if d < max_sq:
+			if aim != Vector2.ZERO and d > 1.0:
+				var dot: float = aim.dot((e.position - pos) / sqrt(d))
+				var w := 1.0 + 2.5 * (1.0 - dot)
+				d *= w * w
 			list.append([d, e])
 	list.sort_custom(func(a, b): return a[0] < b[0])
 	var result: Array = []
@@ -1243,8 +1269,8 @@ func on_reaction(key: String, pos: Vector2) -> void:
 func _separate_enemies() -> void:
 	var cells := {}
 	for e in enemies_node.get_children():
-		if e.dead:
-			continue
+		if e.dead or not e.vis:
+			continue   # за кадром толпу не раздвигаем — её не видно
 		var key := Vector2i(floori(e.position.x / 40.0), floori(e.position.y / 40.0))
 		if cells.has(key):
 			cells[key].append(e)

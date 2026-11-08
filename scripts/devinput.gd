@@ -67,6 +67,15 @@ func _axis(a: int) -> float:
 	return 0.0
 
 
+## Правый стик — куда смотрит герой (ноль, если стик отпущен).
+func aim_stick() -> Vector2:
+	if dev >= 0 or dev == ANY:
+		var st := Vector2(_axis(JOY_AXIS_RIGHT_X), _axis(JOY_AXIS_RIGHT_Y))
+		if st.length() > DEAD:
+			return st.normalized()
+	return Vector2.ZERO
+
+
 ## Направление движения (-1..1 по осям).
 func vector() -> Vector2:
 	var v := Vector2.ZERO

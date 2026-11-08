@@ -195,6 +195,12 @@ func _ready() -> void:
 	_shadow.position = Vector2(0, 2)
 	_shadow.z_index = -5
 	add_child(_shadow)
+	if not Settings.is_mobile():
+		_aim_draw = Drawer.new()
+		_aim_draw.draw_fn = _draw_aim
+		_aim_draw.material = Pixel.mat_add()
+		_aim_draw.z_index = -4
+		add_child(_aim_draw)
 	if main.coop:
 		_marker = Drawer.new()
 		_marker.draw_fn = _draw_marker
@@ -558,10 +564,62 @@ func _move(delta: float) -> void:
 	moving = dir != Vector2.ZERO
 	if moving:
 		facing = dir.normalized()
+	_update_aim(delta)
+	if aim != Vector2.ZERO:
+		facing = aim
+	if _aim_draw != null:
+		_aim_shown = _aim_shown.slerp(aim, 1.0 - exp(-18.0 * delta)) if (aim != Vector2.ZERO and _aim_shown != Vector2.ZERO) else aim
+		_aim_draw.queue_redraw()
 	if _dash_t > 0.0:
 		return
 	position += dir * base_speed * delta
 	position = main.push_out(position, radius)
+
+
+## Взгляд героя (ПК / Steam Deck): мышь или правый стик. Ноль — автоприцел по ближайшим.
+var aim := Vector2.ZERO
+var _aim_draw: Node2D
+var _aim_shown := Vector2.ZERO
+
+
+## Прицел: точка взгляда и пунктир к ней (рисуется, только когда герой смотрит вручную).
+func _draw_aim(c: Node2D) -> void:
+	if _aim_shown == Vector2.ZERO or _dead:
+		return
+	var col := Color(0.3, 0.95, 1.0) if pid == 0 else Color(1.0, 0.4, 0.75)
+	var a := _aim_shown
+	for k in 4:
+		var a0 := Vector2(0, 4) + a * (46.0 + k * 22.0)
+		c.draw_line(a0, a0 + a * 10.0, Color(col, 0.3 + 0.12 * k), 2.5)
+	var rp := Vector2(0, 4) + a * 140.0
+	c.draw_arc(rp, 12.0, 0.0, TAU, 20, Color(col, 0.9), 2.5)
+	c.draw_circle(rp, 3.0, Color(col, 0.95))
+var _aim_in: RefCounted
+var _aim_hold := 0.0
+
+
+func _update_aim(delta: float) -> void:
+	if choosing or net_controlled or remote or Settings.is_mobile() or not Settings.manual_aim:
+		aim = Vector2.ZERO
+		return
+	if _aim_in == null:
+		_aim_in = preload("res://scripts/devinput.gd").new(input.dev if input != null else -1)
+	var st: Vector2 = _aim_in.aim_stick()
+	if st != Vector2.ZERO:
+		aim = st
+		_aim_hold = 0.6   # стик отпустили — взгляд ещё чуть держится, потом снова автоприцел
+		return
+	var kb_user: bool = input == null or input.dev == -1 or input.dev == -2
+	var now := Time.get_ticks_msec() / 1000.0
+	if kb_user and self == main.players[0] and Settings.input_mode() == "kb" and now - Settings.mouse_aim_t < 4.0:
+		var to: Vector2 = main.screen_to_world(get_tree().root.get_final_transform() * get_tree().root.get_mouse_position()) - position
+		if to.is_finite() and to.length() > 24.0:
+			aim = to.normalized()
+			_aim_hold = 0.0
+			return
+	_aim_hold -= delta
+	if _aim_hold <= 0.0:
+		aim = Vector2.ZERO
 
 
 func in_aura(pos: Vector2) -> bool:
@@ -1603,7 +1661,7 @@ func _tick_cooldown(id: String, delta: float, cooldown: float) -> bool:
 
 
 func _fire_bolts(s: Dictionary) -> void:
-	var targets: Array = main.nearest_enemies_to(position, s["count"], 700.0, null)
+	var targets: Array = main.nearest_enemies_to(position, s["count"], 700.0, null, aim)
 	var shots: int = s["count"]
 	var origin := position + Vector2(-18.0 if _body.flip_h else 18.0, -60.0)
 	for i in shots:
@@ -1843,7 +1901,7 @@ func _make_proj(style: String, origin: Vector2, vel: Vector2, dmg: float, status
 
 func _fire_arrows(s: Dictionary) -> void:
 	var count: int = s["count"]
-	var targets: Array = main.nearest_enemies_to(position, 1, 800.0, null)
+	var targets: Array = main.nearest_enemies_to(position, 1, 800.0, null, aim)
 	var base: Vector2 = facing if targets.is_empty() else (targets[0].position - position).normalized()
 	for i in count:
 		var dir: Vector2 = base.rotated((i - (count - 1) / 2.0) * 0.12)
@@ -1859,7 +1917,7 @@ func _sunbeam(s: Dictionary) -> void:
 	var beams: int = s["beams"]
 	var length: float = s["length"]
 	var width: float = s["width"]
-	var targets: Array = main.nearest_enemies_to(position, 1, length, null)
+	var targets: Array = main.nearest_enemies_to(position, 1, length, null, aim)
 	var base: Vector2 = facing if targets.is_empty() else (targets[0].position - position).normalized()
 	var evo: bool = evolved.has("sunbeam")
 	for b in beams:
@@ -1948,7 +2006,7 @@ func net_sunray(dir: Vector2, length: float, width: float, col: Color) -> void:
 ## Гравимагнит: искра из подобранного кристалла.
 func magnet_spark() -> void:
 	main.attacker = self
-	var t: Array = main.nearest_enemies_to(position, 1, 600.0, null)
+	var t: Array = main.nearest_enemies_to(position, 1, 600.0, null, aim)
 	if t.is_empty():
 		return
 	var dir: Vector2 = (t[0].position - position).normalized()
@@ -1972,7 +2030,7 @@ func _spawn_spirits(count: int, dmg: float, explode: float) -> void:
 
 func _ball(s: Dictionary) -> void:
 	for i in int(s["count"]):
-		var targets: Array = main.nearest_enemies_to(position, 3, 500.0, null)
+		var targets: Array = main.nearest_enemies_to(position, 3, 500.0, null, aim)
 		var dir: Vector2 = facing.rotated(randf_range(-0.6, 0.6)) if targets.is_empty() else (targets[i % targets.size()].position - position).normalized()
 		var p := _make_proj("ball", position + dir * 20.0, dir * 110.0, 0.0, "", "ball")
 		p.pierce = 9999
@@ -1985,7 +2043,7 @@ func _ball(s: Dictionary) -> void:
 
 
 func _flasks(s: Dictionary) -> void:
-	var targets: Array = main.nearest_enemies_to(position, 6, 420.0, null)
+	var targets: Array = main.nearest_enemies_to(position, 6, 420.0, null, aim)
 	for i in int(s["count"]):
 		var dest: Vector2 = position + facing * 200.0 if targets.is_empty() else targets[randi() % targets.size()].position
 		var to := dest - position
@@ -1999,7 +2057,7 @@ func _flasks(s: Dictionary) -> void:
 
 
 func _shurikens(count: int, dmg: float, speed: float, spiral: bool, radial := false) -> void:
-	var targets: Array = main.nearest_enemies_to(position, 1, 600.0, null)
+	var targets: Array = main.nearest_enemies_to(position, 1, 600.0, null, aim)
 	var base: Vector2 = facing if targets.is_empty() else (targets[0].position - position).normalized()
 	for i in count:
 		var dir: Vector2

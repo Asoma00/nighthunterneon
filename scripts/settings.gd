@@ -330,6 +330,7 @@ func load_settings() -> void:
 	crowd = cfg.get_value("mobile", "crowd", crowd)
 	preset = cfg.get_value("mobile", "preset", preset)
 	adaptive = cfg.get_value("graphics", "adaptive", adaptive)
+	manual_aim = cfg.get_value("controls", "manual_aim", manual_aim)
 	touch_size = cfg.get_value("mobile", "touch_size", touch_size)
 
 
@@ -354,6 +355,7 @@ func save_settings() -> void:
 	cfg.set_value("mobile", "crowd", crowd)
 	cfg.set_value("mobile", "preset", preset)
 	cfg.set_value("graphics", "adaptive", adaptive)
+	cfg.set_value("controls", "manual_aim", manual_aim)
 	cfg.set_value("mobile", "touch_size", touch_size)
 	cfg.save(PATH)
 
@@ -393,6 +395,10 @@ signal orientation_changed(portrait: bool)
 # ---------- Разрешение 3D и удержание частоты кадров ----------
 
 var _base_3d := 1.0        # из настройки разрешения / чёткости
+ ## Взгляд героя: мышь / правый стик (ПК и Steam Deck). На телефоне — автоприцел.
+var manual_aim := true
+## Когда мышь последний раз двигалась (сек) — мышиный прицел только при живой мыши
+var mouse_aim_t := -100.0
 var adaptive := true       # «Держать частоту кадров»: при просадке картинка и эффекты чуть упрощаются
 var dyn_k := 1.0           # 0.5…1.0 — текущий запас (1 — без упрощений)
 signal dyn_changed(k: float)
@@ -652,6 +658,8 @@ func set_api(new_api: String) -> String:
 
 ## Управление для всей игры (меню, убежище, забег).
 func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and event.relative.length() > 2.0 and event.device != InputEvent.DEVICE_ID_EMULATION:
+		mouse_aim_t = Time.get_ticks_msec() / 1000.0
 	_track_input_mode(event)
 	preload("res://scripts/ui_focus.gd").on_input(event)
 

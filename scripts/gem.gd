@@ -117,6 +117,10 @@ func _ready() -> void:
 	tw.tween_property(_body, "position:y", -8.0, 0.35).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
 
 
+var _vis := true
+var _ph := randi() % 4
+
+
 func _process(delta: float) -> void:
 	_t += delta
 	if puppet:
@@ -126,6 +130,11 @@ func _process(delta: float) -> void:
 		_glow.position = _body.position
 		return
 	if not _attracted:
+		# Оптимизация: лежащий за кадром кристалл проверяем раз в 4 кадра и не анимируем
+		if (main._frame + _ph) % 4 == 0:
+			_vis = main._on_view(position)
+		elif not _vis:
+			return
 		for p in main.players:
 			if not p._dead and p.position.distance_to(position) < p.magnet:
 				_attracted = true

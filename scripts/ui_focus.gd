@@ -48,5 +48,9 @@ static func keep(root: Control, state: Dictionary) -> void:
 	if f != null and list.has(f):
 		state["idx"] = list.find(f)
 		return
+	# Фокус на любом другом элементе этого окна (неактивная кнопка выбранного героя,
+	# поле ввода, слайдер) — не отбираем, иначе навигация «застревает»
+	if f != null and f.is_visible_in_tree() and root.is_ancestor_of(f):
+		return
 	var i := clampi(int(state.get("idx", 0)), 0, list.size() - 1)
 	(list[i] as Control).grab_focus()

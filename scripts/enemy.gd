@@ -208,6 +208,12 @@ func _set_spawn_visual(k: float) -> void:
 	_emit.texture = _frames["flash"][0] if k < 0.6 else _frames["emit"][0]
 
 
+## Оптимизация: за пределами поля зрения враг думает в 4 раза реже и не анимируется
+var vis := true
+var _off_acc := 0.0
+var _phase := randi() % 4
+
+
 func _process(delta: float) -> void:
 	_t += delta
 	if puppet:
@@ -217,6 +223,32 @@ func _process(delta: float) -> void:
 		_spawn -= delta
 		_set_spawn_visual(clampf(1.0 - _spawn / SPAWN_TIME, 0.0, 1.0))
 		return
+	if not is_boss:
+		var fr: int = main._frame + _phase
+		if fr % 4 == 0:
+			vis = main._on_view(position)
+		if not vis:
+			_off_acc += delta
+			if fr % 4 != 0:
+				return
+			delta = minf(_off_acc, 0.2)
+			_off_acc = 0.0
+			_tick_statuses(delta)
+			if dead:
+				return
+			if stun_t > 0.0:
+				stun_t -= delta
+				if stun_t <= 0.0:
+					frozen = false
+				return
+			_retarget_t -= delta
+			if _retarget_t <= 0.0:
+				_retarget_t = 0.4
+				player = main.nearest_player(position)
+			_ai(delta)
+			_knock = Vector2.ZERO
+			_flash = 0.0
+			return
 	_tick_statuses(delta)
 	if dead:
 		return
