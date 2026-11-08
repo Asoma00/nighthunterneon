@@ -84,8 +84,18 @@ func _info_text(n: Dictionary) -> String:
 func _node_icon(key: String, id: String) -> String:
 	var subj := key.substr(2)
 	match id:
-		"dmg1", "dmg2", "dmg3", "legend":
+		"dmg1", "dmg2", "dmg3", "legend", "hunter", "legacy", "legend_tale", "myth", "elite", "execute":
 			return "damage"
+		"crit1", "critdmg":
+			return "crit"
+		"leech":
+			return "vamp"
+		"salvage", "mats1", "favor":
+			return "luck"
+		"resonance", "fusion", "mythic":
+			return "duration"
+		"laststand":
+			return "armor"
 		"cd1", "cd2", "cd":
 			return "cooldown"
 		"status", "dur":

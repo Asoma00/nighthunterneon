@@ -356,6 +356,10 @@ func _ai(delta: float) -> Vector2:
 				b.radius = 7.0
 				main.projectiles_node.add_child(b)
 				Sound.play("zap", -12.0, 1.4, 0.1, 0.1)
+		"flee":  # золотой гоблин: удирает от героя, петляя
+			move = -dir + Vector2(-dir.y, dir.x) * sin(_t * 1.7) * 0.6
+			if randf() < 0.3:
+				Fx.burst(main, position, [Color(1.0, 0.85, 0.3, 0.8), Color(1.0, 0.85, 0.3, 0.0)], 1, 30.0, 0.4, 3.0)
 		"bomber":  # дрон-камикадзе: взрывается рядом с героем
 			if dist < 55.0 and _spawn <= 0.0:
 				_explode()
@@ -630,8 +634,18 @@ func hit(amount: float, from: Vector2, knockback: float = 160.0, status := "") -
 	last_src = src
 	amount *= atk.hit_mult(self) * atk.aspect_damage(src)
 	var wcrit: float = atk.weapon_crit if Data.WEAPONS.has(src) else 0.0
+	var wm: Dictionary = atk.wmods_for(src) if atk.has_method("wmods_for") else {}
+	if not wm.is_empty():
+		wcrit += float(wm.get("crit", 0.0))
+		if is_elite or is_boss:
+			amount *= float(wm.get("elite", 1.0))
+		if hp < max_hp * 0.3:
+			amount *= float(wm.get("execute", 1.0))
+	# Последний рубеж героя: при малом здоровье бьёт сильнее
+	if atk.get("laststand") == true and atk.hp < atk.max_hp * 0.3:
+		amount *= 1.3
 	if randf() < atk.crit_chance + wcrit + atk.aspect_crit(src):
-		amount *= 2.0
+		amount *= 2.0 + float(wm.get("critdmg", 0.0))
 		crit = true
 	# Рунная броня рыцаря: ток пробивает броню
 	if armor > 0.0 and not statuses.has("shock"):

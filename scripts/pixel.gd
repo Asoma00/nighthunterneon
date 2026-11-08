@@ -178,6 +178,9 @@ const SPECS := {
 	"gem9": [13, 15, 1, true],
 	"gemx": [19, 23, 1, true],
 	"heal": [11, 11, 1, true],
+	"res_scrap": [13, 13, 1, true],
+	"res_chips": [13, 13, 1, true],
+	"res_cores": [13, 13, 1, true],
 	"orb": [9, 9, 1, false],
 	"blade": [18, 7, 1, false],
 	"lamp0": [14, 44, 1, true],
@@ -378,6 +381,8 @@ static func _paint(key: String, b: Image, e: Image, f: int) -> void:
 			rect(e, 6, 3, 1, 7, Color(1.0, 0.7, 0.75))
 			px(e, 4, 4, Color(1, 1, 1))
 			px(e, 8, 4, Color(1, 1, 1))
+		"res_scrap", "res_chips", "res_cores":
+			_paint_res(key, b, e)
 		"heal":
 			_paint_heart(b, e)
 		"orb":
@@ -854,6 +859,39 @@ static func _paint_gem(b: Image, e: Image, c: Color) -> void:
 	line(b, 2, 5, 9, 5, c.lightened(0.2))
 	rect(e, 5, 4, 1, 5, c.lightened(0.45))
 	px(e, 4, 4, Color(1, 1, 1))
+
+
+## Материалы для базы: шестерёнка-лом, микросхема, ядро.
+static func _paint_res(key: String, b: Image, e: Image) -> void:
+	match key:
+		"res_scrap":
+			var c := Color(0.62, 0.62, 0.72)
+			for i in 8:
+				var a := TAU * i / 8.0
+				rect(b, int(6 + cos(a) * 5.0), int(6 + sin(a) * 5.0), 2, 2, c.darkened(0.15))
+			ellipse(b, 6.5, 6.5, 4.2, 4.2, c)
+			ellipse(b, 6.5, 6.5, 1.6, 1.6, Color(0.15, 0.13, 0.2))
+			px(e, 4, 4, Color(1, 1, 1, 0.9))
+			line(e, 9, 3, 10, 4, Color(1.0, 0.8, 0.4, 0.8))
+		"res_chips":
+			rect(b, 2, 3, 9, 7, Color(0.1, 0.25, 0.16))
+			for i in 4:
+				px(b, 3 + i * 2, 1, Color(0.8, 0.75, 0.5))
+				px(b, 3 + i * 2, 2, Color(0.8, 0.75, 0.5))
+				px(b, 3 + i * 2, 10, Color(0.8, 0.75, 0.5))
+				px(b, 3 + i * 2, 11, Color(0.8, 0.75, 0.5))
+			rect(b, 4, 5, 5, 3, Color(0.15, 0.15, 0.2))
+			line(e, 3, 4, 9, 4, Color(0.35, 1.0, 0.6))
+			px(e, 6, 6, Color(0.6, 1.0, 0.8))
+			px(e, 9, 8, Color(0.35, 1.0, 0.6))
+		"res_cores":
+			ellipse(b, 6.5, 6.5, 5.0, 5.0, Color(0.35, 0.1, 0.4))
+			ellipse(e, 6.5, 6.5, 3.4, 3.4, Color(1.0, 0.4, 0.9))
+			ellipse(e, 6.0, 6.0, 1.5, 1.5, Color(1, 0.9, 1))
+			px(e, 6, 0, Color(1.0, 0.5, 0.9, 0.8))
+			px(e, 6, 12, Color(1.0, 0.5, 0.9, 0.8))
+			px(e, 0, 6, Color(1.0, 0.5, 0.9, 0.8))
+			px(e, 12, 6, Color(1.0, 0.5, 0.9, 0.8))
 
 
 static func _paint_heart(b: Image, e: Image) -> void:

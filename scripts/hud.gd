@@ -86,24 +86,76 @@ func _update_pois() -> void:
 		_quest.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_poi_layer.add_child(_quest)
 	var q := ""
-	for p in main.pois:
+	for p in _poi_list():
 		if is_instance_valid(p) and p.has_method("quest_text"):
 			q = p.quest_text()
 			if q != "":
 				break
 	_quest.text = q
+	_update_tracker()
 	_quest.offset_top = (196.0 if (_boss_root and _boss_root.visible) else 124.0) + (60.0 if portrait() else 0.0)
 	_poi_layer.queue_redraw()
+
+
+func _poi_list() -> Array:
+	var l: Array = main.pois.duplicate()
+	if main.events != null:
+		l.append(main.events)
+	return l
+
+
+## Задания этой вылазки: компактный список слева + собранные материалы.
+var _tracker: Label
+var _tracker_t := 0.0
+
+
+func _update_tracker() -> void:
+	_tracker_t -= get_process_delta_time()
+	if _tracker_t > 0.0:
+		return
+	_tracker_t = 0.4
+	if _tracker == null:
+		_tracker = _label("", 14 if portrait() else 15, Color(0.92, 0.9, 1.0), Color(0.3, 0.15, 0.5, 0.7))
+		_tracker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_tracker.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		_tracker.custom_minimum_size = Vector2(300, 0)
+		_tracker.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_poi_layer.add_child(_tracker)
+	var lines: Array = []
+	var Q = main.QuestsScript
+	for q in main.active_quests:
+		var pr := mini(Q.progress(q, main.run), int(q["g"]))
+		var ok := pr >= int(q["g"])
+		var t: String = Q.title(q)
+		if q.has("hero"):
+			t = "★ " + t
+		lines.append("%s %s  %d/%d" % ["✓" if ok else "•", t, pr, int(q["g"])])
+	var mats: Array = []
+	for m in main.Meta.MATERIALS:
+		var v := int(main.run.get("mat_" + m, 0))
+		if v > 0:
+			mats.append("%s %d" % [main.Meta.MATERIALS[m]["icon"], v])
+	if not mats.is_empty():
+		lines.append("  ".join(mats))
+	_tracker.text = "\n".join(lines)
+	_tracker.visible = not lines.is_empty()
+	var sm: Array = Settings.safe_margins()
+	_tracker.position = Vector2(14.0 + float(sm[0]), (240.0 if portrait() else 150.0) + float(sm[1]))
 
 
 func _draw_poi_arrows() -> void:
 	var vs := _poi_layer.size
 	var c := vs / 2.0
 	var me: Vector2 = main.view_center()
-	for p in main.pois:
+	for p in _poi_list():
 		if not is_instance_valid(p) or (p.get("state") == "done"):
 			continue
-		var d: Vector2 = p.position - me
+		if p.has_method("arrow_visible") and not p.arrow_visible():
+			continue
+		var pp: Vector2 = p.target_pos() if p.has_method("target_pos") else p.position
+		if not pp.is_finite():
+			continue
+		var d: Vector2 = pp - me
 		if d.length() < 650.0:
 			continue
 		var col: Color = p.color() if p.has_method("color") else Color(1.0, 0.3, 0.35)
@@ -1001,6 +1053,16 @@ func show_game_over(victory: bool, time_alive: float, kills: int, level: int, re
 			_over_stats.text += "\nПервое прохождение:  +%d ◆" % main.reward["first"]
 		if main.endless_min > 0:
 			_over_stats.text += "\nБесконечный режим: %d мин  (+%d ◆)" % [main.endless_min, main.reward.get("endless", 0)]
+		var mats: Dictionary = main.reward.get("materials", {})
+		if not mats.is_empty():
+			var parts: Array = []
+			for m in mats:
+				parts.append("+%d %s %s" % [int(mats[m]), main.Meta.MATERIALS[m]["icon"], main.Meta.MATERIALS[m]["name"]])
+			_over_stats.text += "\nМатериалы для базы:  " + "   ".join(parts) + ("" if victory else "  (при поражении — 60%)")
+		for q in main.reward.get("quests", []):
+			_over_stats.text += "\n✓ Задание «%s»:  %s" % [q[0], q[1]]
+		if str(main.reward.get("built", "")) != "":
+			_over_stats.text += "\n⚒ Стройка завершена: %s" % main.Meta.BUILDINGS[main.reward["built"]]["name"]
 	_over_root.visible = true
 	_over_root.modulate.a = 0.0
 	var tw := _over_root.create_tween()

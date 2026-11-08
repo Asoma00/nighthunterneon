@@ -40,6 +40,8 @@ static func tier_for(v: int) -> int:
 func _key() -> String:
 	if kind == "heal":
 		return "heal"
+	if kind in ["scrap", "chips", "cores"]:
+		return "res_" + kind
 	tier = maxi(tier, tier_for(value))
 	return TIER_KEYS[tier]
 
@@ -47,6 +49,8 @@ func _key() -> String:
 func _col(key: String) -> Color:
 	if key == "heal":
 		return Color(1.0, 0.25, 0.4)
+	if key.begins_with("res_"):
+		return {"res_scrap": Color(0.8, 0.8, 0.95), "res_chips": Color(0.35, 1.0, 0.6), "res_cores": Color(1.0, 0.45, 0.9)}[key]
 	return TIER_COLORS[TIER_KEYS.find(key)]
 
 
@@ -150,6 +154,8 @@ func _process(delta: float) -> void:
 	if dist < player.radius + 8.0:
 		if kind == "heal":
 			player.heal(25.0)
+		elif kind in ["scrap", "chips", "cores"]:
+			main.add_material(kind, value, position)
 		else:
 			player.add_xp(value)  # опыт у каждого героя свой
 		Fx.burst(main, position + Vector2(0, -10), [Pixel.hdr(_color, 2.0), Color(_color, 0.0)], 4, 80.0, 0.3, 2.5)

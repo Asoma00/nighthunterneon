@@ -90,6 +90,18 @@ var boss: Node2D = null
 var _boss_index := 0
 var _reaction_text_t := 0.0
 var _combo_t := 0.0
+## Счётчики забега для заданий, мастерства и итогов (см. quests.gd / meta.gd)
+var run := {}
+var _streak := 0
+var _streak_t := 0.0
+var _nodmg_t := 0.0
+var _last_hp := -1.0
+var _run_sync_t := 0.0
+const QuestsScript := preload("res://scripts/quests.gd")
+const QuestPoiScript := preload("res://scripts/quest_poi.gd")
+const EventsScript := preload("res://scripts/events.gd")
+var events: Node
+var active_quests: Array = []
 var _combo_seen := {}
 
 var _spawn_timer := 0.0
@@ -115,6 +127,11 @@ var rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
+	run = {"hero": Data.selected_character, "kills": 0, "wkills": {}, "elites": 0, "altars": 0, "trials": 0,
+		"caches": 0, "puzzles": 0, "beacons": 0, "events": 0, "reactions": 0, "boss": 0, "mat_scrap": 0,
+		"mat_chips": 0, "mat_cores": 0, "scrap": 0, "nodmg": 0, "minutes": 0, "level": 1, "combo": 0, "fusions": 0}
+	if not Data.coop and Net.mode == "":
+		active_quests = QuestsScript.active(Data.selected_character)
 	_vk = Settings.view_k()
 	rng.randomize()
 	level_index = clampi(Data.selected_level, 0, Data.LEVELS.size() - 1)
@@ -205,6 +222,9 @@ func _ready() -> void:
 	projectiles_node = _make_layer("Projectiles", world, false)
 	projectiles_node.z_index = 5
 	fx_node = _make_layer("Effects", world, false)
+	events = EventsScript.new()
+	events.main = self
+	world.add_child(events)
 
 	camera = Camera2D.new()
 	camera.position_smoothing_enabled = true
@@ -988,6 +1008,7 @@ func _process(delta: float) -> void:
 	if game_over:
 		return
 	time_alive += delta
+	_run_tick(delta)
 	_handle_bosses()
 	_handle_pois(delta)
 	_handle_spawning(delta)
@@ -1075,6 +1096,8 @@ func _handle_spawning(delta: float) -> void:
 	_spawn_timer -= delta
 	if _spawn_timer <= 0.0:
 		_spawn_timer = maxf(0.16, 1.0 - time_alive / 160.0) * (2.0 if boss != null else 1.0) / float(level["rate"]) / (1.0 + 0.3 * endless_min)
+		if events != null:
+			_spawn_timer /= events.spawn_k
 		var count := 1 + int(time_alive / 55.0) + endless_min
 		if endless:
 			# Адских меньше, но каждый опасен; с минутами их становится больше
@@ -1296,6 +1319,39 @@ func _separate_enemies() -> void:
 
 func on_enemy_killed(enemy: Node2D) -> void:
 	kills += 1
+	# Задания и мастерство: кем и чем убит враг, серия убийств, добыча материалов
+	var src: String = str(enemy.get("last_src")) if enemy.get("last_src") != null else ""
+	var wm: Dictionary = {}
+	if src != "" and Data.WEAPONS.has(src):
+		run["wkills"][src] = int(run["wkills"].get(src, 0)) + 1
+		var kpw: Node2D = enemy._atk() if enemy.has_method("_atk") else player
+		wm = kpw.wmods_for(src)
+		if float(wm.get("leech", 0.0)) > 0.0 and not kpw._dead:
+			kpw.heal(float(wm["leech"]), false)
+	_streak = _streak + 1 if _streak_t > 0.0 else 1
+	_streak_t = 2.0
+	run["combo"] = maxi(int(run["combo"]), _streak)
+	if enemy.has_meta("golden"):
+		# Золотой гоблин: щедрая добыча
+		drop_chest(enemy.position + Vector2(0, 50))
+		drop_material(enemy.position, "scrap", 8)
+		drop_material(enemy.position + Vector2(30, 0), "chips", 2)
+		if rng.randf() < 0.4:
+			drop_material(enemy.position + Vector2(-30, 0), "cores", 1)
+		for i in 10:
+			drop_gem_at(enemy.position + Vector2.RIGHT.rotated(TAU * i / 10.0) * 70.0, 6)
+		combo_pop(enemy.position + Vector2(0, -90), "ЗОЛОТОЙ ГОБЛИН ПОЙМАН!", Pixel.hdr(Color(1.0, 0.85, 0.3), 1.6))
+	if enemy.is_elite and not enemy.is_boss:
+		run["elites"] = int(run["elites"]) + 1
+		drop_material(enemy.position, "scrap", rng.randi_range(3, 5))
+		if rng.randf() < 0.35:
+			drop_material(enemy.position + Vector2(20, 10), "chips", 1)
+	elif enemy.is_boss:
+		drop_material(enemy.position, "cores", rng.randi_range(1, 2))
+		drop_material(enemy.position + Vector2(-30, 10), "chips", 3)
+		drop_material(enemy.position + Vector2(30, 10), "scrap", 8)
+	elif rng.randf() < 0.035 * (1.0 + float(wm.get("salvage", 0.0))):
+		drop_material(enemy.position, "scrap", 1 + int(rng.randf() < 0.3))
 	var kp: Node2D = enemy._atk() if enemy.has_method("_atk") else player
 	if kp.kill_heal > 0.0 and not kp._dead:
 		kp.heal(kp.kill_heal, false)
@@ -1304,7 +1360,7 @@ func on_enemy_killed(enemy: Node2D) -> void:
 	var heal_drop := rng.randf() < 0.005
 	# Кристаллов меньше (≈55% врагов), но каждый ценнее — опыта в сумме примерно столько же
 	if heal_drop or enemy.is_elite or rng.randf() > 0.45:
-		var xv := float(enemy.xp_value) * rng.randf_range(0.8, 2.6)
+		var xv: float = float(enemy.xp_value) * rng.randf_range(0.8, 2.6) * (events.xp_k if events != null else 1.0)
 		if rng.randf() < 0.06:
 			xv *= 3.0
 		_drop_gem(enemy.position, maxi(1, int(round(xv))), heal_drop)
@@ -1581,8 +1637,55 @@ func apply_buff(p: Node2D, kind: String, t: float) -> void:
 	p.add_buff(kind, t)
 
 
+var _qpoi_t := 22.0
+
+
+## Места для заданий: тайники, рунные загадки, маяки. Нужные заданиям появляются чаще.
+func _handle_quest_pois(delta: float) -> void:
+	_qpoi_t -= delta
+	if _qpoi_t > 0.0 or boss != null:
+		return
+	var have := {"cache": 0, "puzzle": 0, "beacons": 0}
+	for p in pois:
+		if is_instance_valid(p) and p.get_script() == QuestPoiScript:
+			have[p.kind] += 1
+	var weights := {"cache": 3.0 if quest_wants("caches") else 1.2, "puzzle": 3.0 if quest_wants("puzzles") else 0.6,
+		"beacons": 3.0 if quest_wants("beacons") else 0.6}
+	var cap := {"cache": 2, "puzzle": 1, "beacons": 1}
+	var sum := 0.0
+	for k in weights:
+		if have[k] >= cap[k]:
+			weights[k] = 0.0
+		sum += weights[k]
+	_qpoi_t = rng.randf_range(30.0, 50.0) * (0.7 if (quest_wants("caches") or quest_wants("puzzles") or quest_wants("beacons")) else 1.0)
+	if sum <= 0.0:
+		return
+	var r := rng.randf() * sum
+	var kind := "cache"
+	for k in weights:
+		r -= weights[k]
+		if r <= 0.0:
+			kind = k
+			break
+	var c := view_center()
+	var pos := c
+	var dist := rng.randf_range(900.0, 1300.0) if kind == "cache" else rng.randf_range(700.0, 1000.0)
+	for tries in 10:
+		pos = c + Vector2.RIGHT.rotated(rng.randf() * TAU) * dist
+		if ground_node == null or ground_node.is_free(pos, 300.0 if kind == "puzzle" else 110.0):
+			break
+	var q := QuestPoiScript.new()
+	q.main = self
+	q.kind = kind
+	q.position = pos
+	enemies_node.get_parent().add_child(q)
+	pois.append(q)
+
+
 func _handle_pois(delta: float) -> void:
 	pois = pois.filter(func(x): return is_instance_valid(x) and not (x.get("dead") == true))
+	if net_mode != "client":
+		_handle_quest_pois(delta)
 	_poi_t -= delta
 	if _poi_t > 0.0 or pois.size() >= 2 or boss != null:
 		return
@@ -1667,6 +1770,83 @@ func on_boss_killed(b: Node2D) -> void:
 	screen_flash(0.5)
 	Fx.text_pop(self, b.position + Vector2(0, -40), "БОСС ПОВЕРЖЕН", Pixel.hdr(Color(1.0, 0.85, 0.3), 1.6), 34)
 	Sound.set_track("battle")
+
+
+## Материал для базы на земле (подбирается как кристалл).
+func drop_material(pos: Vector2, kind: String, value: int) -> void:
+	if net_mode == "client" or value <= 0:
+		return
+	var gem := GemScript.new()
+	gem.main = self
+	gem.player = player
+	gem.position = pos + Vector2(rng.randf_range(-14, 14), rng.randf_range(-8, 8))
+	gem.value = value
+	gem.kind = kind
+	gems_node.add_child(gem)
+
+
+func add_material(kind: String, value: int, at: Vector2) -> void:
+	run["mat_" + kind] = int(run.get("mat_" + kind, 0)) + value
+	if kind == "scrap":
+		run["scrap"] = int(run["scrap"]) + value
+	var m: Dictionary = Meta.MATERIALS[kind]
+	Fx.text_pop(self, at + Vector2(0, -26), "+%d %s %s" % [value, m["icon"], m["name"]], Pixel.hdr(m["color"], 1.3), 15)
+	Sound.play("gem", -6.0, 1.3)
+	if net_mode == "host":
+		Net.fx("mat", [kind, value])
+
+
+## Счётчики забега, которые считаются по ходу (раз в полсекунды) — для заданий и подсказок.
+func _run_tick(delta: float) -> void:
+	_streak_t -= delta
+	var me: Node2D = player
+	if _last_hp >= 0.0 and me.hp < _last_hp - 0.01:
+		_nodmg_t = 0.0
+	_last_hp = me.hp
+	_nodmg_t += delta
+	run["nodmg"] = maxi(int(run["nodmg"]), int(_nodmg_t))
+	_run_sync_t -= delta
+	if _run_sync_t > 0.0:
+		return
+	_run_sync_t = 0.5
+	run["kills"] = kills
+	run["reactions"] = reactions_count
+	run["boss"] = bosses_killed
+	run["minutes"] = int(time_alive / 60.0)
+	run["level"] = int(player.level)
+	run["fusions"] = player.fusions.size()
+	_check_quests()
+
+
+var _quest_done := {}
+
+
+## Задание выполнено прямо в бою — сообщаем сразу (награда — по итогам вылазки).
+func _check_quests() -> void:
+	for i in active_quests.size():
+		var q: Dictionary = active_quests[i]
+		if _quest_done.has(i):
+			continue
+		if QuestsScript.done(q, run):
+			_quest_done[i] = true
+			Sound.play("levelup", -2.0, 1.2)
+			screen_flash(0.15)
+			Fx.text_pop(self, player.position + Vector2(0, -120), "ЗАДАНИЕ ВЫПОЛНЕНО: " + QuestsScript.title(q).to_upper(), Pixel.hdr(Color(1.0, 0.85, 0.3), 1.6), 24)
+
+
+## Нужно ли заданиям это место на карте — тогда оно появляется чаще и раньше.
+func quest_wants(k: String) -> bool:
+	for q in active_quests:
+		if q["k"] == k and not QuestsScript.done(q, run):
+			return true
+	return false
+
+
+func run_for_meta() -> Dictionary:
+	var r := run.duplicate(true)
+	r["weapons"] = player.weapons.keys()
+	r["modules"] = player.passives.keys()
+	return r
 
 
 func drop_chest(pos: Vector2) -> void:
@@ -1925,7 +2105,13 @@ func _build_choices(player: Node2D) -> Array:
 			pool.append({"type": "passive", "id": id, "new": lvl == 0, "level": lvl + 1,
 				"title": p["name"], "desc": p["desc"],
 				"hint": "Действует только на героя" if p["kind"] == "hero" else "Только на оружие  •  аспект «%s»" % Data.ASPECTS[id]["name"]})
-	pool.shuffle()
+	# Взвешенный случайный порядок: модули с узлом «Знакомый сигнал» выпадают вдвое чаще
+	for c in pool:
+		var w := 2.0 if (c["type"] == "passive" and Meta.has_node("m:" + str(c["id"]), "favor")) else 1.0
+		c["_k"] = pow(randf(), 1.0 / w)
+	pool.sort_custom(func(a, b): return a["_k"] > b["_k"])
+	for c in pool:
+		c.erase("_k")
 	var choices := pool.slice(0, 3)
 	if choices.is_empty():
 		choices.append({"type": "heal", "id": "heal", "new": false, "level": 0,
@@ -2107,7 +2293,7 @@ func _end_game(victory: bool) -> void:
 	if _level_done:
 		victory = true  # уровень уже пройден — гибель в бесконечном режиме не отменяет победу
 	Meta.note_run(reactions_count, player.level, Data.selected_character)
-	reward = Meta.finish_run(kills, time_alive, bosses_killed, victory, level_index, int(level["reward"]), endless_min)
+	reward = Meta.finish_run(kills, time_alive, bosses_killed, victory, level_index, int(level["reward"]), endless_min, run_for_meta())
 	if net_mode == "host":
 		Net.event("over", [victory, time_alive, kills, player.level, reactions_count, bosses_killed])
 	Sound.set_track("menu")
@@ -2146,7 +2332,7 @@ func on_player_died_quit() -> void:
 	if not game_over:
 		game_over = true
 		Meta.note_run(reactions_count, player.level, Data.selected_character)
-		reward = Meta.finish_run(kills, time_alive, bosses_killed, false, level_index, 0)
+		reward = Meta.finish_run(kills, time_alive, bosses_killed, false, level_index, 0, 0, run_for_meta())
 	to_hub()
 
 
@@ -2297,7 +2483,7 @@ func net_event(kind: String, data: Variant) -> void:
 				return
 			game_over = true
 			Meta.note_run(int(data[4]), int(data[3]), Net.my_hero if Net.my_hero != "" else Data.selected_character)
-			reward = Meta.finish_run(int(data[2]), float(data[1]), int(data[5]), bool(data[0]), level_index, int(level["reward"]), endless_min)
+			reward = Meta.finish_run(int(data[2]), float(data[1]), int(data[5]), bool(data[0]), level_index, int(level["reward"]), endless_min, run_for_meta())
 			hud.hide_level_up()
 			hud.hide_wait()
 			hud.show_game_over(bool(data[0]), float(data[1]), int(data[2]), int(data[3]), int(data[4]))
@@ -2401,7 +2587,7 @@ func _build_snapshot() -> Dictionary:
 			g_k.append(2)
 			g_v.append(0)
 		else:
-			g_k.append(1 if g.kind == "heal" else 0)
+			g_k.append({"heal": 1, "scrap": 3, "chips": 4, "cores": 5}.get(g.kind, 0))
 			g_v.append(g.value)
 		g_xy.append(g.position)
 	s["g"] = [g_id, g_k, g_v, g_xy]
@@ -2590,7 +2776,7 @@ func _apply_gems(g: Array) -> void:
 				n = ChestScript.new()
 			else:
 				n = GemScript.new()
-				n.kind = "heal" if k == 1 else "xp"
+				n.kind = {1: "heal", 3: "scrap", 4: "chips", 5: "cores"}.get(k, "xp")
 				n.value = g[2][i]
 				n.net_pos = g[3][i]
 			n.player = player
@@ -2657,6 +2843,9 @@ func _replay(kind: String, a: Array) -> void:
 				players[a[0]].net_sunray(a[1], a[2], a[3], a[4])
 		"shake":
 			shake(a[0])
+		"mat":
+			# Сетевая игра: материалы общие — у клиента тоже копятся
+			run["mat_" + str(a[0])] = int(run.get("mat_" + str(a[0]), 0)) + int(a[1])
 		"flash":
 			screen_flash(a[0])
 		"glitch":

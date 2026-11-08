@@ -110,6 +110,7 @@ func _activate() -> void:
 	Sound.play("evolve", -4.0)
 	main.shake(6.0)
 	Fx.ring(main, position, 10.0, 260.0, Pixel.hdr(color(), 2.0), 0.5, 6.0)
+	main.run["altars"] = int(main.run.get("altars", 0)) + 1
 	match kind:
 		"power":
 			var b: Array = BUFFS[randi() % BUFFS.size()]
@@ -174,6 +175,7 @@ func quest_text() -> String:
 
 
 func _win() -> void:
+	main.run["trials"] = int(main.run.get("trials", 0)) + 1
 	main.combo_pop(position + Vector2(0, -90), "ИСПЫТАНИЕ ПРОЙДЕНО!", Pixel.hdr(Color(1.0, 0.85, 0.3), 1.4))
 	Sound.play("chest", 0.0)
 	main.drop_chest(position + Vector2(0, 60))

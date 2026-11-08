@@ -15,6 +15,8 @@ const GOLD := Color(1.0, 0.8, 0.3)
 const PANEL_BG := Color(0.05, 0.03, 0.1, 0.92)
 const SPRITE_PX := 0.045
 const PORTAL_POS := Vector3(0, 0, -2.5)
+const BOARD := Vector3(-3.6, 0, -1.0)   # доска заданий у портала
+const Quests := preload("res://scripts/quests.gd")
 
 var _vp: SubViewport
 var _world: Node3D
@@ -39,6 +41,7 @@ var _t := 0.0
 # Интерфейс
 var _hud: CanvasLayer
 var _shards_label: Label
+var _mats_label: Label
 var _hero_label: Label
 var _prompt: Label
 var _panel_root: Control
@@ -85,6 +88,7 @@ func _ready() -> void:
 		_buildings[id] = {"root": null}
 		_rebuild_building(id)
 	_build_places()
+	_build_board()
 	_build_decor()
 	_build_avatar()
 	_spawn_npcs()
@@ -97,6 +101,12 @@ func _ready() -> void:
 	if not Meta.last_reward.is_empty():
 		_show_reward(Meta.last_reward)
 		Meta.last_reward = {}
+	if Meta.just_built != "":
+		var bid := Meta.just_built
+		Meta.just_built = ""
+		get_tree().create_timer(2.5).timeout.connect(func():
+			_toast_text("⚒ Стройка завершена: %s, ур. %d!" % [Meta.BUILDINGS[bid]["name"], Meta.level(bid)])
+			Sound.play("evolve", -4.0))
 
 
 # ================= Пиксельный пост-эффект: палитра + дизеринг =================
@@ -507,7 +517,7 @@ func _rebuild_building(id: String) -> void:
 		_add(root, _box(0.6, 0.6, 0.6), plank, Vector3(1.0, 0.65, 1.0), Vector3(0, 20, 0))
 		_add(root, _cyl(0.12, 0.12, 1.6, 6), plank, Vector3(-0.6, 0.45, 1.1), Vector3(0, 0, 90))
 		_add(root, _cyl(0.12, 0.12, 1.6, 6), plank, Vector3(-0.6, 0.68, 1.1), Vector3(0, 10, 90))
-		_label3d(root, "%s\nПОСТРОИТЬ — %d ◆" % [info["name"], Meta.upgrade_cost(id)], Vector3(0, 3.5, 0), Color(col, 0.9), 30)
+		_label3d(root, "%s\nПОСТРОИТЬ — %s" % [info["name"], Meta.cost_text(Meta.build_cost(id))], Vector3(0, 3.5, 0), Color(col, 0.9), 30)
 		return
 
 	var floors := mini(lvl, 3)
@@ -601,6 +611,16 @@ func _rebuild_building(id: String) -> void:
 
 	_light(root, Vector3(0, 1.8, 2.4), col, 0.8, 6.0)
 	var stars := "◆".repeat(lvl) + "◇".repeat(int(info["max"]) - lvl)
+	if Meta.building_busy(id) and lvl > 0:
+		# Идёт стройка следующего уровня: леса вокруг и табличка
+		var plank := _mat(Color(0.45, 0.33, 0.22), 0.9, 0.0, "wood", 1.4)
+		for x in [-1.75, 1.75]:
+			for z in [-1.75, 1.75]:
+				_add(root, _box(0.1, top + 0.6, 0.1), plank, Vector3(x, (top + 0.6) / 2.0, z))
+		for z in [-1.75, 1.75]:
+			_add(root, _box(3.6, 0.08, 0.14), plank, Vector3(0, top * 0.6, z))
+		_add(root, _box(0.5, 0.5, 0.5), _emat(Color(1.0, 0.7, 0.2), 1.6), Vector3(1.2, top + 0.9, 1.2))
+		stars += "\n⚒ стройка ур. %d — ещё %d выл." % [int(Meta.construct["lvl"]), int(Meta.construct["left"])]
 	_label3d(root, "%s\n%s" % [info["name"], stars], Vector3(0, top + 3.0 if id != "beacon" else top + 4.4, 0), col.lightened(0.3), 30)
 
 
@@ -981,6 +1001,7 @@ func _process(delta: float) -> void:
 	_update_camera(delta)
 	_update_interaction()
 	_shards_label.text = str(Meta.shards)
+	_mats_label.text = "   ⚙ %d   ▣ %d   ✶ %d" % [int(Meta.materials.get("scrap", 0)), int(Meta.materials.get("chips", 0)), int(Meta.materials.get("cores", 0))]
 	_net_tick(delta)
 
 
@@ -1064,6 +1085,10 @@ func _update_interaction() -> void:
 	if dl < 3.6 and dl < best_d:
 		best = "library"
 		best_d = dl
+	var db := Vector2(p.x - BOARD.x, p.z - BOARD.z).length()
+	if db < 2.2 and db < best_d:
+		best = "board"
+		best_d = db
 	for id in Meta.BUILDINGS:
 		var bp: Vector3 = Meta.BUILDINGS[id]["pos"]
 		var d := Vector2(p.x - bp.x, p.z - bp.z).length()
@@ -1076,6 +1101,9 @@ func _update_interaction() -> void:
 		_prompt.text = _pk() + "Портал — начать вылазку"
 	elif best == "library":
 		_prompt.text = _pk() + "Библиотека — всё об открытом"
+	elif best == "board":
+		_prompt.text = _pk() + "Доска заданий"
+
 	elif best != "":
 		var lvl := _lvl(best)
 		_prompt.text = _pk() + "%s  %s" % [Meta.BUILDINGS[best]["name"], ("— построить" if lvl == 0 else "(ур. %d)" % lvl)]
@@ -1166,6 +1194,8 @@ func _build_hud() -> void:
 	_shards_label = _label("0", 28, GOLD, Color(GOLD, 0.6))
 	h.add_child(_shards_label)
 	h.add_child(_label("осколков", 16, Color(0.85, 0.8, 0.7)))
+	_mats_label = _label("", 18, Color(0.85, 0.9, 1.0))
+	h.add_child(_mats_label)
 
 	# Значок профиля: аватар героя и ник; по клику — страница профиля
 	var badge := Button.new()
@@ -1297,8 +1327,14 @@ func _toast_text(text: String) -> void:
 
 
 func _show_reward(r: Dictionary) -> void:
-	_toast_text("Вылазка завершена: +%d ◆   (враги %d, время %d, боссы %d, победа %d, бесконечность %d)" % [
-		r["total"], r["kills"], r["time"], r["bosses"], r["victory"], r.get("endless", 0)])
+	var t := "Вылазка завершена: +%d ◆" % r["total"]
+	var mats: Dictionary = r.get("materials", {})
+	for m in mats:
+		t += "  +%d %s" % [int(mats[m]), Meta.MATERIALS[m]["icon"]]
+	var qs: Array = r.get("quests", [])
+	if not qs.is_empty():
+		t += "   •   заданий выполнено: %d" % qs.size()
+	_toast_text(t)
 
 
 func _open_panel(id: String) -> void:
@@ -1364,6 +1400,9 @@ func _fill_panel() -> void:
 	if id == "library":
 		_fill_library()
 		return
+	if id == "board":
+		_fill_board()
+		return
 	if id in ["forge", "shrine", "lab"] and Meta.level(id) > 0:
 		_fill_tree_panel(id)
 		return
@@ -1378,12 +1417,19 @@ func _fill_panel() -> void:
 	desc.custom_minimum_size = Vector2(460, 0)
 	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_panel_box.add_child(desc)
-	if lvl < info["max"]:
-		var cost := Meta.upgrade_cost(id)
-		var text := ("ПОСТРОИТЬ — %d ◆" if lvl == 0 else "УЛУЧШИТЬ ДО УР. %d — %d ◆" % [lvl + 1, cost]) if lvl > 0 else "ПОСТРОИТЬ — %d ◆" % cost
+	if Meta.building_busy(id):
+		_panel_box.add_child(_centered(_label("⚒ Идёт стройка уровня %d — завершится через %d вылаз." % [int(Meta.construct["lvl"]), int(Meta.construct["left"])], 18, GOLD)))
+	elif lvl < info["max"]:
+		_panel_box.add_child(_centered(_build_cost_row(id)))
+		var cost_t := Meta.cost_text(Meta.build_cost(id))
+		var text := ("ПОСТРОИТЬ — " if lvl == 0 else "УЛУЧШИТЬ ДО УР. %d — " % (lvl + 1)) + cost_t
 		var up := _button(text, col, Meta.can_upgrade(id))
+		up.custom_minimum_size.x = 520 if not _portrait() else 440
 		up.pressed.connect(func(): _do_upgrade(id))
 		_panel_box.add_child(_centered(up))
+		var why := Meta.upgrade_block(id)
+		if why != "":
+			_panel_box.add_child(_centered(_label("⊘ " + why, 15, Color(1.0, 0.6, 0.6))))
 	else:
 		_panel_box.add_child(_centered(_label("МАКСИМАЛЬНЫЙ УРОВЕНЬ", 18, GOLD)))
 
@@ -1490,10 +1536,48 @@ func _add_close() -> void:
 	_panel_box.add_child(_centered(close))
 
 
+## Что нужно для следующего уровня здания: ресурсы (есть / нужно), условие и время стройки.
+func _build_cost_row(id: String) -> Control:
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 2)
+	var cost := Meta.build_cost(id)
+	var parts: Array = []
+	var ok_s := Meta.shards >= int(cost["shards"])
+	parts.append("%s ◆ %d / %d" % ["✓" if ok_s else "✗", Meta.shards, int(cost["shards"])])
+	for m in Meta.MATERIALS:
+		var need := int(cost.get(m, 0))
+		if need <= 0:
+			continue
+		var have := int(Meta.materials.get(m, 0))
+		parts.append("%s %s %s %d / %d" % ["✓" if have >= need else "✗", Meta.MATERIALS[m]["icon"], Meta.MATERIALS[m]["name"], have, need])
+	var l := _label(("\n" if _portrait() else "   ").join(parts), 15, Color(0.9, 0.9, 1.0))
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(_centered(l))
+	var L := Meta.level(id) + 1
+	var runs: int = Meta.BUILD_RUNS[mini(L, 5)]
+	var req := Meta.build_req(id)
+	var info := "Стройка: " + ("сразу" if runs <= 0 else "%d вылаз. после начала" % runs)
+	if req > 0:
+		info += "   •   нужно пройти уровней главы: %d (%d)" % [req, Meta.levels_cleared]
+	var il := _label(info, 14, Color(0.75, 0.75, 0.9))
+	il.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	il.custom_minimum_size = Vector2(440 if _portrait() else 640, 0)
+	il.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(_centered(il))
+	var hint := _label("Материалы (⚙ лом, ▣ микросхемы, ✶ ядра) добываются только в бою: элита, боссы, тайники, загадки, события и задания.", 13, Color(0.65, 0.65, 0.8))
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size = Vector2(440 if _portrait() else 640, 0)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(_centered(hint))
+	return v
+
+
 func _do_upgrade(id: String) -> void:
 	var was := Meta.level(id)
 	if not Meta.upgrade(id):
 		return
+	if Meta.building_busy(id):
+		_toast_text("Стройка началась: %s, ур. %d — завершится через %d вылаз." % [Meta.BUILDINGS[id]["name"], int(Meta.construct["lvl"]), int(Meta.construct["left"])])
 	Sound.play("evolve" if was == 0 else "chest", -2.0)
 	_shake = 1.0
 	_rebuild_building(id)
@@ -1662,11 +1746,18 @@ func _fill_tree_panel(id: String) -> void:
 	foot.alignment = BoxContainer.ALIGNMENT_CENTER
 	foot.add_theme_constant_override("separation", 14)
 	_panel_box.add_child(foot)
-	if lvl < int(info["max"]):
-		var up := _button("ЗДАНИЕ УР. %d — %d ◆" % [lvl + 1, Meta.upgrade_cost(id)], col, Meta.can_upgrade(id))
-		up.custom_minimum_size.x = 300 if narrow else 340
+	if Meta.building_busy(id):
+		foot.add_child(_label("⚒ стройка ур. %d — ещё %d выл." % [int(Meta.construct["lvl"]), int(Meta.construct["left"])], 16, GOLD))
+	elif lvl < int(info["max"]):
+		var up := _button("ЗДАНИЕ УР. %d — %s" % [lvl + 1, Meta.cost_text(Meta.build_cost(id))], col, Meta.can_upgrade(id))
+		up.custom_minimum_size.x = 320 if narrow else 420
+		up.add_theme_font_size_override("font_size", 16)
 		up.pressed.connect(func(): _do_upgrade(id))
 		foot.add_child(up)
+		var why := Meta.upgrade_block(id)
+		if why != "":
+			up.tooltip_text = why
+			_panel_box.add_child(_centered(_label("Здание: ⊘ " + why + "   •   у вас ⚙ %d  ▣ %d  ✶ %d" % [int(Meta.materials["scrap"]), int(Meta.materials["chips"]), int(Meta.materials["cores"])], 13, Color(1.0, 0.65, 0.65))))
 	var close := _button("ЗАКРЫТЬ" if narrow else Settings.with_key("ЗАКРЫТЬ", "back"), Color(0.6, 0.6, 0.75))
 	close.custom_minimum_size.x = 220 if narrow else 260
 	close.pressed.connect(func():
@@ -2177,6 +2268,100 @@ func _build_library() -> void:
 	_label3d(_world, "БИБЛИОТЕКА", LIBRARY + Vector3(0, 6.4, 0), Color(0.8, 0.7, 1.0), 32)
 	_obstacles.append([LIBRARY, 2.4])
 	_obstacles.append([LIBRARY + Vector3(2.2, 0, -0.4).rotated(Vector3.UP, root.rotation.y), 1.1])
+
+
+## Доска заданий: столб с досками и светящимися листками.
+func _build_board() -> void:
+	var root := Node3D.new()
+	root.position = BOARD
+	root.rotation.y = deg_to_rad(20.0)
+	_world.add_child(root)
+	var wood := _mat(Color(0.42, 0.3, 0.2), 0.9, 0.0, "wood", 1.4)
+	for x in [-0.8, 0.8]:
+		_add(root, _box(0.14, 2.2, 0.14), wood, Vector3(x, 1.1, 0))
+	_add(root, _box(1.9, 1.15, 0.08), wood, Vector3(0, 1.45, 0.02))
+	_add(root, _box(2.1, 0.12, 0.3), wood, Vector3(0, 2.15, 0.05))
+	var cols := [GOLD, CYAN, MAGENTA, Color(0.5, 1.0, 0.6)]
+	for i in 4:
+		var paper := _add(root, _box(0.36, 0.44, 0.02), _emat(cols[i], 1.3), Vector3(-0.62 + i * 0.41, 1.45 + (0.12 if i % 2 == 0 else -0.08), 0.08), Vector3(0, 0, (i - 1.5) * 5.0))
+		_flicker.append([paper.material_override, 1.3, randf() * 10.0])
+	_light(root, Vector3(0, 2.2, 0.8), GOLD, 0.9, 4.0)
+	_label3d(_world, "ДОСКА ЗАДАНИЙ", BOARD + Vector3(0, 2.9, 0), GOLD.lightened(0.2), 28)
+	_obstacles.append([BOARD, 0.9])
+
+
+func _fill_board() -> void:
+	_panel_box.add_child(_centered(_label("ДОСКА ЗАДАНИЙ", 34, Color.WHITE, Color(GOLD, 0.8))))
+	var info := _label("Задания выполняются за ОДНУ вылазку. Награда — осколки и материалы для базы. Выполненное задание сменяется новым, с каждым разом сложнее и щедрее.", 15, Color(0.8, 0.8, 0.95))
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.custom_minimum_size = Vector2(460 if _portrait() else 760, 0)
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_panel_box.add_child(_centered(info))
+	if Net.mode != "":
+		_panel_box.add_child(_centered(_label("В сетевой игре задания не засчитываются", 15, Color(1.0, 0.6, 0.6))))
+	var grid := GridContainer.new()
+	grid.columns = 1 if _portrait() else 3
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	var b := Quests.board()
+	for i in b.size():
+		grid.add_child(_quest_card(b[i], i))
+	_panel_box.add_child(_centered(grid))
+	# Личное задание выбранного героя
+	var hc: Dictionary = Data.CHARACTERS[Data.selected_character]
+	var hq := Quests.hero_quest(Data.selected_character)
+	var steps: int = Quests.HERO_QUESTS.get(Data.selected_character, []).size()
+	_panel_box.add_child(_centered(_label("ЛИЧНОЕ ЗАДАНИЕ: %s — %s" % [hc["name"].to_upper(), hc["title"]], 20, hc["color"])))
+	if hq.is_empty():
+		_panel_box.add_child(_centered(_label("Вся история героя пройдена ★★★", 16, GOLD)))
+	else:
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _sbox(hc["color"], PANEL_BG, 2, 6))
+		var v := VBoxContainer.new()
+		card.add_child(v)
+		var t := _label("Шаг %d / %d:  «%s»" % [int(hq["step"]) + 1, steps, hq["title"]], 18, Color.WHITE)
+		v.add_child(t)
+		var lore := _label(hq["lore"], 15, Color(0.85, 0.8, 0.95))
+		lore.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lore.custom_minimum_size = Vector2(440 if _portrait() else 720, 0)
+		v.add_child(lore)
+		v.add_child(_label("Цель: " + Quests.desc(hq) + "  (только этим героем)", 16, GOLD))
+		v.add_child(_label("Награда: " + Quests.reward_text(Quests.reward(hq)) + "  •  открывает узлы дерева героя", 14, Color(0.7, 1.0, 0.75)))
+		_panel_box.add_child(_centered(card))
+	_add_close()
+
+
+func _quest_card(q: Dictionary, i: int) -> Control:
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", _sbox(GOLD.darkened(0.2), PANEL_BG, 2, 4))
+	card.custom_minimum_size = Vector2(440 if _portrait() else 250, 0)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	card.add_child(v)
+	v.add_child(_label(Quests.title(q), 19, GOLD))
+	var d := _label(Quests.desc(q), 15, Color(0.92, 0.92, 1.0))
+	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	d.custom_minimum_size = Vector2(220, 0)
+	v.add_child(d)
+	v.add_child(_label("Сложность: " + "★".repeat(int(q.get("tier", 0)) + 1), 13, Color(0.75, 0.75, 0.9)))
+	v.add_child(_label("Награда: " + Quests.reward_text(Quests.reward(q)), 14, Color(0.6, 1.0, 0.7)))
+	var swap := _button("Заменить — 15 ◆", Color(0.6, 0.6, 0.75), Meta.shards >= 15)
+	swap.custom_minimum_size = Vector2(200, 38)
+	swap.add_theme_font_size_override("font_size", 14)
+	swap.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	swap.pressed.connect(func():
+		if Meta.shards < 15:
+			return
+		Meta.shards -= 15
+		var ex: Array = []
+		for qq in Meta.quests:
+			ex.append(qq["k"])
+		Meta.quests[i] = Quests.make(ex)
+		Meta.save()
+		Sound.play("click")
+		_fill_panel())
+	v.add_child(swap)
+	return card
 
 
 const LIB_TABS := [["heroes", "Герои"], ["abilities", "Способности"], ["weapons", "Оружие"],

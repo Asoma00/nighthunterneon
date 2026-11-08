@@ -181,6 +181,8 @@ func setup(id: String) -> void:
 	magnet *= float(hm.get("magnet", 1.0))
 	xp_mult *= float(hm.get("xp", 1.0))
 	dodge += float(hm.get("dodge", 0.0))
+	damage_mult *= float(hm.get("damage", 1.0))
+	laststand = bool(hm.get("laststand", false))
 
 
 func _ready() -> void:
@@ -635,6 +637,8 @@ func stats(id: String) -> Dictionary:
 		_wmods[id] = _m_weapon(id)
 	var m: Dictionary = _wmods[id]
 	s["damage"] = float(s.get("damage", 0.0)) * m["damage"]
+	if not fusion_of(id).is_empty():
+		s["damage"] = float(s["damage"]) * float(m.get("fusion", 1.0))
 	if s.has("cooldown"):
 		s["cooldown"] = float(s["cooldown"]) * m["cooldown"]
 	if s.has("interval"):
@@ -1029,6 +1033,18 @@ func on_weapon_kill(src: String, e: Node2D) -> void:
 ## Источник урона — для бонуса «Стихийный резонанс» из Арсенала.
 func set_source(id: String) -> void:
 	_src = id
+
+
+var laststand := false
+
+
+## Бонусы дерева оружия для конкретного источника урона ({} — не оружие).
+func wmods_for(src: String) -> Dictionary:
+	if src == "" or not Data.WEAPONS.has(src):
+		return {}
+	if not _wmods.has(src):
+		_wmods[src] = _m_weapon(src)
+	return _wmods[src]
 
 
 func hit_mult(target: Node) -> float:
