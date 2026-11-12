@@ -110,7 +110,56 @@ static func reward(q: Dictionary) -> Dictionary:
 	var r := {"shards": 40 + 25 * t, "scrap": 5 + 3 * t, "chips": 1 + t / 2, "cores": 1 if t >= 3 else 0}
 	if q.has("hero"):
 		r = {"shards": 120, "scrap": 10, "chips": 3, "cores": 1}
+	if q.get("contract", false):
+		# Контракт трактирщика: цель тяжелее, награда почти вдвое щедрее
+		r = {"shards": 90 + 45 * t, "scrap": 10 + 5 * t, "chips": 2 + t, "cores": 1 + t / 2}
 	return r
+
+
+# ---------- Контракты таверны ----------
+# Трактирщик предлагает 3 контракта: цель в 1.6 раза больше обычной, награда щедрее.
+# Взять можно 1 контракт (2 — с 3-го уровня таверны). Действуют до выполнения.
+
+static func contract_slots() -> int:
+	return 2 if Meta.level("hall") >= 3 else 1
+
+
+static func make_contract(exclude: Array) -> Dictionary:
+	var q := make(exclude)
+	q["tier"] = mini(3, int(q["tier"]) + 1)
+	q["g"] = maxi(int(q["g"]) + 1, int(ceil(float(POOL[q["k"]]["g"][int(q["tier"])]) * 1.6))) if q["k"] != "boss" else maxi(2, int(q["g"]))
+	q["contract"] = true
+	return q
+
+
+static func offers() -> Array:
+	Meta.ensure_loaded()
+	var o: Array = Meta.offers
+	while o.size() < 3:
+		var ex: Array = []
+		for q in o + Meta.contracts:
+			ex.append(q["k"])
+		o.append(make_contract(ex))
+	Meta.offers = o
+	return o
+
+
+static func take_contract(i: int) -> bool:
+	var o := offers()
+	if i < 0 or i >= o.size() or Meta.contracts.size() >= contract_slots():
+		return false
+	Meta.contracts.append(o[i])
+	o.remove_at(i)
+	Meta.offers = o
+	offers()
+	Meta.save()
+	return true
+
+
+static func drop_contract(i: int) -> void:
+	if i >= 0 and i < Meta.contracts.size():
+		Meta.contracts.remove_at(i)
+	Meta.save()
 
 
 static func reward_text(r: Dictionary) -> String:
@@ -126,7 +175,7 @@ static func reward_text(r: Dictionary) -> String:
 static func title(q: Dictionary) -> String:
 	if q.has("hero"):
 		return str(q.get("title", ""))
-	return POOL[q["k"]]["t"]
+	return ("Контракт: " if q.get("contract", false) else "") + str(POOL[q["k"]]["t"])
 
 
 static func desc(q: Dictionary) -> String:
@@ -165,6 +214,7 @@ static func hero_step(hero: String) -> int:
 ## Все активные задания этого забега (доска + личное задание героя).
 static func active(hero: String) -> Array:
 	var out: Array = board().duplicate(true)
+	out.append_array(Meta.contracts.duplicate(true))
 	var hq := hero_quest(hero)
 	if not hq.is_empty():
 		out.append(hq)
@@ -195,6 +245,16 @@ static func settle(run: Dictionary, hero: String) -> Array:
 			keep.append(q)
 	Meta.quests = keep
 	board()
+	var kc: Array = []
+	for q in Meta.contracts:
+		if done(q, run):
+			var r := reward(q)
+			Meta.add_reward(r)
+			out.append([title(q), reward_text(r)])
+			Meta.stats["quests_done"] = int(Meta.stats.get("quests_done", 0)) + 1
+		else:
+			kc.append(q)
+	Meta.contracts = kc
 	var hq := hero_quest(hero)
 	if not hq.is_empty() and done(hq, run):
 		var r := reward(hq)

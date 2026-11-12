@@ -188,10 +188,10 @@ func _pk() -> String:
 func _hint_text() -> String:
 	match Settings.input_mode():
 		"touch":
-			return "Касание и сдвиг пальца — ходить   •   ВОЙТИ — открыть здание   •   II — пауза"
+			return "Касание и сдвиг пальца — ходить   •   ВОЙТИ — войти / говорить   •   II — пауза"
 		"pad":
-			return "Левый стик — ходить   •   A — открыть здание   •   START — пауза   •   B — назад"
-	return "WASD — ходить   •   E — открыть здание   •   ESC — пауза / назад"
+			return "Левый стик — ходить   •   A — войти / говорить   •   START — пауза   •   B — назад"
+	return "WASD — ходить   •   E — войти / говорить   •   ESC — пауза / назад"
 
 
 func _on_input_mode(_m: String) -> void:
@@ -519,7 +519,11 @@ func _rebuild_building(id: String) -> void:
 		_add(root, _box(0.6, 0.6, 0.6), plank, Vector3(1.0, 0.65, 1.0), Vector3(0, 20, 0))
 		_add(root, _cyl(0.12, 0.12, 1.6, 6), plank, Vector3(-0.6, 0.45, 1.1), Vector3(0, 0, 90))
 		_add(root, _cyl(0.12, 0.12, 1.6, 6), plank, Vector3(-0.6, 0.68, 1.1), Vector3(0, 10, 90))
-		_label3d(root, "%s\nПОСТРОИТЬ — %s" % [info["name"], Meta.cost_text(Meta.build_cost(id))], Vector3(0, 3.5, 0), Color(col, 0.9), 30)
+		_label3d(root, "%s\nПОСТРОИТЬ — %s" % [info["name"], Meta.cost_text(Meta.build_cost(id))] if id != "hall" else "%s\nОТКРЫТА — ИДЁТ РЕМОНТ" % info["name"], Vector3(0, 3.5, 0), Color(col, 0.9), 30)
+		if id == "hall":
+			# Таверна работает и во время стройки: временный вход под навесом
+			_add(root, _box(2.2, 1.6, 1.6), _mat(Color(0.35, 0.25, 0.18), 0.9, 0.0, "wood", 1.4), Vector3(0, 1.1, 0.6))
+			_door(root, 1.4, col)
 		return
 
 	var floors := mini(lvl, 3)
@@ -534,8 +538,12 @@ func _rebuild_building(id: String) -> void:
 		for j in 3:
 			var lit := rng.randf() < 0.7
 			var wc := Color(1.0, 0.8, 0.5) if rng.randf() < 0.5 else col
+			if i == 0 and j == 1:
+				continue  # здесь дверь
 			_add(root, _box(0.32, 0.38, 0.05), _emat(wc, 1.3) if lit else _mat(Color(0.05, 0.05, 0.08)),
 				Vector3(-0.7 + j * 0.7, top + h * 0.5, w / 2.0 + 0.02))
+		if i == 0:
+			_door(root, w / 2.0, col)
 		top += h
 
 	# Особая верхушка у каждого здания
@@ -624,6 +632,16 @@ func _rebuild_building(id: String) -> void:
 		_add(root, _box(0.5, 0.5, 0.5), _emat(Color(1.0, 0.7, 0.2), 1.6), Vector3(1.2, top + 0.9, 1.2))
 		stars += "\n⚒ стройка ур. %d — ещё %d выл." % [int(Meta.construct["lvl"]), int(Meta.construct["left"])]
 	_label3d(root, "%s\n%s" % [info["name"], stars], Vector3(0, top + 3.0 if id != "beacon" else top + 4.4, 0), col.lightened(0.3), 30)
+
+
+## Дверь на фасаде: створка, рама, неоновая подсветка и фонарь.
+func _door(root: Node3D, z: float, col: Color) -> void:
+	_add(root, _box(0.62, 0.95, 0.06), _mat(Color(0.3, 0.2, 0.14), 0.9, 0.0, "wood", 2.0), Vector3(0, 0.78, z + 0.03))
+	_add(root, _box(0.74, 0.08, 0.1), _emat(col, 2.0), Vector3(0, 1.3, z + 0.04))
+	for s in [-1.0, 1.0]:
+		_add(root, _box(0.06, 1.0, 0.1), _mat(Color(0.12, 0.1, 0.1), 0.6, 0.5), Vector3(s * 0.36, 0.8, z + 0.04))
+	_add(root, _sphere(0.05), _emat(GOLD, 3.0), Vector3(0.2, 0.78, z + 0.08))
+	_add(root, _box(0.9, 0.04, 0.5), _mat(Color(0.25, 0.22, 0.3), 0.6, 0.4), Vector3(0, 0.33, z + 0.3))
 
 
 func _build_decor() -> void:
@@ -1001,6 +1019,8 @@ func _process(delta: float) -> void:
 	_animate_places()
 	_update_avatar(delta)
 	_update_villagers(delta)
+	if _inside == "hall":
+		_update_tavern(delta)
 	_update_camera(delta)
 	_update_interaction()
 	_shards_label.text = str(Meta.shards)
@@ -1016,7 +1036,13 @@ func _update_avatar(delta: float) -> void:
 	var pos := _avatar.position + Vector3(dir.x, 0, dir.y) * 6.0 * delta
 	pos = _collide(pos, 0.5)
 	var flat := Vector2(pos.x, pos.z)
-	if flat.length() > 22.0:
+	if _inside != "":
+		var ri: Dictionary = INTERIORS[_inside]
+		var ro: Vector3 = ri["o"]
+		flat.x = clampf(flat.x, ro.x - float(ri["w"]) / 2.0 + 0.45, ro.x + float(ri["w"]) / 2.0 - 0.45)
+		var front := ro.z + float(ri["d"]) / 2.0 - (0.2 if absf(flat.x - ro.x) < 1.1 else 0.45)
+		flat.y = clampf(flat.y, ro.z - float(ri["d"]) / 2.0 + 0.45, front)
+	elif flat.length() > 22.0:
 		flat = flat.normalized() * 22.0
 	_avatar.position = Vector3(flat.x, 0, flat.y)
 	if absf(dir.x) > 0.1:
@@ -1077,6 +1103,10 @@ func _update_interaction() -> void:
 	if _panel_id != "":
 		_prompt.visible = false
 		return
+	if _inside != "":
+		_near = _interior_interaction()
+		_prompt.visible = _near != ""
+		return
 	var best := ""
 	var best_d := 999.0
 	var p := _avatar.position
@@ -1109,14 +1139,23 @@ func _update_interaction() -> void:
 
 	elif best != "":
 		var lvl := _lvl(best)
-		_prompt.text = _pk() + "%s  %s" % [Meta.BUILDINGS[best]["name"], ("— построить" if lvl == 0 else "(ур. %d)" % lvl)]
+		if (lvl > 0 or best == "hall") and not _net_client:
+			_prompt.text = _pk() + "Войти: %s%s" % [Meta.BUILDINGS[best]["name"], "" if lvl == 0 else "  (ур. %d)" % lvl]
+			_near = "enter:" + best
+		else:
+			_prompt.text = _pk() + "%s  %s" % [Meta.BUILDINGS[best]["name"], ("— построить" if lvl == 0 else "(ур. %d)" % lvl)]
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("interact"):
 		get_viewport().set_input_as_handled()
 		if _panel_id == "" and _near != "":
-			_open_panel(_near)
+			if _inside != "":
+				_interior_act(_near)
+			elif _near.begins_with("enter:"):
+				_enter_building(_near.substr(6))
+			else:
+				_open_panel(_near)
 	elif event.is_action_pressed("pause") or (event.is_action_pressed("ui_cancel") and _panel_id != ""):
 		get_viewport().set_input_as_handled()
 		if _panel_id != "":
@@ -1406,6 +1445,9 @@ func _fill_panel() -> void:
 	if id == "board":
 		_fill_board()
 		return
+	if id.begins_with("hire:"):
+		_fill_hire(id.substr(5))
+		return
 	if id in ["forge", "shrine", "lab"] and Meta.level(id) > 0:
 		_fill_tree_panel(id)
 		return
@@ -1436,7 +1478,9 @@ func _fill_panel() -> void:
 	else:
 		_panel_box.add_child(_centered(_label("МАКСИМАЛЬНЫЙ УРОВЕНЬ", 18, GOLD)))
 
-	if id == "hall":
+	if id == "hall" and _inside == "hall":
+		_fill_contracts()
+	elif id == "hall":
 		_panel_box.add_child(_centered(_label("ГЕРОИ", 22, GOLD)))
 		var hint := _label("Вега доступна сразу. Остальных героев откройте: выполните условие и заплатите осколками.", 14, Color(0.75, 0.75, 0.9))
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1488,6 +1532,10 @@ func _hero_card(hid: String) -> Control:
 		"owned":
 			b = _button("ВЫБРАН" if hid == Data.selected_character else "ВЫБРАТЬ", col, hid != Data.selected_character)
 			b.pressed.connect(func():
+				if _inside == "hall":
+					_close_panel()
+					_take_hero(hid)
+					return
 				Data.selected_character = hid
 				_set_avatar_sprites()
 				_update_hero_label()
@@ -1498,8 +1546,10 @@ func _hero_card(hid: String) -> Control:
 			b.pressed.connect(func():
 				if Meta.unlock_hero(hid):
 					Sound.play("levelup", -2.0)
-					_particles(_world, Meta.BUILDINGS["hall"]["pos"] + Vector3(0, 2.0, 0), col, 40, Vector3(1, 1, 1), Vector3(0, 2, 0), 1.2, 0.1, true, 3.0)
-					_toast_text("Открыт герой: %s — %s!" % [hc["name"], hc["title"]])
+					_particles(_world, _avatar.position + Vector3(0, 2.0, 0), col, 40, Vector3(1, 1, 1), Vector3(0, 2, 0), 1.2, 0.1, true, 3.0)
+					_toast_text("Нанят герой: %s — %s! Подойдите к нему, чтобы взять в бой." % [hc["name"], hc["title"]])
+					if _inside == "hall":
+						_rebuild_tavern_heroes()
 				_fill_panel())
 		"expensive":
 			b = _button("%d ◆ — мало" % int(u["cost"]), GOLD.darkened(0.4), false)
@@ -1590,7 +1640,7 @@ func _do_upgrade(id: String) -> void:
 	_particles(_world, bp + Vector3(0, 1.5, 0), Meta.BUILDINGS[id]["color"], 60, Vector3(1.5, 1.5, 1.5), Vector3(0, 2, 0), 1.2, 0.12, true, 4.0)
 	_particles(_world, bp + Vector3(0, 0.5, 0), Color(0.6, 0.55, 0.65), 30, Vector3(1.8, 0.2, 1.8), Vector3(0, 0.5, 0), 1.5, 0.25, true, 1.5)
 	if id == "hall":
-		_toast_text("Новый герой доступен в Зале героев!")
+		_toast_text("Новый герой ждёт вас в таверне!")
 	_fill_panel()
 
 
@@ -1871,7 +1921,7 @@ func _fill_client_panel(id: String) -> void:
 		_panel_box.add_child(_centered(_label("ПОРТАЛ", 34, Color.WHITE, Color(MAGENTA, 0.8))))
 		_panel_box.add_child(_centered(_label("Вылазку и уровень выбирает хост.", 19, Color(0.85, 0.85, 1.0))))
 		_panel_box.add_child(_centered(_label("Ваш герой: %s — %s" % [c["name"], c["title"]], 18, c["color"])))
-		_panel_box.add_child(_centered(_label("Сменить героя можно в Зале героев.", 15, Color(0.7, 0.7, 0.85))))
+		_panel_box.add_child(_centered(_label("Сменить героя можно в таверне.", 15, Color(0.7, 0.7, 0.85))))
 	else:
 		var info: Dictionary = Meta.BUILDINGS[id]
 		var lvl := _lvl(id)
@@ -1941,7 +1991,8 @@ const NPC_NAMES := ["Мира", "Тим", "Ольга", "Сэм", "Варя", "�
 	"Фил", "Эла", "Гор", "Ива", "Дар", "Лин", "Бо", "Тая", "Арс", "Нэд", "Юна", "Макс"]
 const NPC_TITLES := {"merchant": "торговка", "guard": "стражник", "kid": "ребёнок", "smith": "подмастерье",
 	"monk": "кибер-монах", "musician": "музыкант", "elder": "старейшина", "walker": "житель",
-	"gardener": "садовница", "robot": "робот-уборщик", "trainee": "новобранец"}
+	"gardener": "садовница", "robot": "робот-уборщик", "trainee": "новобранец",
+	"barkeep": "трактирщик", "blacksmith": "кузнец", "priestess": "жрица", "engineer": "инженер"}
 
 
 func _spawn_npcs() -> void:
@@ -2033,7 +2084,7 @@ func _update_villagers(delta: float) -> void:
 				if node.position.distance_to(v["target"]) < 0.4:
 					var a := randf() * TAU
 					v["target"] = Vector3(cos(a), 0, sin(a) + 0.6) * randf_range(1.0, 5.5)
-			"merchant", "smith", "monk", "musician", "elder", "trainee":
+			"merchant", "smith", "monk", "musician", "elder", "trainee", "barkeep", "blacksmith", "priestess", "engineer":
 				v["target"] = v["home"]
 				_npc_work(v, delta)
 			"robot":
@@ -2094,7 +2145,7 @@ func _update_villagers(delta: float) -> void:
 				bubble.visible = false
 				v["bubble_t"] = randf_range(7.0, 16.0)
 			else:
-				var ph: Array = NPC_PHRASES.get(role, NPC_PHRASES["walker"])
+				var ph: Array = NPC_PHRASES.get(role, HOST_PHRASES.get(role, NPC_PHRASES["walker"]))
 				bubble.text = ph[randi() % ph.size()]
 				bubble.visible = true
 				v["bubble_t"] = 3.0
@@ -2108,10 +2159,10 @@ func _npc_work(v: Dictionary, delta: float) -> void:
 	var node: Node3D = v["node"]
 	var p := node.position + Vector3(0, 0.9, 0)
 	match v["role"]:
-		"smith":
+		"smith", "blacksmith":
 			v["fx_t"] = 0.9
 			_particles(_world, p + Vector3(0.4, -0.3, 0.2), Color(1.0, 0.6, 0.2), 10, Vector3(0.1, 0.1, 0.1), Vector3(0, -6, 0), 0.5, 0.05, true, 3.0)
-		"monk":
+		"monk", "priestess":
 			v["fx_t"] = 1.6
 			_particles(_world, p + Vector3(0, 0.6, 0), Color(0.75, 0.45, 1.0), 6, Vector3(0.4, 0.1, 0.4), Vector3(0, 0.8, 0), 1.4, 0.06, true, 0.4)
 		"musician":
@@ -2122,7 +2173,10 @@ func _npc_work(v: Dictionary, delta: float) -> void:
 			_particles(_world, p + Vector3(-0.6, -0.1, 0), Color(1.0, 0.95, 0.8), 5, Vector3(0.1, 0.2, 0.1), Vector3(0, -3, 0), 0.3, 0.05, true, 2.0)
 			(v["base"] as Sprite3D).flip_h = true
 			(v["emit"] as Sprite3D).flip_h = true
-		"merchant":
+		"engineer":
+			v["fx_t"] = 1.1
+			_particles(_world, p + Vector3(0.4, -0.2, 0.2), CYAN, 6, Vector3(0.1, 0.1, 0.1), Vector3(0, -4, 0), 0.4, 0.04, true, 2.5)
+		"merchant", "barkeep":
 			v["fx_t"] = 3.0
 		_:
 			v["fx_t"] = 2.0
@@ -2501,7 +2555,7 @@ func _fill_library() -> void:
 		head.add_child(pic)
 		head.add_child(_label("Ещё не открыто", 26, Color(0.7, 0.7, 0.8)))
 		art.add_child(head)
-		var hint := ("Откройте героя в Зале героев. Условия: " + ";  ".join(Meta.HERO_UNLOCK.get(sel_entry[0], {"conds": []})["conds"].map(func(c): return Meta.cond_text(c)))) if _lib_tab in ["heroes", "abilities"] else "Встретьте это в бою — запись появится здесь."
+		var hint := ("Наймите героя в таверне. Условия: " + ";  ".join(Meta.HERO_UNLOCK.get(sel_entry[0], {"conds": []})["conds"].map(func(c): return Meta.cond_text(c)))) if _lib_tab in ["heroes", "abilities"] else "Встретьте это в бою — запись появится здесь."
 		art.add_child(_para(hint))
 	_add_close()
 
@@ -2718,3 +2772,499 @@ func _num(v) -> String:
 	if v is float:
 		return ("%.2f" % v).rstrip("0").rstrip(".")
 	return str(v)
+
+
+# ================= Интерьеры зданий =================
+# Каждое здание — комната далеко за пределами площади. Вход — через дверь здания,
+# внутри работает «хозяин»: кузнец, жрица, инженер, трактирщик. Разговор с ним
+# открывает панель здания. В таверне гуляют открытые герои (подойти — взять в бой),
+# у стойки сидят наёмники (нанять), трактирщик даёт контракты.
+
+const INTERIORS := {
+	"hall": {"o": Vector3(130, 0, 0), "w": 17.0, "d": 11.0, "floor": Color(0.38, 0.26, 0.17), "wall": Color(0.3, 0.2, 0.15), "lamp": Color(1.0, 0.68, 0.38),
+		"npc": ["barkeep", "Бруно"], "npc_pos": Vector3(-3.0, 0, -4.2)},
+	"forge": {"o": Vector3(130, 0, 40), "w": 13.0, "d": 9.5, "floor": Color(0.24, 0.22, 0.25), "wall": Color(0.26, 0.2, 0.18), "lamp": Color(1.0, 0.5, 0.2),
+		"npc": ["blacksmith", "Горн"], "npc_pos": Vector3(0.6, 0, -2.4)},
+	"shrine": {"o": Vector3(170, 0, 0), "w": 12.0, "d": 10.0, "floor": Color(0.22, 0.2, 0.3), "wall": Color(0.2, 0.17, 0.28), "lamp": Color(1.0, 0.4, 0.85),
+		"npc": ["priestess", "Селена"], "npc_pos": Vector3(0, 0, -2.6)},
+	"lab": {"o": Vector3(170, 0, 40), "w": 13.0, "d": 9.5, "floor": Color(0.18, 0.22, 0.27), "wall": Color(0.16, 0.2, 0.26), "lamp": Color(0.4, 0.85, 1.0),
+		"npc": ["engineer", "Дэкс"], "npc_pos": Vector3(1.5, 0, -2.6)},
+}
+const HOST_PHRASES := {
+	"barkeep": ["Кружку неонового эля?", "Есть работёнка — для смелых.", "Герои отдыхают — не буди.", "Контракты платят вдвое!", "За стойкой — наёмники. Платишь — идут с тобой."],
+	"blacksmith": ["Тук! Тук!", "Клинок без руны — просто железо.", "Принёс лом? Давай сюда.", "Горн любит чипы.", "Каждому стволу — своё дерево."],
+	"priestess": ["Свет помнит каждого героя.", "Сядь, помолчи с нами.", "Алтарь слышит твои шаги.", "Сила героя — в его истории."],
+	"engineer": ["Модуль сгорел? Бывает.", "Не трогай синюю колбу!", "Ядра — это энергия. Береги.", "Калибрую... калибрую...", "Пайка — это искусство."],
+}
+const HOST_TITLES := {"barkeep": "трактирщик", "blacksmith": "кузнец", "priestess": "жрица", "engineer": "инженер"}
+const HOST_TASK := {"hall": "контракты и стройка", "forge": "прокачка оружия", "shrine": "прокачка героев", "lab": "прокачка модулей"}
+
+var _inside := ""
+var _rooms := {}           # id -> {"root", "npc"}
+var _tav_heroes: Array = []
+var _fade_rect: ColorRect
+
+
+func _room(id: String) -> Dictionary:
+	if not _rooms.has(id):
+		_build_room(id)
+	return _rooms[id]
+
+
+func _build_room(id: String) -> void:
+	var info: Dictionary = INTERIORS[id]
+	var o: Vector3 = info["o"]
+	var w: float = info["w"]
+	var d: float = info["d"]
+	var root := Node3D.new()
+	root.position = o
+	_world.add_child(root)
+	var col: Color = Meta.BUILDINGS[id]["color"]
+	var wood := _mat(Color(0.42, 0.3, 0.2), 0.9, 0.0, "wood", 1.4)
+	var dark := _mat(Color(0.18, 0.13, 0.1), 0.9, 0.0, "wood", 1.0)
+	var wallm := _mat(info["wall"], 0.9, 0.05, "brick", 1.3)
+	# Пол, стены, балки
+	_add(root, _box(w, 0.2, d), _mat(info["floor"], 0.85, 0.05, "wood" if id in ["hall", "shrine"] else "tile", 1.2), Vector3(0, -0.1, 0))
+	_add(root, _box(w + 0.8, 4.6, 0.4), wallm, Vector3(0, 2.3, -d / 2.0 - 0.2))
+	for s in [-1.0, 1.0]:
+		_add(root, _box(0.4, 4.6, d + 0.4), wallm, Vector3(s * (w / 2.0 + 0.2), 2.3, 0))
+		# Низкая передняя стенка по бокам от двери — камера смотрит поверх
+		var seg := w / 2.0 - 1.3
+		_add(root, _box(seg, 0.9, 0.3), wallm, Vector3(s * (1.3 + seg / 2.0), 0.45, d / 2.0 + 0.15))
+		# Невысокие столбы двери с фонарями — не закрывают комнату от камеры
+		_add(root, _box(0.26, 1.3, 0.34), dark, Vector3(s * 1.3, 0.65, d / 2.0 + 0.15))
+		_add(root, _sphere(0.12), _emat(Color(0.5, 1.0, 0.6), 2.5), Vector3(s * 1.3, 1.42, d / 2.0 + 0.15))
+	_label3d(root, "ВЫХОД", Vector3(0, 1.1, d / 2.0 + 0.3), Color(0.6, 1.0, 0.7), 22)
+	_add(root, _box(2.0, 0.03, 0.9), _emat(Color(0.4, 0.9, 0.5), 0.35, 0.22), Vector3(0, 0.02, d / 2.0 - 0.45))
+	for x in range(-int(w / 2.0) + 1, int(w / 2.0), 3):
+		_add(root, _box(0.25, 4.4, 0.25), dark, Vector3(x, 2.2, -d / 2.0 + 0.05))
+	_add(root, _box(w, 0.3, 0.3), dark, Vector3(0, 4.3, -d / 2.0 + 0.1))
+	# Неоновая полоса на задней стене — цвет здания
+	_add(root, _box(w * 0.8, 0.06, 0.05), _emat(col, 1.6), Vector3(0, 3.7, -d / 2.0 + 0.02))
+	_label3d(root, Meta.BUILDINGS[id]["name"].to_upper(), Vector3(0, 4.9, -d / 2.0), col.lightened(0.3), 40)
+	# Свет
+	var lamp: Color = info["lamp"]
+	_light(root, Vector3(0, 3.6, 0), lamp, 1.6, w * 0.9)
+	for s in [-1.0, 1.0]:
+		var ln := _light(root, Vector3(s * (w / 2.0 - 0.6), 2.6, -d / 2.0 + 0.8), lamp, 1.1, 6.0)
+		ln.shadow_enabled = false
+		_add(root, _sphere(0.14), _emat(lamp, 3.0), Vector3(s * (w / 2.0 - 0.3), 2.6, -d / 2.0 + 0.5))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(id)
+	match id:
+		"hall":
+			_furnish_tavern(root, o, w, d, wood, dark, rng)
+		"forge":
+			_furnish_forge(root, o, w, d, wood, dark)
+		"shrine":
+			_furnish_shrine(root, o, w, d, dark)
+		"lab":
+			_furnish_lab(root, o, w, d, dark)
+	# Хозяин
+	var role: String = info["npc"][0]
+	var npc := _make_npc(role, o + info["npc_pos"], 900 + absi(hash(role)) % 50, info["npc"][1])
+	npc["home"] = o + info["npc_pos"]
+	_rooms[id] = {"root": root, "npc": npc}
+
+
+## Прямоугольное препятствие в комнате (координаты — относительно начала комнаты).
+func _rob(o: Vector3, p: Vector3, hx: float, hz: float) -> void:
+	_obstacles.append([o + p, Vector2(hx, hz), 0.0])
+
+
+func _furnish_tavern(root: Node3D, o: Vector3, w: float, d: float, wood: Material, dark: Material, rng: RandomNumberGenerator) -> void:
+	# Стойка с бочками и полками бутылок
+	_add(root, _box(6.4, 1.1, 0.8), wood, Vector3(-3.0, 0.55, -2.9))
+	_add(root, _box(6.6, 0.1, 1.0), dark, Vector3(-3.0, 1.12, -2.9))
+	_rob(o, Vector3(-3.0, 0, -2.9), 3.3, 0.5)
+	for i in 3:
+		_add(root, _box(5.6, 0.08, 0.35), dark, Vector3(-3.0, 1.7 + i * 0.6, -d / 2.0 + 0.25))
+		for j in 9:
+			var bc: Color = [Color(0.3, 0.9, 0.5), Color(0.9, 0.4, 0.2), Color(0.4, 0.6, 1.0), Color(1.0, 0.85, 0.3)][(i + j) % 4]
+			_add(root, _cyl(0.05, 0.07, 0.32, 6), _emat(bc, 0.9), Vector3(-5.5 + j * 0.62, 1.92 + i * 0.6, -d / 2.0 + 0.25))
+	for i in 3:
+		_add(root, _cyl(0.42, 0.42, 0.9, 10), wood, Vector3(-7.2, 0.45, -1.4 + i * 0.95))
+		_add(root, _torus(0.4, 0.44), dark, Vector3(-7.2, 0.7, -1.4 + i * 0.95))
+	_rob(o, Vector3(-7.2, 0, -0.45), 0.5, 1.5)
+	# Камин справа
+	_add(root, _box(2.4, 2.2, 0.9), _mat(Color(0.3, 0.28, 0.3), 0.9, 0.1, "brick", 1.4), Vector3(5.2, 1.1, -d / 2.0 + 0.45))
+	_add(root, _box(1.2, 0.9, 0.3), _emat(Color(1.0, 0.45, 0.12), 2.4), Vector3(5.2, 0.55, -d / 2.0 + 0.85))
+	var fl := _light(root, Vector3(5.2, 1.0, -d / 2.0 + 1.6), Color(1.0, 0.5, 0.2), 1.8, 6.0)
+	_fire_lights.append(fl)
+	_particles(root, Vector3(5.2, 0.8, -d / 2.0 + 0.9), Color(1.0, 0.55, 0.15), 14, Vector3(0.4, 0.1, 0.1), Vector3(0, 1.2, 0), 0.9, 0.07)
+	_rob(o, Vector3(5.2, 0, -d / 2.0 + 0.45), 1.25, 0.5)
+	# Столы со стульями: справа — стол наёмников
+	for t in [Vector3(-3.5, 0, 1.0), Vector3(0.8, 0, 2.2), Vector3(4.6, 0, 0.6)]:
+		_add(root, _cyl(0.75, 0.75, 0.08, 12), wood, t + Vector3(0, 0.78, 0))
+		_add(root, _cyl(0.1, 0.18, 0.75, 6), dark, t + Vector3(0, 0.38, 0))
+		_add(root, _cyl(0.07, 0.07, 0.12, 6), _emat(Color(1.0, 0.8, 0.4), 1.6), t + Vector3(0.2, 0.88, 0.1))
+		for a in 4:
+			var s: Vector3 = t + Vector3(cos(a * PI / 2.0 + 0.4), 0, sin(a * PI / 2.0 + 0.4)) * 1.15
+			_add(root, _cyl(0.24, 0.24, 0.45, 8), dark, s + Vector3(0, 0.22, 0))
+		_obstacles.append([o + t, 0.85])
+	# Ковёр, люстра
+	_add(root, _box(5.0, 0.02, 3.0), _mat(Color(0.45, 0.12, 0.16), 1.0, 0.0, "", 1.0), Vector3(0.4, 0.01, 1.4))
+	_add(root, _torus(0.8, 0.95), dark, Vector3(0.5, 3.4, 0.8))
+	for a in 6:
+		_add(root, _sphere(0.08), _emat(Color(1.0, 0.75, 0.4), 3.0), Vector3(0.5 + cos(a * TAU / 6.0) * 0.88, 3.5, 0.8 + sin(a * TAU / 6.0) * 0.88))
+	_label3d(root, "ДОСКА КОНТРАКТОВ — У ТРАКТИРЩИКА", Vector3(-3.0, 3.9, -d / 2.0 + 0.3), GOLD, 22)
+	_label3d(root, "НАЁМНИКИ", Vector3(4.6, 2.6, 0.6), Color(1.0, 0.6, 0.5), 24)
+
+
+func _furnish_forge(root: Node3D, o: Vector3, w: float, d: float, wood: Material, dark: Material) -> void:
+	var iron := _mat(Color(0.25, 0.25, 0.3), 0.4, 0.8)
+	# Горн с огнём
+	_add(root, _box(2.6, 1.6, 1.6), _mat(Color(0.32, 0.27, 0.27), 0.9, 0.1, "brick", 1.4), Vector3(-3.6, 0.8, -d / 2.0 + 1.0))
+	_add(root, _box(1.6, 0.5, 1.0), _emat(Color(1.0, 0.4, 0.1), 3.0), Vector3(-3.6, 1.45, -d / 2.0 + 1.1))
+	_add(root, _cyl(0.5, 0.8, 2.8, 8), _mat(Color(0.3, 0.26, 0.26), 0.9, 0.1, "brick", 1.4), Vector3(-3.6, 3.0, -d / 2.0 + 0.8))
+	var fl := _light(root, Vector3(-3.6, 2.0, -d / 2.0 + 2.2), Color(1.0, 0.45, 0.15), 2.4, 7.0)
+	_fire_lights.append(fl)
+	_particles(root, Vector3(-3.6, 1.7, -d / 2.0 + 1.1), Color(1.0, 0.6, 0.2), 18, Vector3(0.6, 0.1, 0.3), Vector3(0, 1.5, 0), 1.0, 0.06)
+	_rob(o, Vector3(-3.6, 0, -d / 2.0 + 1.0), 1.35, 0.85)
+	# Наковальня
+	_add(root, _box(0.5, 0.6, 0.4), iron, Vector3(-0.6, 0.3, -2.4))
+	_add(root, _box(1.1, 0.25, 0.45), iron, Vector3(-0.6, 0.72, -2.4))
+	_obstacles.append([o + Vector3(-0.6, 0, -2.4), 0.6])
+	# Стойки с оружием по правой стене
+	for i in 4:
+		var x := 2.2 + i * 1.0
+		_add(root, _box(0.08, 1.8, 0.08), wood, Vector3(x, 0.9, -d / 2.0 + 0.4))
+		_add(root, _box(0.12, 1.3, 0.04), iron, Vector3(x + 0.25, 1.3, -d / 2.0 + 0.45), Vector3(0, 0, 12))
+		_add(root, _box(0.05, 0.05, 0.05), _emat(Meta.BUILDINGS["forge"]["color"], 2.0), Vector3(x + 0.25, 1.9, -d / 2.0 + 0.48))
+	_add(root, _box(4.4, 0.15, 0.5), wood, Vector3(3.7, 1.8, -d / 2.0 + 0.4))
+	# Бочка с водой, ящики лома
+	_add(root, _cyl(0.5, 0.5, 0.8, 10), wood, Vector3(4.8, 0.4, 1.8))
+	_add(root, _cyl(0.45, 0.45, 0.02, 10), _emat(Color(0.3, 0.6, 1.0), 0.6), Vector3(4.8, 0.81, 1.8))
+	_obstacles.append([o + Vector3(4.8, 0, 1.8), 0.55])
+	for i in 3:
+		_add(root, _box(0.8, 0.7, 0.8), wood, Vector3(-5.2 + (i % 2) * 0.3, 0.35 + (i / 2) * 0.7, 1.4 + (i % 2) * 0.85))
+	_rob(o, Vector3(-5.1, 0, 1.8), 0.6, 0.9)
+
+
+func _furnish_shrine(root: Node3D, o: Vector3, w: float, d: float, dark: Material) -> void:
+	var stone := _mat(Color(0.35, 0.32, 0.42), 0.8, 0.1, "brick", 1.0)
+	var col: Color = Meta.BUILDINGS["shrine"]["color"]
+	# Алтарь со светящейся сферой
+	_add(root, _box(3.2, 0.3, 1.6), stone, Vector3(0, 0.15, -d / 2.0 + 1.4))
+	_add(root, _box(1.8, 0.9, 1.0), stone, Vector3(0, 0.75, -d / 2.0 + 1.3))
+	var orb := _add(root, _sphere(0.35), _emat(col, 2.5), Vector3(0, 1.75, -d / 2.0 + 1.3))
+	_bobbers.append([orb, 1.75, 0.12])
+	_add(root, _torus(0.5, 0.58), _emat(col, 1.8), Vector3(0, 1.75, -d / 2.0 + 1.3), Vector3(90, 0, 0))
+	_light(root, Vector3(0, 2.0, -d / 2.0 + 2.0), col, 2.0, 7.0)
+	_rob(o, Vector3(0, 0, -d / 2.0 + 1.35), 1.6, 0.85)
+	# Статуи героев по бокам, свечи, скамьи
+	for s in [-1.0, 1.0]:
+		_add(root, _box(0.8, 0.5, 0.8), stone, Vector3(s * 4.2, 0.25, -d / 2.0 + 1.0))
+		_add(root, _cyl(0.22, 0.32, 1.6, 8), stone, Vector3(s * 4.2, 1.3, -d / 2.0 + 1.0))
+		_add(root, _sphere(0.26), stone, Vector3(s * 4.2, 2.3, -d / 2.0 + 1.0))
+		_obstacles.append([o + Vector3(s * 4.2, 0, -d / 2.0 + 1.0), 0.55])
+		for i in 2:
+			_add(root, _box(3.0, 0.4, 0.6), dark, Vector3(s * 2.6, 0.2, 0.6 + i * 1.8))
+			_rob(o, Vector3(s * 2.6, 0, 0.6 + i * 1.8), 1.5, 0.3)
+		for i in 5:
+			var cp := Vector3(s * (1.2 + i * 0.35), 0.0, -d / 2.0 + 2.4 + (i % 2) * 0.2)
+			_add(root, _cyl(0.04, 0.04, 0.25 + (i % 3) * 0.1, 6), _mat(Color(0.95, 0.9, 0.8), 0.9, 0.0, ""), cp + Vector3(0, 0.14, 0))
+			var fm := _add(root, _sphere(0.04), _emat(Color(1.0, 0.75, 0.4), 4.0), cp + Vector3(0, 0.33 + (i % 3) * 0.1, 0))
+			_flicker.append([fm.material_override, 4.0, randf() * 10.0])
+	_particles(root, Vector3(0, 1.8, -d / 2.0 + 1.3), col, 10, Vector3(1.4, 0.4, 0.4), Vector3(0, 0.5, 0), 2.0, 0.05)
+
+
+func _furnish_lab(root: Node3D, o: Vector3, w: float, d: float, dark: Material) -> void:
+	var metal := _mat(Color(0.2, 0.22, 0.28), 0.4, 0.7)
+	var col: Color = Meta.BUILDINGS["lab"]["color"]
+	# Консоли вдоль задней стены
+	for i in 3:
+		var x := -4.0 + i * 2.2
+		_add(root, _box(1.8, 1.0, 0.8), metal, Vector3(x, 0.5, -d / 2.0 + 0.6))
+		var scr := _add(root, _box(1.4, 0.8, 0.06), _emat([col, Color(0.4, 1.0, 0.6), MAGENTA][i], 1.4), Vector3(x, 1.6, -d / 2.0 + 0.3), Vector3(-10, 0, 0))
+		_flicker.append([scr.material_override, 1.4, randf() * 10.0])
+	_rob(o, Vector3(-1.8, 0, -d / 2.0 + 0.6), 3.2, 0.5)
+	# Колбы с жидкостью
+	for i in 3:
+		var p := Vector3(3.6 + i * 1.0, 0, -d / 2.0 + 0.9)
+		_add(root, _cyl(0.32, 0.32, 0.2, 10), metal, p + Vector3(0, 0.1, 0))
+		_add(root, _cyl(0.28, 0.28, 1.7, 10), _emat([Color(0.3, 1.0, 0.5), col, Color(1.0, 0.5, 0.9)][i], 0.9, 0.45), p + Vector3(0, 1.05, 0))
+		_add(root, _cyl(0.32, 0.32, 0.2, 10), metal, p + Vector3(0, 2.0, 0))
+		_particles(root, p + Vector3(0, 0.4, 0), Color(0.8, 1.0, 1.0), 5, Vector3(0.15, 0.1, 0.15), Vector3(0, 1.0, 0), 1.6, 0.04)
+	_rob(o, Vector3(4.6, 0, -d / 2.0 + 0.9), 1.6, 0.45)
+	# Верстак с голограммой модуля
+	_add(root, _box(2.4, 0.9, 1.1), metal, Vector3(-2.2, 0.45, 1.4))
+	var holo := _add(root, _box(0.5, 0.5, 0.5), _emat(col, 2.0, 0.5), Vector3(-2.2, 1.55, 1.4))
+	_spinners.append([holo, Vector3.UP, 1.2])
+	_add(root, _cyl(0.3, 0.3, 0.04, 12), _emat(col, 2.0), Vector3(-2.2, 0.93, 1.4))
+	_light(root, Vector3(-2.2, 1.8, 1.8), col, 1.2, 4.0)
+	_rob(o, Vector3(-2.2, 0, 1.4), 1.25, 0.6)
+	# Кабели по полу
+	for i in 4:
+		_add(root, _cyl(0.04, 0.04, 3.0, 6), dark, Vector3(2.0 + i * 0.3, 0.04, 0.6), Vector3(90, 20 * i, 0))
+
+
+# ---- Герои и наёмники в таверне ----
+
+const TAV_SEATS := [Vector3(5.66, 0, 1.05), Vector3(4.15, 0, 1.66), Vector3(3.54, 0, 0.15), Vector3(5.05, 0, -0.46),
+	Vector3(-1.2, 0, -2.0), Vector3(-2.4, 0, -2.0), Vector3(-3.6, 0, -2.0), Vector3(-4.8, 0, -2.0), Vector3(1.2, 0, 3.4)]
+
+
+func _rebuild_tavern_heroes(prev_pos := Vector3.INF) -> void:
+	for h in _tav_heroes:
+		(h["node"] as Node3D).queue_free()
+	_tav_heroes.clear()
+	var o: Vector3 = INTERIORS["hall"]["o"]
+	var seat := 0
+	var walk_i := 0
+	for hid in Meta.HERO_ORDER:
+		if not Data.CHARACTERS.has(hid) or hid == Data.selected_character:
+			continue
+		var c: Dictionary = Data.CHARACTERS[hid]
+		var owned := Meta.hero_unlocked(hid)
+		var pos: Vector3
+		if owned:
+			pos = o + Vector3(-4.5 + walk_i * 1.6, 0, 3.2 - (walk_i % 2) * 1.0)
+			walk_i += 1
+		else:
+			pos = o + TAV_SEATS[seat % TAV_SEATS.size()]
+			seat += 1
+		var node := Node3D.new()
+		node.position = pos
+		_world.add_child(node)
+		var fr := Pixel.frames(c["sprite"])
+		var pair := _sprite_pair(node, fr)
+		var lbl_text: String = c["name"] if owned else "Наёмник %s — %d оск." % [c["name"], int(Meta.HERO_UNLOCK.get(hid, {"cost": 0})["cost"])]
+		var lbl := _label3d(node, lbl_text, Vector3(0, 2.2, 0), (c["color"] as Color).lightened(0.25) if owned else Color(1.0, 0.75, 0.6), 26)
+		lbl.visible = false
+		if not owned:
+			# Наёмник — приглушён, ждёт найма
+			(pair[0] as Sprite3D).modulate = Color(0.62, 0.58, 0.68)
+			(pair[1] as Sprite3D).modulate = Pixel.hdr(Color.WHITE, 0.6)
+		_tav_heroes.append({"node": node, "base": pair[0], "emit": pair[1], "frames": fr, "hid": hid, "owned": owned,
+			"target": pos, "wait": randf_range(0.5, 3.0), "t": randf() * 5.0, "label": lbl})
+	if prev_pos != Vector3.INF:
+		for h in _tav_heroes:
+			if h["hid"] == _tav_prev:
+				(h["node"] as Node3D).position = prev_pos
+				h["target"] = prev_pos
+
+
+var _tav_prev := ""
+
+
+func _update_tavern(delta: float) -> void:
+	var info: Dictionary = INTERIORS["hall"]
+	var o: Vector3 = info["o"]
+	var hw: float = info["w"] / 2.0 - 0.8
+	var hd: float = info["d"] / 2.0 - 0.8
+	for h in _tav_heroes:
+		var node: Node3D = h["node"]
+		h["t"] = float(h["t"]) + delta
+		var moving := false
+		if h["owned"]:
+			var to: Vector3 = h["target"] - node.position
+			to.y = 0
+			if to.length() < 0.25:
+				h["wait"] = float(h["wait"]) - delta
+				if h["wait"] <= 0.0:
+					h["wait"] = randf_range(2.0, 6.0)
+					h["target"] = o + Vector3(randf_range(-hw, hw * 0.6), 0, randf_range(-0.8, hd))
+			else:
+				moving = true
+				var np := node.position + to.normalized() * minf(to.length(), 1.5 * delta)
+				node.position = _collide(np, 0.35)
+				(h["base"] as Sprite3D).flip_h = to.x < 0.0
+				(h["emit"] as Sprite3D).flip_h = to.x < 0.0
+		var fr: Dictionary = h["frames"]
+		var f := Pixel.hero_frame(fr, "run" if moving else "idle", float(h["t"]))
+		(h["base"] as Sprite3D).texture = fr["base"][f]
+		(h["emit"] as Sprite3D).texture = fr["emit"][f]
+		(h["label"] as Label3D).visible = node.position.distance_to(_avatar.position) < 3.2
+
+
+# ---- Вход / выход ----
+
+func _fade() -> void:
+	if not _fade_rect:
+		_fade_rect = ColorRect.new()
+		_fade_rect.color = Color(0.02, 0.01, 0.04)
+		_fade_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_hud.add_child(_fade_rect)
+		_hud.move_child(_fade_rect, 0)
+	_fade_rect.modulate.a = 1.0
+	create_tween().tween_property(_fade_rect, "modulate:a", 0.0, 0.45)
+
+
+func _enter_building(id: String) -> void:
+	var room := _room(id)
+	var info: Dictionary = INTERIORS[id]
+	_inside = id
+	if id == "hall":
+		_rebuild_tavern_heroes()
+	_avatar.position = info["o"] + Vector3(0, 0, float(info["d"]) / 2.0 - 1.3)
+	_facing_left = false
+	_cam_target = _avatar.position
+	_fade()
+	Sound.play("click")
+	_toast_text(Meta.BUILDINGS[id]["name"])
+	var npc: Dictionary = room["npc"]
+	var bubble: Label3D = npc["bubble"]
+	var ph: Array = HOST_PHRASES[npc["role"]]
+	bubble.text = ph[randi() % ph.size()]
+	bubble.visible = true
+	npc["bubble_t"] = 3.5
+
+
+func _exit_building() -> void:
+	var id := _inside
+	_inside = ""
+	for h in _tav_heroes:
+		(h["node"] as Node3D).queue_free()
+	_tav_heroes.clear()
+	var bp: Vector3 = Meta.BUILDINGS[id]["pos"]
+	_avatar.position = _collide(bp + Vector3(0, 0, 2.9), 0.5)
+	_cam_target = _avatar.position
+	_fade()
+	Sound.play("click")
+
+
+## Взаимодействие внутри здания: дверь, хозяин, герои / наёмники.
+func _interior_interaction() -> String:
+	var info: Dictionary = INTERIORS[_inside]
+	var o: Vector3 = info["o"]
+	var p := _avatar.position
+	var best := ""
+	var best_d := 999.0
+	var door := o + Vector3(0, 0, float(info["d"]) / 2.0 - 0.6)
+	var dd := Vector2(p.x - door.x, p.z - door.z).length()
+	if dd < 1.6:
+		best = "exit"
+		best_d = dd
+	var npc: Dictionary = _rooms[_inside]["npc"]
+	var nd := (npc["node"] as Node3D).position.distance_to(p)
+	if nd < 2.6 and nd < best_d:
+		best = "host"
+		best_d = nd
+	for h in _tav_heroes:
+		var hd := (h["node"] as Node3D).position.distance_to(p)
+		if hd < 1.7 and hd < best_d:
+			best = ("take:" if h["owned"] else "hire:") + str(h["hid"])
+			best_d = hd
+	if best == "exit":
+		_prompt.text = _pk() + "Выйти на площадь"
+	elif best == "host":
+		_prompt.text = _pk() + "%s, %s — %s" % [INTERIORS[_inside]["npc"][1], HOST_TITLES[npc["role"]], HOST_TASK[_inside]]
+	elif best.begins_with("take:"):
+		var c: Dictionary = Data.CHARACTERS[best.substr(5)]
+		_prompt.text = _pk() + "Взять в бой: %s — %s" % [c["name"], c["title"]]
+	elif best.begins_with("hire:"):
+		var c2: Dictionary = Data.CHARACTERS[best.substr(5)]
+		_prompt.text = _pk() + "Наёмник %s — условия найма" % c2["name"]
+	return best
+
+
+func _interior_act(what: String) -> void:
+	if what == "exit":
+		_exit_building()
+	elif what == "host":
+		var npc: Dictionary = _rooms[_inside]["npc"]
+		var bubble: Label3D = npc["bubble"]
+		var ph: Array = HOST_PHRASES[npc["role"]]
+		bubble.text = ph[randi() % ph.size()]
+		bubble.visible = true
+		npc["bubble_t"] = 3.0
+		_open_panel(_inside)
+	elif what.begins_with("take:"):
+		_take_hero(what.substr(5))
+	elif what.begins_with("hire:"):
+		_open_panel(what)
+
+
+func _take_hero(hid: String) -> void:
+	if not Meta.hero_unlocked(hid):
+		return
+	var pos := _avatar.position
+	var h_node_pos := pos
+	for h in _tav_heroes:
+		if h["hid"] == hid:
+			h_node_pos = (h["node"] as Node3D).position
+	_tav_prev = Data.selected_character
+	Data.selected_character = hid
+	Meta.save()
+	_set_avatar_sprites()
+	_update_hero_label()
+	_avatar.position = h_node_pos
+	_cam_target = _avatar.position
+	_rebuild_tavern_heroes(pos)
+	var c: Dictionary = Data.CHARACTERS[hid]
+	_particles(_world, h_node_pos + Vector3(0, 1.0, 0), c["color"], 30, Vector3(0.5, 0.8, 0.5), Vector3(0, 2, 0), 1.0, 0.08, true, 2.0)
+	Sound.play("levelup", -6.0)
+	_toast_text("В бой идёт: %s — %s" % [c["name"], c["title"]])
+
+
+## Панель найма: карточка героя, условия и лор.
+func _fill_hire(hid: String) -> void:
+	var hc: Dictionary = Data.CHARACTERS[hid]
+	_panel_box.add_child(_centered(_label("НАЁМНИК", 30, Color.WHITE, Color(hc["color"], 0.8))))
+	var lore := _label(Data.HERO_LORE.get(hid, ""), 15, Color(0.85, 0.82, 0.95))
+	lore.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lore.custom_minimum_size = Vector2(440 if _portrait() else 640, 0)
+	lore.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_panel_box.add_child(_centered(lore))
+	_panel_box.add_child(_centered(_hero_card(hid)))
+	_add_close()
+
+
+## Контракты трактирщика.
+func _fill_contracts() -> void:
+	_panel_box.add_child(_centered(_label("КОНТРАКТЫ", 24, GOLD)))
+	var slots := Quests.contract_slots()
+	var info := _label("Трудные заказы для одной вылазки — цель больше, награда почти вдвое щедрее. Действуют, пока не выполните. Мест: %d / %d%s" % [Meta.contracts.size(), slots, "" if slots > 1 else " (2 — с 3-го уровня таверны)"], 14, Color(0.8, 0.8, 0.95))
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.custom_minimum_size = Vector2(440 if _portrait() else 760, 0)
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_panel_box.add_child(_centered(info))
+	var grid := GridContainer.new()
+	grid.columns = 1 if _portrait() else 3
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	for i in Meta.contracts.size():
+		grid.add_child(_contract_card(Meta.contracts[i], i, true))
+	var o := Quests.offers()
+	for i in o.size():
+		grid.add_child(_contract_card(o[i], i, false))
+	_panel_box.add_child(_centered(grid))
+
+
+func _contract_card(q: Dictionary, i: int, taken: bool) -> Control:
+	var col := Color(0.5, 1.0, 0.6) if taken else GOLD
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", _sbox(col.darkened(0.15), PANEL_BG, 2, 6 if taken else 2))
+	card.custom_minimum_size = Vector2(440 if _portrait() else 250, 0)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	card.add_child(v)
+	v.add_child(_label(("✓ ВЗЯТ  " if taken else "") + Quests.title(q), 17, col))
+	var d := _label(Quests.desc(q), 15, Color(0.92, 0.92, 1.0))
+	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	d.custom_minimum_size = Vector2(220, 0)
+	v.add_child(d)
+	v.add_child(_label("Сложность: " + "★".repeat(int(q.get("tier", 0)) + 1), 13, Color(0.75, 0.75, 0.9)))
+	v.add_child(_label("Награда: " + Quests.reward_text(Quests.reward(q)), 14, Color(0.6, 1.0, 0.7)))
+	var b: Button
+	if taken:
+		b = _button("Отказаться", Color(1.0, 0.5, 0.5))
+		b.pressed.connect(func():
+			Quests.drop_contract(i)
+			Sound.play("click")
+			_fill_panel())
+	else:
+		var can := Meta.contracts.size() < Quests.contract_slots()
+		b = _button("ВЗЯТЬ" if can else "Нет мест", GOLD, can)
+		b.pressed.connect(func():
+			if Quests.take_contract(i):
+				Sound.play("levelup", -6.0)
+				_toast_text("Контракт взят: " + Quests.title(q))
+			_fill_panel())
+	b.custom_minimum_size = Vector2(200, 38)
+	b.add_theme_font_size_override("font_size", 14)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	v.add_child(b)
+	return card

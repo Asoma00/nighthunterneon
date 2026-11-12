@@ -28,6 +28,8 @@ const MATERIALS := {
 }
 static var materials := {"scrap": 0, "chips": 0, "cores": 0}
 static var quests: Array = []        # доска заданий (см. quests.gd)
+static var contracts: Array = []     # взятые контракты таверны
+static var offers: Array = []        # предложения трактирщика
 static var construct := {}           # стройка: {"id", "lvl", "left"} — сколько вылазок осталось
 static var just_built := ""          # для сообщения в убежище
 static var trees := {}  # "w:bolt" / "c:vega" / "m:crit" -> [id узлов]
@@ -35,7 +37,7 @@ static var trees := {}  # "w:bolt" / "c:vega" / "m:crit" -> [id узлов]
 const BUILDINGS := {
 	"forge": {"name": "Рунная кузница", "desc": "+6% к урону за уровень. Здесь прокачивается оружие — у каждого своё дерево; уровень кузницы открывает ярусы.", "max": 5, "base": 60,
 		"color": Color(1.0, 0.55, 0.2), "pos": Vector3(-9, 0, -1)},
-	"hall": {"name": "Зал героев", "desc": "Здесь открываются и выбираются герои. +5% опыта в бою за уровень зала.", "max": 5, "base": 90,
+	"hall": {"name": "Таверна «Неоновый кабан»", "desc": "Здесь отдыхают открытые герои — подойдите к любому, чтобы взять его в бой. Наёмников у стойки можно нанять, а трактирщик даёт контракты. +5% опыта в бою за уровень.", "max": 5, "base": 90,
 		"color": Color(1.0, 0.8, 0.3), "pos": Vector3(-7, 0, 10)},
 	"shrine": {"name": "Алтарь героев", "desc": "+10% к шансу сундука за уровень. Здесь прокачиваются герои — у каждого своё дерево; уровень алтаря открывает ярусы.", "max": 5, "base": 70,
 		"color": Color(1.0, 0.35, 0.8), "pos": Vector3(9, 0, -1)},
@@ -214,6 +216,8 @@ static func reset() -> void:
 	trees = {}
 	materials = {"scrap": 0, "chips": 0, "cores": 0}
 	quests = []
+	contracts = []
+	offers = []
 	construct = {}
 	just_built = ""
 
@@ -255,6 +259,8 @@ static func ensure_loaded() -> void:
 	var mat: Dictionary = cfg.get_value("meta", "materials", {})
 	materials = {"scrap": int(mat.get("scrap", 0)), "chips": int(mat.get("chips", 0)), "cores": int(mat.get("cores", 0))}
 	quests = cfg.get_value("meta", "quests", [])
+	contracts = cfg.get_value("meta", "contracts", [])
+	offers = cfg.get_value("meta", "offers", [])
 	construct = cfg.get_value("meta", "construct", {})
 	# Старые сохранения: всё оружие и модули уже встречались
 	if seen.is_empty() and total_runs > 0:
@@ -281,6 +287,8 @@ static func save() -> void:
 	cfg.set_value("meta", "stats", stats)
 	cfg.set_value("meta", "materials", materials)
 	cfg.set_value("meta", "quests", quests)
+	cfg.set_value("meta", "contracts", contracts)
+	cfg.set_value("meta", "offers", offers)
 	cfg.set_value("meta", "construct", construct)
 	cfg.set_value("meta", "saved_at", Time.get_datetime_string_from_system(false, true))
 	cfg.save(slot_path(current_slot()))
