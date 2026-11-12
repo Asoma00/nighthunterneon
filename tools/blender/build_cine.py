@@ -435,8 +435,8 @@ def build_eyes(hr, glow=False, iris_mat="iris"):
             to_bone(e, "head")
             continue
         w = sphere("ew", er, "eye_white", 24, 16, c)
-        ir = sphere("ir", er * 0.62, iris_mat, 20, 12, c + Vector((0, -er * 0.72, 0.0)), (1, 0.38, 1))
-        pu = sphere("pu", er * 0.3, "pupil", 14, 8, c + Vector((0, -er * 0.86, 0.0)), (1, 0.3, 1))
+        ir = sphere("ir", er * 0.6, iris_mat, 20, 12, c + Vector((0, -er * 0.84, 0.0)), (1, 0.32, 1))
+        pu = sphere("pu", er * 0.3, "pupil", 14, 8, c + Vector((0, -er * 1.0, 0.0)), (1, 0.3, 1))
         e = join([w, ir, pu], "eye%d" % i)
         to_bone(e, "head")
         # Верхнее веко — даёт взгляду характер
@@ -465,7 +465,7 @@ def build_face(hr, kind):
             br = tube("brow%d" % i, [a, b, c2], [hr * 0.05, hr * 0.06, hr * 0.03], "hair")
             to_bone(br, "head")
         if kind != "ninja":
-            m = sphere("mouth", hr * 0.2, "mouth", 16, 8, on_head((0, -0.93, -0.42), hr, 0.985), (1.0, 0.25, 0.22))
+            m = sphere("mouth", hr * 0.2, "mouth", 16, 8, on_head((0, -0.93, -0.42), hr, 0.99), (1.25, 0.3, 0.22))
             to_bone(m, "head")
         for i, s in ((0, -1), (1, 1)):
             ear = sphere("ear%d" % i, hr * 0.24, "skin", 14, 10, on_head((s * 1.0, 0.05, -0.02), hr, 0.95), (0.35, 0.7, 1.0), (0, 0, s * 0.3))
@@ -573,7 +573,7 @@ def build_headwear(hr):
             to_bone(box("patch", hr * 0.42, hr * 0.06, hr * 0.32, "dark", on_head((-0.36, -0.95, 0.1), hr, 1.02), bev=0.01), "head")
             to_bone(tube("strap", [on_head((-0.75, -0.5, 0.45), hr, 1.03), on_head((0, -0.6, 0.85), hr, 1.05), on_head((0.8, 0.0, 0.5), hr, 1.05)], [hr * 0.03] * 3, "dark"), "head")
         if S.get("beard"):
-            b = sphere("beard", hr * 0.62, "beard", 24, 14, on_head((0, -0.72, -0.55), hr, 0.72), (1.05, 0.75, 0.9))
+            b = sphere("beard", hr * 0.5, "beard", 24, 14, on_head((0, -0.7, -0.7), hr, 0.78), (1.0, 0.7, 0.7))
             to_bone(b, "head")
     elif h in ("hood", "hood_white", "skull"):
         if face != "skull":
@@ -595,7 +595,6 @@ def build_headwear(hr):
         apply_mods(hood)
         subsurf(hood, 1)
         to_bone(hood, "head")
-        to_bone(torus("hoodrim", hr * 1.12, hr * 0.05, "neon2" if h == "hood" else "trim", HC + Vector((0, -hr * 0.42, hr * 0.12)), (math.pi / 2 - 0.25, 0, 0), (0.9, 1.0, 1.2)), "head")
         if h == "skull":
             sk = head_mesh(hr * 0.98)
             sk.name = "skullmask"
