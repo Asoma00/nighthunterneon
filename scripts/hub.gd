@@ -234,6 +234,8 @@ func _resize_view() -> void:
 	var aspect := s.x / maxf(s.y, 1.0)
 	# Высота картинки растёт с разрешением экрана (настройка чёткости текстур)
 	var rh := int(RENDER_H * Settings.tex_scale())
+	if Settings.pixel_art > 0:
+		rh = int(Settings.PIXEL_TARGET[Settings.pixel_art])   # пиксельный 3D: такая же сетка, как в бою
 	_vp.size = Vector2i(int(rh * aspect), rh)
 	# Вертикальный экран: держим ширину кадра, камера чуть выше
 	if _camera:

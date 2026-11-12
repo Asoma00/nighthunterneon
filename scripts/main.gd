@@ -25,9 +25,16 @@ uniform float scan = 0.05;
 uniform float vignette = 0.55;
 uniform float flash = 0.0;
 uniform float glitch = 0.0;
+uniform float px = 1.0;        // размер «пикселя» (пиксельный 3D)
+uniform float levels = 28.0;   // палитра пиксель-арта
+const float bayer[16] = float[](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
 
 void fragment() {
 	vec2 uv = SCREEN_UV;
+	vec2 cellp = floor(FRAGCOORD.xy / px);
+	if (px > 1.01) {
+		uv = (cellp + 0.5) * px * SCREEN_PIXEL_SIZE;
+	}
 	float band = step(0.7, fract(sin(floor(uv.y * 40.0) * 91.7 + TIME * 30.0) * 43758.5));
 	uv.x += (band - 0.5) * 0.03 * glitch;
 	vec2 d = uv - 0.5;
@@ -44,6 +51,12 @@ void fragment() {
 	col = mix(col, col * vec3(1.0, 0.25, 0.35) + vec3(0.3, 0.0, 0.05), hurt * edge);
 	col += vec3(0.5, 0.7, 1.0) * flash;
 	col = mix(col, col * vec3(0.6, 1.3, 0.8), glitch * 0.5);
+	if (px > 1.01) {
+		// Ограниченная палитра с упорядоченным дизерингом — как у настоящего пиксель-арта
+		ivec2 q = ivec2(mod(cellp, 4.0));
+		float b = bayer[q.y * 4 + q.x] / 16.0 - 0.5;
+		col = floor(col * levels + b * 0.9 + 0.5) / levels;
+	}
 	COLOR = vec4(col, 1.0);
 }
 """
@@ -971,6 +984,9 @@ func _setup_post() -> void:
 	var rect := ColorRect.new()
 	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var upd := func(): _post.set_shader_parameter("px", Settings.pixel_px())
+	Settings.pixel_changed.connect(upd)
+	upd.call()
 	var sh := Shader.new()
 	sh.code = POST_SHADER
 	_post.shader = sh

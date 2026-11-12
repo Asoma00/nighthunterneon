@@ -331,6 +331,8 @@ func load_settings() -> void:
 	preset = cfg.get_value("mobile", "preset", preset)
 	adaptive = cfg.get_value("graphics", "adaptive", adaptive)
 	manual_aim = cfg.get_value("controls", "manual_aim", manual_aim)
+	pixel_art = int(cfg.get_value("graphics", "pixel_art", pixel_art))
+	fx3d = bool(cfg.get_value("graphics", "fx3d", fx3d))
 	touch_size = cfg.get_value("mobile", "touch_size", touch_size)
 
 
@@ -356,6 +358,8 @@ func save_settings() -> void:
 	cfg.set_value("mobile", "preset", preset)
 	cfg.set_value("graphics", "adaptive", adaptive)
 	cfg.set_value("controls", "manual_aim", manual_aim)
+	cfg.set_value("graphics", "pixel_art", pixel_art)
+	cfg.set_value("graphics", "fx3d", fx3d)
 	cfg.set_value("mobile", "touch_size", touch_size)
 	cfg.save(PATH)
 
@@ -395,6 +399,23 @@ signal orientation_changed(portrait: bool)
 # ---------- Разрешение 3D и удержание частоты кадров ----------
 
 var _base_3d := 1.0        # из настройки разрешения / чёткости
+## Пиксельный 3D (HD-2D): сцена рендерится в низком разрешении и растягивается
+## чёткими пикселями. Интерфейс — всегда в родном разрешении.
+## 0 — выкл, 1 — мелкие пиксели (~540 строк), 2 — средние (~400), 3 — крупные (~300).
+var pixel_art := 1
+## Объёмные эффекты (3D-частицы, огненные шары, обломки)
+var fx3d := true
+const PIXEL_TARGET := [0.0, 540.0, 400.0, 300.0]
+signal pixel_changed
+
+
+func pixel_px() -> float:
+	if pixel_art <= 0 or DisplayServer.get_name() == "headless":
+		return 1.0
+	var w := get_window()
+	var h := float(w.size.y) if w != null else 720.0
+	return maxf(1.0, h / float(PIXEL_TARGET[clampi(pixel_art, 1, 3)]))
+
  ## Взгляд героя: мышь / правый стик (ПК и Steam Deck). На телефоне — автоприцел.
 var manual_aim := true
 ## Когда мышь последний раз двигалась (сек) — мышиный прицел только при живой мыши
@@ -414,7 +435,12 @@ func _apply_3d_scale() -> void:
 	if vp == null:
 		return
 	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
-	vp.scaling_3d_scale = clampf(_base_3d * lerpf(0.6, 1.0, (dyn_k - 0.5) / 0.5), 0.25, 2.0)
+	if pixel_art > 0:
+		# Видеокарта рисует ровно столько пикселей, сколько видно «пиксель-артом»
+		vp.scaling_3d_scale = clampf(1.0 / pixel_px() * lerpf(0.85, 1.0, (dyn_k - 0.5) / 0.5), 0.15, 1.0)
+	else:
+		vp.scaling_3d_scale = clampf(_base_3d * lerpf(0.6, 1.0, (dyn_k - 0.5) / 0.5), 0.25, 2.0)
+	pixel_changed.emit()
 
 
 ## Целевая частота кадров (то, что игра старается держать всегда).

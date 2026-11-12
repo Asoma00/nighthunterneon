@@ -117,6 +117,10 @@ static func burst(main: Node, pos: Vector2, colors: Array, amount: int, speed: f
 		if main.burst_budget <= 0 or _crowded(main, 380):
 			return
 		main.burst_budget -= 1
+	# Объёмные частицы: искры и обломки летят в воздухе (3D) и падают под гравитацией
+	if main.get("_mirror_root") != null and main._mirror_root != null and Settings.fx3d:
+		burst3d(main, pos, colors, amount, speed, life, size, additive, gravity, dir, spread)
+		return
 	var p := CPUParticles2D.new()
 	p.position = pos
 	p.one_shot = true
@@ -144,6 +148,156 @@ static func burst(main: Node, pos: Vector2, colors: Array, amount: int, speed: f
 	main.get_tree().create_timer(life + 0.2, false).timeout.connect(g.queue_free)
 
 
+# ================= Объёмные эффекты (3D, считает видеокарта) =================
+
+static var _mesh3d := {}
+
+
+static func _pmesh(kind: String) -> Mesh:
+	if _mesh3d.has(kind):
+		return _mesh3d[kind]
+	var mm := StandardMaterial3D.new()
+	mm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mm.vertex_color_use_as_albedo = true
+	mm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mm.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	var m: Mesh
+	match kind:
+		"spark":   # вытянутая по скорости искра
+			var q := QuadMesh.new()
+			q.size = Vector2(0.35, 1.0)
+			mm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+			mm.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+			mm.billboard_keep_scale = true
+			m = q
+		"debris":  # кувыркающийся пиксельный осколок
+			var b := BoxMesh.new()
+			b.size = Vector3.ONE
+			mm.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
+			mm.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+			m = b
+		"smoke":
+			var q := QuadMesh.new()
+			q.size = Vector2.ONE
+			mm.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+			mm.albedo_texture = Pixel.glow()
+			m = q
+		_:         # glow — светящаяся точка
+			var q := QuadMesh.new()
+			q.size = Vector2.ONE
+			mm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+			mm.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+			mm.albedo_texture = Pixel.glow()
+			m = q
+	m.surface_set_material(0, mm)
+	_mesh3d[kind] = m
+	return m
+
+
+static func _emit3d(main: Node, pos: Vector2, h: float, mesh_kind: String, colors: Array, amount: int,
+		speed: float, life: float, size: float, gravity: float, up: float, spread: float, spin := false) -> void:
+	var p := CPUParticles3D.new()
+	p.mesh = _pmesh(mesh_kind)
+	p.one_shot = true
+	p.explosiveness = 0.92
+	p.amount = maxi(1, amount)
+	p.lifetime = life
+	p.direction = Vector3(0, 1, 0)
+	p.spread = spread
+	p.initial_velocity_min = speed * 0.4
+	p.initial_velocity_max = speed
+	p.gravity = Vector3(0, -gravity, 0)
+	p.damping_min = speed * 0.3
+	p.damping_max = speed * 0.8
+	p.scale_amount_min = size * 0.5
+	p.scale_amount_max = size
+	p.scale_amount_curve = _shrink_curve()
+	p.color_ramp = _ramp(colors)
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	p.emission_sphere_radius = 0.08
+	if mesh_kind == "spark":
+		p.particle_flag_align_y = true
+	if spin:
+		p.angular_velocity_min = -720.0
+		p.angular_velocity_max = 720.0
+		p.particle_flag_rotate_y = true
+	p.position = main._bl(pos, h)
+	var key := "3|%s|%s|%d|%.1f|%.2f|%.2f|%.1f|%.1f|%.0f" % [mesh_kind, str(colors), amount, speed, life, size, gravity, up, spread]
+	var g := gpu3d(p, key)
+	g.visibility_aabb = AABB(Vector3(-6, -2, -6), Vector3(12, 10, 12))
+	main._mirror_root.add_child(g)
+	g.emitting = true
+	main.get_tree().create_timer(life + 0.3, false).timeout.connect(g.queue_free)
+
+
+## Всплеск частиц в объёме: искры по скорости, немного светящихся точек, под гравитацией.
+static func burst3d(main: Node, pos: Vector2, colors: Array, amount: int, speed: float,
+		life: float, size: float, additive := true, gravity := Vector2.ZERO, _dir := Vector2.UP, spread := 180.0) -> void:
+	var sp := speed * 0.012 + 1.2               # пиксели/с → метры/с
+	var sz := size * 0.022
+	if additive:
+		_emit3d(main, pos, 0.55, "spark", colors, amount, sp * 1.2, life * 1.1, sz * 1.6, 5.0, 1.0, minf(spread, 75.0))
+		if amount >= 6:
+			_emit3d(main, pos, 0.55, "glow", colors, maxi(2, amount / 3), sp * 0.5, life * 0.8, sz * 3.0, 1.0, 1.0, 90.0)
+	else:
+		# Тёмные клубы — дым, медленно поднимается
+		_emit3d(main, pos, 0.4, "smoke", colors, amount, sp * 0.35, life * 1.6, sz * 5.0, -0.6, 1.0, 70.0)
+
+
+## Обломки: кувыркающиеся кубики (смерть врагов, взрывы).
+static func debris3d(main: Node, pos: Vector2, color: Color, amount: int, power := 1.0) -> void:
+	if not Settings.fx3d or main.get("_mirror_root") == null:
+		return
+	if "burst_budget" in main:
+		if main.burst_budget <= 0:
+			return
+		main.burst_budget -= 1
+	_emit3d(main, pos, 0.5, "debris", [color, color.darkened(0.3), Color(color.darkened(0.5), 1.0)], amount,
+		3.2 * power, 0.75, 0.07, 14.0, 1.0, 60.0, true)
+
+
+## Огненный шар взрыва: светящаяся сфера растёт и гаснет + вспышка света.
+static func fireball3d(main: Node, pos: Vector2, c1: Color, c2: Color, radius: float) -> void:
+	if not Settings.fx3d or main.get("_mirror_root") == null:
+		return
+	var r := radius * 0.01
+	var s := MeshInstance3D.new()
+	var sph := SphereMesh.new()
+	sph.radius = 0.5
+	sph.height = 1.0
+	sph.radial_segments = 10
+	sph.rings = 6
+	var mm := StandardMaterial3D.new()
+	mm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mm.albedo_color = Color(Pixel.hdr(c1, 1.5), 0.55)
+	mm.albedo_texture = Pixel.glow()
+	mm.uv1_triplanar = false
+	sph.material = mm
+	s.mesh = sph
+	s.position = main._bl(pos, r * 0.4)
+	s.scale = Vector3.ONE * r * 0.3
+	s.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	main._mirror_root.add_child(s)
+	var l := OmniLight3D.new()
+	l.light_color = c1
+	l.light_energy = 3.0
+	l.omni_range = r * 4.0
+	l.position = s.position + Vector3(0, 0.4, 0)
+	main._mirror_root.add_child(l)
+	var tw := s.create_tween().set_parallel(true)
+	tw.tween_property(s, "scale", Vector3.ONE * r * 1.1, 0.22).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_EXPO)
+	tw.tween_property(mm, "albedo_color", Color(c2, 0.0), 0.26)
+	# Яркое ядро и огненные языки, уходящие вверх
+	_emit3d(main, pos, r * 0.3, "glow", [Pixel.hdr(Color(1, 0.95, 0.8), 2.0), Pixel.hdr(c1, 1.4), Color(c2, 0.0)], 10,
+		2.2, 0.45, r * 0.6, -2.5, 1.0, 60.0)
+	tw.tween_property(l, "light_energy", 0.0, 0.35)
+	tw.chain().tween_callback(func():
+		s.queue_free()
+		l.queue_free())
+
+
 static func sparks(main: Node, pos: Vector2, color: Color, amount := 6) -> void:
 	if main.flash_budget <= 0:
 		return
@@ -160,9 +314,12 @@ static func death(main: Node, pos: Vector2, color: Color, big := false) -> void:
 			15, 225.0, 0.8, 5.0, false, Vector2(0, 60))
 		ring(main, pos, 4.0, 85.0, Color(color, 0.7), 0.3, 4.0)
 		glow_flash(main, pos, color, 140.0, 0.25)
+		debris3d(main, pos, color.darkened(0.3), 10, 1.4)
+		fireball3d(main, pos, color, color.darkened(0.5), 70.0)
 		return
-	# Обычный моб: короткая скромная вспышка
-	burst(main, pos, [Color(color, 0.9), Color(color.darkened(0.4), 0.0)], 4, 110.0, 0.3, 3.0)
+	# Обычный моб: вспышка и пара обломков (киберчасти разлетаются)
+	burst(main, pos, [Color(color, 0.9), Color(color.darkened(0.4), 0.0)], 5, 110.0, 0.3, 3.0)
+	debris3d(main, pos, color.darkened(0.35), 3, 0.8)
 
 
 static func number(main: Node, pos: Vector2, value: float, color := Color.WHITE, size := 15) -> void:
@@ -314,6 +471,9 @@ static func explosion(main: Node, pos: Vector2, c1: Color, c2: Color, radius: fl
 	main.explosion_budget -= 1
 	burst(main, pos, [Pixel.hdr(c1, 1.2), Color(c2, 0.7), Color(c2, 0.0)],
 		int(6 + radius * 0.06), radius * 2.5, 0.45, 4.0)
+	fireball3d(main, pos, c1, c2, radius)
+	debris3d(main, pos, c2.darkened(0.2), int(4 + radius * 0.03), 1.0 + radius * 0.004)
+	burst(main, pos, [Color(0.12, 0.1, 0.16, 0.7), Color(0.08, 0.06, 0.12, 0.0)], 5, 120.0, 0.9, 6.0, false)
 	ring(main, pos, 6.0, radius, Color(c1, 0.6), 0.3, 4.0)
 	glow_flash(main, pos, c1, radius * 0.7, 0.2)
 	main.shake(1.5)
