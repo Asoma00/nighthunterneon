@@ -24,11 +24,44 @@ var _bar := 0
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_build_samples()
+	_synthwave_samples()
 	_music_player = _make_player(48)
 	_sfx_player = _make_player(48)
 	_music_pb = _music_player.get_stream_playback() as AudioStreamPlaybackPolyphonic
+	_music_player.bus = _music_bus()
 	_sfx_pb = _sfx_player.get_stream_playback() as AudioStreamPlaybackPolyphonic
 	apply_volumes()
+
+
+## Шина музыки с эффектами: фильтр снимает резкость, хорус расширяет пэды,
+## эхо и реверберация дают «синтвейвный» объём.
+func _music_bus() -> String:
+	var name := "Music"
+	if AudioServer.get_bus_index(name) >= 0:
+		return name
+	var idx := AudioServer.bus_count
+	AudioServer.add_bus(idx)
+	AudioServer.set_bus_name(idx, name)
+	AudioServer.set_bus_send(idx, "Master")
+	var lp := AudioEffectLowPassFilter.new()
+	lp.cutoff_hz = 8000.0
+	AudioServer.add_bus_effect(idx, lp)
+	var ch := AudioEffectChorus.new()
+	ch.wet = 0.3
+	AudioServer.add_bus_effect(idx, ch)
+	var dl := AudioEffectDelay.new()
+	dl.tap1_delay_ms = 375.0
+	dl.tap1_level_db = -16.0
+	dl.tap2_delay_ms = 750.0
+	dl.tap2_level_db = -22.0
+	AudioServer.add_bus_effect(idx, dl)
+	var rv := AudioEffectReverb.new()
+	rv.room_size = 0.8
+	rv.damping = 0.5
+	rv.wet = 0.25
+	rv.dry = 0.9
+	AudioServer.add_bus_effect(idx, rv)
+	return name
 
 
 func _make_player(voices: int) -> AudioStreamPlayer:
@@ -83,61 +116,64 @@ const SCALES := {
 const BATTLE_SONGS := [
 	{"name": "Неоновый тракт", "key": 0, "scale": "ionian", "steps": 16, "bpm": [126.0, 148.0],
 		"prog": [[0, "M"], [7, "M"], [9, "m"], [5, "M"], [0, "M"], [7, "M"], [5, "M"], [7, "M"]],
-		"lead": "chip", "arp": "harp", "drums": "synth", "seed": 11},
+		"lead": "lead", "arp": "harp", "drums": "synth", "seed": 11},
 	{"name": "Марш стражи", "key": 5, "scale": "mixolydian", "steps": 16, "bpm": [122.0, 142.0],
 		"prog": [[0, "M"], [-2, "M"], [5, "M"], [0, "M"], [0, "M"], [-2, "M"], [5, "M"], [7, "M"]],
-		"lead": "lead", "arp": "lute", "drums": "march", "seed": 23},
-	{"name": "Колесо удачи", "key": -2, "scale": "ionian", "steps": 12, "bpm": [110.0, 128.0],
+		"lead": "lead", "arp": "harp", "drums": "march", "seed": 23},
+	{"name": "Колесо удачи", "key": -2, "scale": "ionian", "steps": 16, "bpm": [110.0, 128.0],
 		"prog": [[0, "M"], [5, "M"], [7, "M"], [0, "M"], [9, "m"], [5, "M"], [7, "M"], [7, "M"]],
-		"lead": "chip", "arp": "lute", "drums": "folk", "seed": 37},
+		"lead": "lead", "arp": "harp", "drums": "folk", "seed": 37},
 	{"name": "Хрустальный пир", "key": 7, "scale": "lydian", "steps": 16, "bpm": [128.0, 150.0],
 		"prog": [[0, "M"], [2, "M"], [9, "m"], [7, "M"], [0, "M"], [2, "M"], [4, "m"], [7, "M"]],
 		"lead": "bell", "arp": "harp", "drums": "synth", "seed": 41},
 	{"name": "Корона рассвета", "key": 3, "scale": "dorian", "steps": 16, "bpm": [132.0, 156.0],
 		"prog": [[0, "m"], [5, "M"], [0, "m"], [5, "M"], [-2, "M"], [3, "M"], [5, "M"], [7, "M"]],
 		"lead": "lead", "arp": "harp", "drums": "heavy", "seed": 53},
-	{"name": "Пляска машин", "key": -5, "scale": "mixolydian", "steps": 12, "bpm": [114.0, 132.0],
+	{"name": "Пляска машин", "key": -5, "scale": "mixolydian", "steps": 16, "bpm": [114.0, 132.0],
 		"prog": [[0, "M"], [-2, "M"], [5, "M"], [0, "M"], [0, "M"], [-2, "M"], [5, "M"], [7, "M"]],
-		"lead": "chip", "arp": "lute", "drums": "gallop", "seed": 67},
+		"lead": "lead", "arp": "harp", "drums": "gallop", "seed": 67},
 	{"name": "Солнце над бастионом", "key": -4, "scale": "ionian", "steps": 16, "bpm": [126.0, 148.0],
 		"prog": [[0, "M"], [4, "m"], [5, "M"], [7, "M"], [0, "M"], [4, "m"], [2, "m"], [7, "M"]],
 		"lead": "lead", "arp": "harp", "drums": "break", "seed": 71},
 	{"name": "Рыцари неона", "key": 2, "scale": "ionian", "steps": 16, "bpm": [130.0, 152.0],
 		"prog": [[0, "M"], [7, "M"], [9, "m"], [4, "m"], [5, "M"], [0, "M"], [5, "M"], [7, "M"]],
-		"lead": "chip", "arp": "lute", "drums": "gallop", "seed": 83},
+		"lead": "lead", "arp": "harp", "drums": "gallop", "seed": 83},
 	{"name": "Охота на дракона", "key": 5, "scale": "dorian", "steps": 16, "bpm": [136.0, 160.0],
 		"prog": [[0, "m"], [5, "M"], [3, "M"], [-2, "M"], [0, "m"], [5, "M"], [7, "M"], [7, "M"]],
 		"lead": "lead", "arp": "harp", "drums": "heavy", "seed": 97},
-	{"name": "Праздник победы", "key": 0, "scale": "mixolydian", "steps": 12, "bpm": [116.0, 134.0],
+	{"name": "Праздник победы", "key": 0, "scale": "mixolydian", "steps": 16, "bpm": [116.0, 134.0],
 		"prog": [[0, "M"], [5, "M"], [-2, "M"], [0, "M"], [7, "M"], [5, "M"], [-2, "M"], [7, "M"]],
-		"lead": "chip", "arp": "lute", "drums": "folk", "seed": 101},
+		"lead": "lead", "arp": "harp", "drums": "folk", "seed": 101},
 ]
 
 const CALM_SONGS := [
 	{"name": "Огни посада", "key": 0, "scale": "aeolian", "steps": 16, "bpm": [84.0, 84.0],
 		"prog": [[0, "m"], [-4, "M"], [3, "M"], [-5, "M"]], "lead": "bell", "arp": "harp", "drums": "calm", "seed": 5},
-	{"name": "Таверна у реки", "key": 5, "scale": "mixolydian", "steps": 12, "bpm": [80.0, 80.0],
+	{"name": "Таверна у реки", "key": 5, "scale": "mixolydian", "steps": 16, "bpm": [80.0, 80.0],
 		"prog": [[0, "M"], [-2, "M"], [0, "M"], [5, "M"], [0, "M"], [-2, "M"], [-5, "m"], [0, "M"]],
-		"lead": "lute", "arp": "lute", "drums": "tavern", "seed": 7},
+		"lead": "bell", "arp": "harp", "drums": "tavern", "seed": 7},
 	{"name": "Сон алхимика", "key": 7, "scale": "dorian", "steps": 16, "bpm": [74.0, 74.0],
 		"prog": [[0, "m"], [5, "M"], [0, "m"], [-2, "M"]], "lead": "bell", "arp": "harp", "drums": "dream", "seed": 13},
-	{"name": "Колыбель кузнеца", "key": -2, "scale": "mixolydian", "steps": 12, "bpm": [68.0, 68.0],
-		"prog": [[0, "M"], [5, "M"], [-2, "M"], [0, "M"]], "lead": "harp", "arp": "lute", "drums": "lullaby", "seed": 17},
+	{"name": "Колыбель кузнеца", "key": -2, "scale": "mixolydian", "steps": 16, "bpm": [68.0, 68.0],
+		"prog": [[0, "M"], [5, "M"], [-2, "M"], [0, "M"]], "lead": "harp", "arp": "harp", "drums": "lullaby", "seed": 17},
 	{"name": "Тихий сад", "key": 3, "scale": "ionian", "steps": 16, "bpm": [78.0, 78.0],
 		"prog": [[0, "M"], [-3, "m"], [5, "M"], [7, "M"]], "lead": "bell", "arp": "harp", "drums": "none", "seed": 19},
 	{"name": "Звёзды над стеной", "key": -4, "scale": "lydian", "steps": 16, "bpm": [72.0, 72.0],
 		"prog": [[0, "M"], [2, "M"], [0, "M"], [-5, "m"]], "lead": "bell", "arp": "harp", "drums": "dream", "seed": 29},
-	{"name": "Дорога паломника", "key": 2, "scale": "dorian", "steps": 12, "bpm": [84.0, 84.0],
+	{"name": "Дорога паломника", "key": 2, "scale": "dorian", "steps": 16, "bpm": [84.0, 84.0],
 		"prog": [[0, "m"], [5, "M"], [3, "M"], [-2, "M"], [0, "m"], [5, "M"], [-2, "M"], [0, "m"]],
-		"lead": "lute", "arp": "lute", "drums": "tavern", "seed": 31},
+		"lead": "bell", "arp": "harp", "drums": "tavern", "seed": 31},
 	{"name": "Неоновый дождь", "key": 0, "scale": "aeolian", "steps": 16, "bpm": [82.0, 82.0],
 		"prog": [[0, "m"], [-2, "M"], [-4, "M"], [-5, "m"]], "lead": "lead", "arp": "harp", "drums": "calm", "seed": 43},
 	{"name": "Песнь алтаря", "key": 5, "scale": "aeolian", "steps": 16, "bpm": [64.0, 64.0],
 		"prog": [[0, "m"], [-4, "M"], [-2, "M"], [0, "m"], [3, "M"], [-2, "M"], [-4, "M"], [-5, "M"]],
 		"lead": "harp", "arp": "harp", "drums": "none", "seed": 47},
-	{"name": "Вечер у костра", "key": 7, "scale": "mixolydian", "steps": 12, "bpm": [88.0, 88.0],
-		"prog": [[0, "M"], [-2, "M"], [5, "M"], [0, "M"]], "lead": "bell", "arp": "lute", "drums": "tavern", "seed": 59},
+	{"name": "Вечер у костра", "key": 7, "scale": "mixolydian", "steps": 16, "bpm": [88.0, 88.0],
+		"prog": [[0, "M"], [-2, "M"], [5, "M"], [0, "M"]], "lead": "bell", "arp": "harp", "drums": "tavern", "seed": 59},
+	{"name": "Неоновый рассвет", "key": 0, "scale": "aeolian", "steps": 16, "bpm": [96.0, 96.0],
+		"prog": [[-4, "M"], [0, "m"], [5, "m"], [3, "M"]], "lead": "bell", "arp": "harp", "drums": "calm", "seed": 3},
 ]
+const SPLASH_SONG := 10
 
 var intensity_target := 0.0     # задаётся боем: сколько врагов, есть ли босс, мало ли здоровья
 var intensity := 0.0            # плавное значение, по нему играет музыка
@@ -191,10 +227,11 @@ func set_track(track: String, force := false, song := -1) -> void:
 		Net.fx("track", [track, true, idx])
 	if _song.is_empty():
 		_load_song(idx)
-	elif cat == "battle" and BATTLE_SONGS.has(_song) and _next < 0:
-		_start_mix(_mix_pick())   # бой → бой: мешап, новая песня вплетается в текущую
+		_fade = 0.0       # первая песня мягко нарастает
 	else:
-		_next = idx       # плавно гасим текущую и включаем новую
+		# Музыка не выключается: новая песня вплетается в текущую (мешап),
+		# в той же тональности и на том же такте, темп перетекает плавно.
+		_start_mix(idx, list)
 
 
 func _load_song(idx: int) -> void:
@@ -234,12 +271,16 @@ func _mix_pick() -> int:
 
 ## Мешап: новая песня играет вместе с текущей на одном такте и в той же тональности.
 ## Сначала смешиваются ударные, на середине — гармония и бас, потом входит новая мелодия.
-func _start_mix(idx: int) -> void:
-	if idx == _song_idx or not _inc.is_empty():
+func _start_mix(idx: int, list: Array = BATTLE_SONGS) -> void:
+	var song: Dictionary = list[idx]
+	if song == _song:
+		_inc = {}
 		return
-	var song: Dictionary = BATTLE_SONGS[idx]
 	var m := _melodies(song)
-	_inc = {"song": song, "mel": m[0], "counter": m[1], "bar": 0, "idx": idx}
+	var bar := 0
+	if not _inc.is_empty():
+		bar = mini(int(_inc["bar"]), MIX_BARS / 2)   # смена цели посреди мешапа — без скачка
+	_inc = {"song": song, "mel": m[0], "counter": m[1], "bar": bar, "idx": idx}
 
 
 ## Мелодия из 4 тактов: сильные доли — звуки аккорда, слабые — шаги по ладу,
@@ -310,12 +351,12 @@ func _process(delta: float) -> void:
 	_bpm = move_toward(_bpm, want_bpm, delta * 1.5)
 	# Смена песни: затухание 2.5 с, затем новая песня нарастает 2.5 с
 	if _next >= 0:
-		_fade = move_toward(_fade, 0.0, delta / 2.5)
+		_fade = move_toward(_fade, 0.0, delta / 5.0)
 		if _fade <= 0.0:
 			_load_song(_next)
 			_next = -1
 	else:
-		_fade = move_toward(_fade, 1.0, delta / 2.5)
+		_fade = move_toward(_fade, 1.0, delta / 5.0)
 	_step_time -= delta
 	var steps: int = _song["steps"]
 	var step_len := 60.0 / _bpm / (4.0 if steps == 16 else 3.0)
@@ -341,6 +382,11 @@ func _process(delta: float) -> void:
 			# В бою песни перетекают друг в друга мешапом каждые 40 тактов
 			elif _category == "battle" and _bar % 40 == 0 and _next < 0:
 				_start_mix(_mix_pick())
+			elif _category == "calm" and _bar % 32 == 0 and _next < 0:
+				# В меню и убежище песни тоже перетекают друг в друга
+				var ci := randi() % CALM_SONGS.size()
+				if CALM_SONGS[ci] != _song:
+					_start_mix(ci, CALM_SONGS)
 
 
 func _note(sample: String, semis: float, vol := 0.0) -> void:
@@ -373,7 +419,7 @@ func _play_ctx(song: Dictionary, mel: Array, counter: Array, bar: int, g: Dictio
 	var I := intensity
 	var B := boss_layer
 	var style: String = song["drums"]
-	var calm := _category == "calm"
+	var calm := CALM_SONGS.has(song)
 	var bar_end := bar % 8 == 7 and s >= steps - q * 2
 
 	# --- Гармония: пэд, хор, колокола
@@ -858,3 +904,72 @@ func _pluck(freq: float, dur: float, decay: float, bright: float, vol: float) ->
 		var t := float(i) / RATE
 		b[i] = last * vol * minf(1.0, (dur - t) * 8.0)
 	return _wav(b)
+
+
+## Инструменты в стиле синтвейва — мягче и «дороже» звучат через шину эффектов.
+func _synthwave_samples() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 808
+	# Пэд: три расстроенные пилы через тёмный фильтр, медленная атака и длинный хвост
+	var b := _buf(2.8)
+	var lp := 0.0
+	var lp2 := 0.0
+	for i in b.size():
+		var t := float(i) / RATE
+		var v := _saw(t * 220.0) + _saw(t * 221.0) + _saw(t * 219.1)
+		lp += (v / 3.0 - lp) * 0.05
+		lp2 += (lp - lp2) * 0.12
+		b[i] = lp2 * minf(1.0, t / 0.7) * minf(1.0, (2.8 - t) / 1.2) * 0.6
+	_samples["pad"] = _wav(b)
+	# Мягкий синт-лид: треугольник с поздним вибрато
+	b = _buf(0.9)
+	var ph := 0.0
+	lp = 0.0
+	for i in b.size():
+		var t := float(i) / RATE
+		ph += 440.0 * (1.0 + 0.005 * sin(t * 32.0) * minf(1.0, t * 3.0)) / RATE
+		var tri := 1.0 - 4.0 * absf(fmod(ph, 1.0) - 0.5)
+		lp += (tri - lp) * 0.3
+		b[i] = lp * minf(1.0, t / 0.03) * exp(-t * 1.6) * minf(1.0, (0.9 - t) / 0.2) * 0.5
+	_samples["lead"] = _wav(b)
+	_samples["chip"] = _samples["lead"]
+	# Колокольчик-арпеджио: синус с мягким обертоном
+	b = _buf(1.4)
+	for i in b.size():
+		var t := float(i) / RATE
+		b[i] = (sin(t * 440.0 * TAU) + 0.3 * sin(t * 880.0 * TAU) * exp(-t * 5.0)) * exp(-t * 3.2) * minf(1.0, t * 300.0) * 0.4
+	_samples["harp"] = _wav(b)
+	# Синт-щипок вместо лютни: пила через закрывающийся фильтр
+	b = _buf(0.7)
+	lp = 0.0
+	for i in b.size():
+		var t := float(i) / RATE
+		lp += (_saw(t * 440.0) - lp) * (0.04 + 0.3 * exp(-t * 12.0))
+		b[i] = lp * exp(-t * 4.5) * minf(1.0, t * 400.0) * 0.5
+	_samples["lute"] = _wav(b)
+	_samples["arp"] = _samples["lute"]
+	# Мягкий бас: синус + немного пилы через фильтр
+	b = _buf(0.5)
+	lp = 0.0
+	for i in b.size():
+		var t := float(i) / RATE
+		lp += ((sin(t * 55.0 * TAU) + 0.35 * _saw(t * 55.0)) - lp) * 0.15
+		b[i] = lp * minf(1.0, t * 200.0) * exp(-t * 3.5) * 0.9
+	_samples["bass"] = _wav(b)
+	# Бочка мягче, малый — «хлопок» с хвостом (ревербом его доделает шина)
+	b = _buf(0.45)
+	ph = 0.0
+	for i in b.size():
+		var t := float(i) / RATE
+		ph += (48.0 + 80.0 * exp(-t * 26.0)) / RATE
+		b[i] = sin(ph * TAU) * exp(-t * 7.5) * 0.85
+	_samples["kick"] = _wav(b)
+	b = _buf(0.35)
+	lp = 0.0
+	for i in b.size():
+		var t := float(i) / RATE
+		var n := rng.randf_range(-1, 1)
+		lp += (n - lp) * 0.45
+		var env := (exp(-t * 30.0) + 0.6 * exp(-maxf(t - 0.012, 0.0) * 30.0) * float(t > 0.012) + 0.35 * exp(-t * 9.0))
+		b[i] = lp * env * 0.45
+	_samples["snare"] = _wav(b)
