@@ -327,11 +327,13 @@ def build_body():
     sub.render_levels = 2
     apply_mods(o)
     # Материалы по зонам тела
-    names = ["skin" if mob else "main", "main2", "glove", "legs", "boots", "trim", "skin"]
-    for n in names[:6] + ["skin"]:
-        if n not in [m.name for m in o.data.materials]:
-            o.data.materials.append(M(n))
-    idx = {m.name: i for i, m in enumerate(o.data.materials)}
+    order = []
+    for n in ["main", "main2", "glove", "legs", "boots", "trim", "skin"]:
+        if n not in order:
+            order.append(n)
+    for n in order:
+        o.data.materials.append(M(n))
+    idx = {n: i for i, n in enumerate(order)}
     for p in o.data.polygons:
         c = p.center
         ax = abs(c.x)
