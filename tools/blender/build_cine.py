@@ -220,6 +220,9 @@ def to_bone(o, bone):
     """Жёстко прикрепить объект к кости (в glTF станет BoneAttachment)."""
     if o is None:
         return
+    # Опорная точка — в центре детали (иначе масштаб глаз/рта для моргания и речи «уезжает»)
+    activate(o)
+    bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="BOUNDS")
     mw = o.matrix_world.copy()
     o.parent = ARM
     o.parent_type = "BONE"
