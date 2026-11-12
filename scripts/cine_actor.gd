@@ -84,11 +84,13 @@ func _build_glb(path: String) -> void:
 	skel = _find_skel(scn)
 	for mi in _all_meshes(scn):
 		var mesh: Mesh = mi.mesh
+		# Толщина контура — по размеру детали: силуэт жирнее, мелочь тоньше
+		var line := clampf(mesh.get_aabb().size.length() * 9.0, 1.3, 3.2)
 		for si in mesh.get_surface_count():
 			var mm := mesh.surface_get_material(si)
 			var nm := mm.resource_name if mm else "main"
-			mi.set_surface_override_material(si, T.slot(nm, sp))
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			mi.set_surface_override_material(si, T.slot(nm, sp, line))
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if mi.name.begins_with("eye") and not mi.name.begins_with("eyeb"):
 			_eyes.append(mi)
 		if mi.name == "mouth":

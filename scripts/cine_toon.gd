@@ -3,6 +3,92 @@ extends RefCounted
 ## с цветными тенями (тени не серые, а сиренево-синие), ровный блик и контровая
 ## подсветка по краю силуэта. Плюс небо, окна, порталы и лава.
 
+# ---------- Аниме-рисовка (в духе Cyberpunk: Edgerunners) ----------
+# Заливка не зависит от источников света движка: направление и цвет «ключа»,
+# цвет тени, каймы и тёплого локального света (костёр) задаёт кат-сцена через
+# глобальные параметры — так картинка одинакова на ПК, в браузере и на телефоне.
+
+const CEL := """
+shader_type spatial;
+render_mode unshaded, cull_back;
+global uniform vec3 cine_key_dir;
+global uniform vec4 cine_key_col;
+global uniform vec4 cine_shadow;
+global uniform vec4 cine_rim;
+global uniform vec4 cine_pt;
+global uniform vec4 cine_pt_col;
+uniform vec4 albedo : source_color = vec4(1.0);
+uniform float flat_k = 0.0;
+uniform float skin = 0.0;
+uniform float hair = 0.0;
+uniform float gloss = 0.0;
+uniform float tone = 1.0;
+uniform float glow = 0.0;
+varying vec3 wpos;
+void vertex() {
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+void fragment() {
+	vec3 n = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	vec3 v = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
+	vec3 L = normalize(cine_key_dir);
+	float ndl = dot(n, L) + skin * 0.55;
+	float lit = max(smoothstep(-0.03, 0.03, ndl), flat_k);
+	vec3 base = albedo.rgb;
+	vec3 col = mix(base * cine_shadow.rgb, base * cine_key_col.rgb, lit);
+	// Тонировочные точки в тени, как скринтон в манге
+	vec2 p = FRAGCOORD.xy / 4.0;
+	p = vec2(p.x - p.y, p.x + p.y) * 0.7071;
+	float d = length(fract(p) - 0.5);
+	float ht = (1.0 - smoothstep(0.2, 0.27, d)) * (1.0 - lit) * tone;
+	col *= 1.0 - 0.25 * ht;
+	// Тёплый локальный свет (костёр, лава) — отдельная жёсткая зона
+	vec3 tp = cine_pt.xyz - wpos;
+	float dist = length(tp);
+	float pl = step(0.05, dot(n, tp / max(dist, 0.001))) * (1.0 - smoothstep(cine_pt.w * 0.85, cine_pt.w, dist));
+	col = mix(col, max(col, base * cine_pt_col.rgb * 1.35), pl * cine_pt_col.a * (1.0 - flat_k));
+	// Кайма: резкая цветная полоса по краю силуэта со стороны, обратной свету
+	float fr = 1.0 - clamp(dot(n, v), 0.0, 1.0);
+	float rim = step(0.76, fr) * step(dot(n, L), 0.2);
+	col = mix(col, cine_rim.rgb * 1.4, rim * cine_rim.a * (1.0 - flat_k));
+	// Жёсткий блик (волосы, металл)
+	vec3 h = normalize(L + v);
+	float sp = step(0.955 - hair * 0.07, dot(n, h)) * lit;
+	col += sp * (gloss * 0.6 + hair * 0.35) * cine_key_col.rgb;
+	ALBEDO = col + base * glow;
+}
+"""
+
+const OUTLINE := """
+shader_type spatial;
+render_mode unshaded, cull_front;
+uniform float width_px = 2.0;
+uniform vec4 line_col : source_color = vec4(0.035, 0.015, 0.06, 1.0);
+void vertex() {
+	vec4 clip = PROJECTION_MATRIX * (MODELVIEW_MATRIX * vec4(VERTEX, 1.0));
+	vec3 nv = mat3(MODELVIEW_MATRIX) * NORMAL;
+	vec2 nc = (PROJECTION_MATRIX * vec4(nv, 0.0)).xy;
+	float l = length(nc);
+	if (l > 0.0001) {
+		clip.xy += nc / l * width_px * (VIEWPORT_SIZE.y / 720.0) * 2.0 / VIEWPORT_SIZE * clip.w;
+	}
+	POSITION = clip;
+}
+void fragment() {
+	ALBEDO = line_col.rgb;
+}
+"""
+
+const NEON_FLAT := """
+shader_type spatial;
+render_mode unshaded;
+uniform vec4 albedo : source_color = vec4(1.0);
+uniform float k = 2.0;
+void fragment() {
+	ALBEDO = albedo.rgb * k;
+}
+"""
+
 const TOON := """
 shader_type spatial;
 uniform vec4 albedo : source_color = vec4(1.0);
@@ -56,6 +142,8 @@ void fragment() {
 
 const WINDOWS := """
 shader_type spatial;
+render_mode unshaded;
+global uniform vec4 cine_shadow;
 uniform vec4 wall : source_color = vec4(0.2, 0.2, 0.3, 1.0);
 uniform vec4 lit : source_color = vec4(1.0, 0.7, 0.3, 1.0);
 uniform vec4 shade : source_color = vec4(0.32, 0.28, 0.55, 1.0);
@@ -69,19 +157,20 @@ void vertex() {
 }
 float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + seed) * 43758.5453); }
 void fragment() {
-	ALBEDO = wall.rgb;
-	ROUGHNESS = 0.85;
+	// Плоские силуэты домов: освещённая грань чуть светлее, остальные — в тени
+	float side = wn.x > 0.5 ? 1.0 : (wn.z > 0.5 ? 0.8 : 0.55);
+	vec3 c = wall.rgb * mix(cine_shadow.rgb, vec3(1.0), side * 0.6);
 	if (abs(wn.y) < 0.5) {
 		vec2 uv = abs(wn.x) > 0.5 ? wp.zy : wp.xy;
 		vec2 g = uv * vec2(1.4, 1.1);
-		vec2 c = floor(g);
+		vec2 cc = floor(g);
 		vec2 f = fract(g);
 		float win = step(0.22, f.x) * step(f.x, 0.78) * step(0.28, f.y) * step(f.y, 0.82);
-		float on = step(1.0 - density, h(c));
-		vec3 lc = mix(lit.rgb, vec3(0.4, 0.9, 1.0), step(0.85, h(c + 7.0)));
-		EMISSION = lc * win * on * 1.3;
-		ALBEDO = mix(wall.rgb, wall.rgb * 0.5, win);
+		float on = step(1.0 - density, h(cc));
+		vec3 lc = mix(lit.rgb, vec3(0.3, 0.95, 1.0), step(0.8, h(cc + 7.0)));
+		c = mix(c, lc * 1.6, win * on);
 	}
+	ALBEDO = c;
 }
 """
 
@@ -110,7 +199,8 @@ void sky() {
 		c += vec3(1.0, 0.32, 0.8) * smoothstep(0.004, 0.0, l) * rift * 1.6;
 		c += vec3(0.55, 0.25, 1.0) * smoothstep(0.05, 0.0, l) * rift * 0.35;
 	}
-	COLOR = c;
+	// Ступенчатый градиент — небо «нарисовано» плоскими полосами
+	COLOR = mix(c, floor(c * 9.0 + 0.5) / 9.0, 0.7);
 }
 """
 
@@ -150,11 +240,34 @@ void fragment() {
 static var _cache := {}
 
 
+## Глобальные параметры аниме-заливки (регистрируются один раз).
+static func ensure_globals() -> void:
+	if _cache.has("globals"):
+		return
+	_cache["globals"] = true
+	var have := RenderingServer.global_shader_parameter_get_list()
+	var defs := {
+		"cine_key_dir": [RenderingServer.GLOBAL_VAR_TYPE_VEC3, Vector3(0.4, 0.8, 0.5)],
+		"cine_key_col": [RenderingServer.GLOBAL_VAR_TYPE_COLOR, Color(1, 0.95, 0.9)],
+		"cine_shadow": [RenderingServer.GLOBAL_VAR_TYPE_COLOR, Color(0.42, 0.33, 0.72)],
+		"cine_rim": [RenderingServer.GLOBAL_VAR_TYPE_COLOR, Color(0.2, 0.95, 1.0, 1.0)],
+		"cine_pt": [RenderingServer.GLOBAL_VAR_TYPE_VEC4, Vector4(0, 0, 0, 0)],
+		"cine_pt_col": [RenderingServer.GLOBAL_VAR_TYPE_COLOR, Color(1, 0.6, 0.3, 0.0)],
+	}
+	for n in defs:
+		if not (StringName(n) in have):
+			RenderingServer.global_shader_parameter_add(n, defs[n][0], defs[n][1])
+
+
 static func shader(code_name: String) -> Shader:
 	if _cache.has("sh_" + code_name):
 		return _cache["sh_" + code_name]
+	ensure_globals()
 	var sh := Shader.new()
 	match code_name:
+		"cel": sh.code = CEL
+		"outline": sh.code = OUTLINE
+		"neonflat": sh.code = NEON_FLAT
 		"toon": sh.code = TOON
 		"glass": sh.code = GLASS
 		"glow": sh.code = GLOW
@@ -166,145 +279,103 @@ static func shader(code_name: String) -> Shader:
 	return sh
 
 
-## Стилизованный PBR-материал, как в анимационных роликах: мягкая шероховатость,
-## контровая кайма света, металл с отражениями. glow > 0 — светится (неон).
-static func mat(c: Color, glow := 0.0, gloss := 0.25, rim := 0.16) -> Material:
-	var key := "m_%s_%.2f_%.2f_%.2f" % [c.to_html(), glow, gloss, rim]
+## Аниме-материал: плоская заливка + жёсткая тень + контур.
+static func cel(c: Color, opts := {}) -> Material:
+	var key := "cel_%s_%s" % [c.to_html(), str(opts)]
 	if _cache.has(key):
 		return _cache[key]
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.roughness = clampf(0.85 - gloss * 0.9, 0.18, 0.9)
-	m.metallic = 0.75 if gloss >= 0.6 else 0.0
-	m.metallic_specular = 0.45
-	m.rim_enabled = rim > 0.0
-	m.rim = clampf(rim * 1.6, 0.0, 1.0)
-	m.rim_tint = 0.6
-	if glow > 0.0:
-		m.emission_enabled = true
-		m.emission = c
-		m.emission_energy_multiplier = glow * 1.3
+	var m := ShaderMaterial.new()
+	m.shader = shader("cel")
+	m.set_shader_parameter("albedo", c)
+	for k in ["flat_k", "skin", "hair", "gloss", "tone", "glow"]:
+		if opts.has(k):
+			m.set_shader_parameter(k, float(opts[k]))
+	var w := float(opts.get("line", 1.8))
+	if w > 0.0:
+		var o := ShaderMaterial.new()
+		o.shader = shader("outline")
+		o.set_shader_parameter("width_px", w)
+		m.next_pass = o
 	_cache[key] = m
 	return m
+
+
+static func mat(c: Color, glow := 0.0, gloss := 0.25, rim := 0.16) -> Material:
+	if glow > 0.0:
+		return neon(c, glow)
+	return cel(c, {"gloss": 1.0 if gloss >= 0.6 else 0.0, "line": 2.2})
 
 
 static func neon(c: Color, k := 2.5) -> Material:
-	return mat(c, k, 0.0, 0.0)
-
-
-## Материалы слотов модели из Blender: кожа с подповерхностным рассеянием,
-## ткань, кожа-материал, металл, неон, глаза.
-static func slot(name: String, S: Dictionary) -> Material:
-	var key := "slot_%s_%s" % [name, str(S.get("_key", ""))]
+	var key := "neon_%s_%.2f" % [c.to_html(), k]
 	if _cache.has(key):
 		return _cache[key]
+	var m := ShaderMaterial.new()
+	m.shader = shader("neonflat")
+	m.set_shader_parameter("albedo", c)
+	m.set_shader_parameter("k", 1.0 + k * 0.5)
+	_cache[key] = m
+	return m
+
+
+## Материалы слотов модели из Blender в аниме-заливке.
+static func slot(name: String, S: Dictionary, line := 2.0) -> Material:
 	var col := func(k: String, d: Color) -> Color:
 		return S[k] if S.has(k) and S[k] is Color else d
-	var m := StandardMaterial3D.new()
-	m.roughness = 0.75
-	m.rim_enabled = true
-	m.rim = 0.25
-	m.rim_tint = 0.65
 	var main_c: Color = col.call("main", Color(0.4, 0.4, 0.5))
 	match name:
 		"skin":
-			m.albedo_color = col.call("skin", Color(0.85, 0.68, 0.58))
-			m.roughness = 0.52
-			m.subsurf_scatter_enabled = true
-			m.subsurf_scatter_strength = 0.45
-			m.subsurf_scatter_skin_mode = true
-			m.rim = 0.35
-			m.rim_tint = 0.5
+			return cel(col.call("skin", Color(0.95, 0.78, 0.68)), {"skin": 1.0, "tone": 0.0, "line": line})
 		"main":
-			m.albedo_color = main_c
-			m.roughness = 0.78
+			return cel(main_c, {"line": line})
 		"main2":
-			m.albedo_color = main_c.darkened(0.18)
-			m.roughness = 0.8
+			return cel(main_c.darkened(0.18), {"line": line})
 		"glove":
-			m.albedo_color = main_c.darkened(0.5)
-			m.roughness = 0.5
+			return cel(main_c.darkened(0.5), {"gloss": 0.5, "line": line})
 		"legs":
-			m.albedo_color = col.call("legs", Color(0.25, 0.25, 0.3))
-			m.roughness = 0.8
+			return cel(col.call("legs", Color(0.25, 0.25, 0.3)), {"line": line})
 		"boots":
-			m.albedo_color = col.call("boots", Color(0.2, 0.15, 0.12))
-			m.roughness = 0.45
+			return cel(col.call("boots", Color(0.2, 0.15, 0.12)), {"gloss": 0.5, "line": line})
 		"trim":
-			m.albedo_color = col.call("trim", Color(0.9, 0.7, 0.3))
-			m.metallic = 0.85
-			m.roughness = 0.3
+			return cel(col.call("trim", Color(0.9, 0.7, 0.3)), {"gloss": 1.0, "line": line})
 		"metal":
-			m.albedo_color = Color(0.62, 0.64, 0.72)
-			m.metallic = 0.9
-			m.roughness = 0.28
+			return cel(Color(0.62, 0.64, 0.72), {"gloss": 1.0, "line": line})
 		"weapon":
-			m.albedo_color = col.call("w_c", Color(0.5, 0.5, 0.6))
-			m.metallic = 0.6
-			m.roughness = 0.35
-		"neon", "neon2", "gem", "visor":
-			var nc: Color = col.call({"neon": "neon", "neon2": "neon2", "gem": "gem", "visor": "neon"}[name], Color(0.3, 0.9, 1.0))
-			m.albedo_color = nc
-			m.emission_enabled = true
-			m.emission = nc
-			m.emission_energy_multiplier = 3.2 if name != "visor" else 2.2
-			m.rim_enabled = false
-			if name == "visor":
-				m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-				m.albedo_color.a = 0.75
+			return cel(col.call("w_c", Color(0.5, 0.5, 0.6)), {"gloss": 1.0, "line": line})
+		"neon", "visor":
+			return neon(col.call("neon", Color(0.3, 0.9, 1.0)), 3.0)
+		"neon2":
+			return neon(col.call("neon2", Color(1.0, 0.3, 0.7)), 3.0)
+		"gem":
+			return neon(col.call("gem", Color(0.4, 0.9, 1.0)), 3.0)
 		"hair", "beard":
-			m.albedo_color = col.call("beard" if name == "beard" and S.has("beard") else "hair", Color(0.25, 0.17, 0.12))
-			m.roughness = 0.42
-			m.metallic_specular = 0.7
-			m.rim = 0.45
+			var hc: Color = col.call("beard" if name == "beard" and S.has("beard") else "hair", Color(0.25, 0.17, 0.12))
+			return cel(hc, {"hair": 1.0, "tone": 0.6, "line": line})
 		"hat":
-			m.albedo_color = col.call("head_c", Color(0.3, 0.3, 0.4))
-			m.roughness = 0.7
+			return cel(col.call("head_c", Color(0.3, 0.3, 0.4)), {"line": line})
 		"back":
-			m.albedo_color = col.call("back_c", Color(0.3, 0.2, 0.3))
-			m.roughness = 0.82
+			return cel(col.call("back_c", Color(0.3, 0.2, 0.3)), {"line": line})
 		"eye_white":
-			m.albedo_color = Color(0.96, 0.95, 0.97)
-			m.roughness = 0.12
-			m.clearcoat_enabled = true
-			m.rim_enabled = false
+			return cel(Color(0.97, 0.96, 1.0), {"flat_k": 1.0, "line": 0.0})
 		"iris":
-			var ic: Color = col.call("neon", Color(0.3, 0.6, 1.0))
-			m.albedo_color = ic.darkened(0.2)
-			m.emission_enabled = true
-			m.emission = ic
-			m.emission_energy_multiplier = 0.35
-			m.roughness = 0.1
-			m.clearcoat_enabled = true
-			m.rim_enabled = false
+			return cel(col.call("neon", Color(0.3, 0.6, 1.0)).lerp(Color.WHITE, 0.1), {"flat_k": 1.0, "line": 0.0, "glow": 0.25})
 		"pupil":
-			m.albedo_color = Color(0.02, 0.02, 0.03)
-			m.roughness = 0.05
-			m.rim_enabled = false
+			return cel(Color(0.03, 0.02, 0.05), {"flat_k": 1.0, "line": 0.0})
+		"glint":
+			return neon(Color(1, 1, 1), 1.2)
 		"mouth":
-			m.albedo_color = Color(0.3, 0.07, 0.09)
-			m.roughness = 0.6
-			m.rim_enabled = false
+			return cel(Color(0.25, 0.05, 0.08), {"flat_k": 1.0, "line": 0.0})
 		"teeth", "bone":
-			m.albedo_color = Color(0.92, 0.89, 0.82)
-			m.roughness = 0.4
+			return cel(Color(0.93, 0.9, 0.84), {"line": line})
 		"dark":
-			m.albedo_color = Color(0.05, 0.045, 0.06)
-			m.roughness = 0.5
+			return cel(Color(0.04, 0.03, 0.06), {"flat_k": 1.0, "line": 0.0})
 		"leather":
-			m.albedo_color = Color(0.35, 0.22, 0.14)
-			m.roughness = 0.55
+			return cel(Color(0.38, 0.24, 0.15), {"line": line})
 		"wood":
-			m.albedo_color = Color(0.42, 0.27, 0.16)
-			m.roughness = 0.7
+			return cel(Color(0.45, 0.29, 0.17), {"line": line})
 		"glass":
-			m.albedo_color = Color(0.7, 0.85, 0.95, 0.3)
-			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			m.roughness = 0.05
-		_:
-			m.albedo_color = main_c
-	_cache[key] = m
-	return m
+			return glass(Color(0.7, 0.9, 1.0, 0.35), 0.5)
+	return cel(main_c, {"line": line})
 
 
 static func glass(c: Color, glow := 0.4) -> ShaderMaterial:

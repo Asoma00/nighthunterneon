@@ -32,10 +32,54 @@ var _shake := 0.0
 var _was_paused := false
 var _done := false
 var _fireworks := 0.0
-var _cam_attr: CameraAttributesPractical
-var _key: SpotLight3D
-var _fill: OmniLight3D
-var _rimL: SpotLight3D
+var _post: ColorRect
+var _impact := 0.0
+var _glitch := 0.0
+var _speed := 0.0
+var _frame_t := 0.0
+
+const ANIME_FPS := 12.0   # «на двойках», как в рисованном аниме
+
+const POST := """
+shader_type canvas_item;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear;
+uniform float impact = 0.0;
+uniform float glitch = 0.0;
+uniform float speed = 0.0;
+uniform float tt = 0.0;
+void fragment() {
+	vec2 uv = SCREEN_UV;
+	if (glitch > 0.0) {
+		float band = floor(uv.y * 22.0);
+		float r = fract(sin(band * 12.9898 + floor(tt * 24.0) * 7.0) * 43758.5453);
+		if (r < glitch * 0.7) {
+			uv.x += (r - 0.35) * 0.12 * glitch;
+		}
+	}
+	vec2 c = uv - 0.5;
+	float ca = 0.004 + length(c) * 0.012 + glitch * 0.02;
+	vec3 col;
+	col.r = texture(screen_tex, uv + c * ca).r;
+	col.g = texture(screen_tex, uv).g;
+	col.b = texture(screen_tex, uv - c * ca).b;
+	float l = dot(col, vec3(0.299, 0.587, 0.114));
+	col = mix(vec3(l), col, 1.2);
+	col = clamp((col - 0.5) * 1.1 + 0.52, 0.0, 1.0);
+	if (speed > 0.0) {
+		float a = atan(c.y, c.x);
+		float s = step(0.82, fract(sin(floor(a * 70.0) * 91.345 + floor(tt * 12.0)) * 437.585));
+		col = mix(col, vec3(1.0), s * smoothstep(0.28, 0.75, length(c)) * speed * 0.85);
+	}
+	if (impact > 0.0) {
+		float b = step(0.42, l);
+		vec3 imp = mix(vec3(0.02, 0.0, 0.04), vec3(1.0, 0.93, 0.04), b);
+		col = mix(col, imp, impact);
+	}
+	float vig = smoothstep(0.5, 1.05, length(c) * 1.35);
+	col *= 1.0 - vig * 0.6;
+	COLOR = vec4(col, 1.0);
+}
+"""
 var _fw_t := 0.0
 
 var _bars: Array = []
@@ -87,6 +131,7 @@ func _build_ui() -> void:
 	add_child(cont)
 	_vp = SubViewport.new()
 	_vp.own_world_3d = true
+	_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	_vp.handle_input_locally = false
 	if not OS.has_feature("web") and not OS.has_feature("mobile"):
 		_vp.msaa_3d = Viewport.MSAA_2X
@@ -99,47 +144,18 @@ func _build_ui() -> void:
 	_cam.far = 400.0
 	_world.add_child(_cam)
 	_cam.make_current()
-	_cam_attr = CameraAttributesPractical.new()
-	_cam_attr.dof_blur_amount = 0.09
-	_cam.attributes = _cam_attr
-	# Свет «как на съёмочной площадке»: ключевой, заполняющий и контровой,
-	# каждый кадр выставляется вокруг того, на кого смотрит камера.
-	_key = SpotLight3D.new()
-	_key.spot_angle = 38.0
-	_key.spot_range = 14.0
-	_key.shadow_enabled = true
-	_key.light_volumetric_fog_energy = 0.6
-	_world.add_child(_key)
-	_fill = OmniLight3D.new()
-	_fill.omni_range = 9.0
-	_world.add_child(_fill)
-	_rimL = SpotLight3D.new()
-	_rimL.spot_angle = 35.0
-	_rimL.spot_range = 14.0
-	_rimL.light_volumetric_fog_energy = 1.5
-	_world.add_child(_rimL)
 
-	# Плёнка: виньетка и лёгкое зерно поверх картинки
-	var post := ColorRect.new()
-	post.set_anchors_preset(Control.PRESET_FULL_RECT)
-	post.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Аниме-плёнка: расслоение цвета к краям, сочный грейд, кадры-вспышки,
+	# глитч на склейках, линии скорости, виньетка
+	_post = ColorRect.new()
+	_post.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_post.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var psm := ShaderMaterial.new()
 	var psh := Shader.new()
-	psh.code = """
-shader_type canvas_item;
-void fragment() {
-	vec2 uv = SCREEN_UV;
-	float d = distance(uv, vec2(0.5)) * 1.25;
-	float vig = smoothstep(0.42, 1.0, d) * 0.65;
-	float n = fract(sin(dot(floor(FRAGCOORD.xy) + floor(TIME * 24.0) * 17.0, vec2(12.9898, 78.233))) * 43758.5453);
-	COLOR = vec4(vec3(n), 0.022);
-	COLOR = mix(COLOR, vec4(0.0, 0.0, 0.02, 1.0), vig);
-	COLOR.a = max(vig, 0.022);
-}
-"""
+	psh.code = POST
 	psm.shader = psh
-	post.material = psm
-	add_child(post)
+	_post.material = psm
+	add_child(_post)
 
 	# Кинополосы 2.35:1
 	for i in 2:
@@ -158,7 +174,9 @@ void fragment() {
 	_cap = Label.new()
 	_cap.add_theme_font_override("font", BossIntro.font(k * 0.5))
 	_cap.add_theme_font_size_override("font_size", int(26 * k))
-	_cap.add_theme_color_override("font_color", Color(1.0, 0.96, 0.9))
+	_cap.add_theme_color_override("font_color", Color(0.99, 0.93, 0.04))
+	_cap.add_theme_color_override("font_outline_color", Color(0.02, 0.0, 0.05))
+	_cap.add_theme_constant_override("outline_size", int(6 * k))
 	_cap.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
 	_cap.add_theme_constant_override("shadow_offset_x", 2)
 	_cap.add_theme_constant_override("shadow_offset_y", 2)
@@ -173,8 +191,8 @@ void fragment() {
 	add_child(_sub_box)
 	_sub_plate = Panel.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(1.0, 0.6, 0.15)
-	sb.skew = Vector2(0.3, 0)
+	sb.bg_color = Color(0.99, 0.93, 0.04)
+	sb.skew = Vector2(0.45, 0)
 	sb.corner_radius_top_left = 2
 	_sub_plate.add_theme_stylebox_override("panel", sb)
 	_sub_plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -187,8 +205,10 @@ void fragment() {
 	_sub_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_sub_plate.add_child(_sub_name)
 	_sub_text = Label.new()
-	_sub_text.add_theme_font_size_override("font_size", int(24 * k))
+	_sub_text.add_theme_font_size_override("font_size", int(25 * k))
 	_sub_text.add_theme_color_override("font_color", Color(1, 1, 1))
+	_sub_text.add_theme_color_override("font_outline_color", Color(0.02, 0.0, 0.05))
+	_sub_text.add_theme_constant_override("outline_size", int(6 * k))
 	_sub_text.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
 	_sub_text.add_theme_constant_override("shadow_offset_x", 2)
 	_sub_text.add_theme_constant_override("shadow_offset_y", 2)
@@ -203,13 +223,14 @@ void fragment() {
 	add_child(_title)
 	var stripe := ColorRect.new()
 	stripe.name = "stripe"
-	stripe.color = Color(1.0, 0.6, 0.15)
+	stripe.color = Color(0.0, 0.94, 1.0)
 	_title.add_child(stripe)
 	_title_big = Label.new()
 	_title_big.add_theme_font_override("font", BossIntro.font(k))
 	_title_big.add_theme_font_size_override("font_size", int(68 * k))
 	_title_big.add_theme_color_override("font_color", Color(1, 1, 1))
-	_title_big.add_theme_color_override("font_shadow_color", Color(0.9, 0.25, 0.6, 0.85))
+	_title_big.add_theme_color_override("font_color", Color(0.99, 0.93, 0.04))
+	_title_big.add_theme_color_override("font_shadow_color", Color(1.0, 0.0, 0.35, 0.95))
 	_title_big.add_theme_constant_override("shadow_offset_x", int(5 * k))
 	_title_big.add_theme_constant_override("shadow_offset_y", int(4 * k))
 	_title_big.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -217,7 +238,7 @@ void fragment() {
 	_title_small = Label.new()
 	_title_small.add_theme_font_override("font", BossIntro.font(k * 0.5))
 	_title_small.add_theme_font_size_override("font_size", int(24 * k))
-	_title_small.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	_title_small.add_theme_color_override("font_color", Color(0.0, 0.94, 1.0))
 	_title_small.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title.add_child(_title_small)
 
@@ -231,7 +252,7 @@ void fragment() {
 	_skip.text = "ПРОПУСТИТЬ  ▶▶"
 	_skip.flat = true
 	_skip.add_theme_font_size_override("font_size", int(18 * k))
-	_skip.add_theme_color_override("font_color", Color(1, 1, 1, 0.75))
+	_skip.add_theme_color_override("font_color", Color(0.99, 0.93, 0.04, 0.85))
 	_skip.focus_mode = Control.FOCUS_NONE
 	_skip.pressed.connect(skip)
 	add_child(_skip)
@@ -324,8 +345,9 @@ func _load_set(s: Dictionary) -> void:
 		node._last_pos = node.global_position
 		actors[a[0]] = node
 	_fade.color.a = 1.0
+	_glitch = 1.0
 	var tw := create_tween()
-	tw.tween_property(_fade, "color:a", 0.0, 0.7)
+	tw.tween_property(_fade, "color:a", 0.0, 0.35)
 
 
 static func _v(a) -> Vector3:
@@ -350,7 +372,7 @@ func _start_shot(s: Dictionary) -> void:
 		_sub_name.text = nm.to_upper()
 		_sub_text.text = _txt(ln[2])
 		var sb: StyleBoxFlat = _sub_plate.get_theme_stylebox("panel")
-		sb.bg_color = _who_color(who)
+		sb.bg_color = Color(0.99, 0.93, 0.04) if who == "hero" else _who_color(who)
 		_sub_box.visible = true
 		text_len = _sub_text.text.length()
 		if actors.has(who):
@@ -383,13 +405,17 @@ func _start_shot(s: Dictionary) -> void:
 	for a in s.get("dissolve", []):
 		if actors.has(a):
 			_dissolve.append([actors[a], 0.0, (actors[a] as Node3D).scale])
+	_speed = 1.0 if (s.get("speed", false) or str(s.get("fx", "")) == "flash_shake") else 0.0
 	match str(s.get("fx", "")):
 		"flash":
-			_flash.color = Color(1, 1, 1, 0.9)
+			_impact = 1.0
+			_flash.color = Color(1, 1, 1, 0.6)
 		"shake":
 			_shake = 0.25
+			_glitch = 0.4
 		"flash_shake":
-			_flash.color = Color(1, 1, 1, 0.9)
+			_impact = 1.0
+			_flash.color = Color(1, 1, 1, 0.6)
 			_shake = 0.3
 		"fireworks":
 			_fireworks = 999.0
@@ -434,36 +460,24 @@ func _cam_update(_d: float) -> void:
 	_cam.fov = lerpf(float(fv[0]), float(fv[1] if fv.size() > 1 else fv[0]), k)
 
 
+## «Свет» аниме-заливки: откуда падает ключ, цвета тени и каймы, костёр.
 func _light_rig(p: Vector3, l: Vector3) -> void:
 	if _set == null:
 		return
 	var fwd := l - p
-	var dist := fwd.length()
 	fwd.y = 0.0
 	if fwd.length() < 0.01:
 		fwd = Vector3.FORWARD
 	fwd = fwd.normalized()
 	var right := fwd.cross(Vector3.UP).normalized()
-	# Чем шире план, тем слабее «студийный» свет — там работает свет локации
-	var k := clampf(1.0 - (dist - 3.5) / 8.0, 0.2, 1.0)
-	var kp := l - fwd * 2.4 - right * 2.0 + Vector3.UP * 1.6
-	_key.look_at_from_position(kp, l)
-	_key.light_color = _set.key_color
-	_key.light_energy = 2.8 * k
-	_fill.position = l - fwd * 2.0 + right * 2.4 + Vector3.UP * 0.2
-	_fill.light_color = _set.fill_color
-	_fill.light_energy = 0.9 * k
-	var rp := l + fwd * 2.6 + right * 1.4 + Vector3.UP * 1.3
-	_rimL.look_at_from_position(rp, l + Vector3.UP * 0.1)
-	_rimL.light_color = _set.rim_color
-	_rimL.light_energy = 6.0 * k
-	# Глубина резкости: фокус на том, кого снимаем
-	_cam_attr.dof_blur_far_enabled = true
-	_cam_attr.dof_blur_far_distance = dist + 1.0
-	_cam_attr.dof_blur_far_transition = maxf(2.0, dist * 1.2)
-	_cam_attr.dof_blur_near_enabled = dist < 3.0
-	_cam_attr.dof_blur_near_distance = maxf(0.3, dist * 0.45)
-	_cam_attr.dof_blur_near_transition = 0.5
+	var side := -1.0 if bool(_shot.get("key_left", false)) else 1.0
+	var kdir := (-fwd * 1.0 - right * 1.1 * side + Vector3.UP * 1.1).normalized()
+	RenderingServer.global_shader_parameter_set("cine_key_dir", kdir)
+	RenderingServer.global_shader_parameter_set("cine_key_col", _set.key_color)
+	RenderingServer.global_shader_parameter_set("cine_shadow", _set.shadow_tint)
+	RenderingServer.global_shader_parameter_set("cine_rim", Color(_set.rim_color, 1.0))
+	RenderingServer.global_shader_parameter_set("cine_pt", _set.fire)
+	RenderingServer.global_shader_parameter_set("cine_pt_col", _set.fire_color)
 
 
 func _process(delta: float) -> void:
@@ -472,6 +486,18 @@ func _process(delta: float) -> void:
 	delta = minf(delta, 0.1)
 	_st += delta
 	_shake = maxf(0.0, _shake - delta * 0.5)
+	# Картинка обновляется 12 раз в секунду — анимация «на двойках»
+	_frame_t += delta
+	if _frame_t >= 1.0 / ANIME_FPS:
+		_frame_t = fmod(_frame_t, 1.0 / ANIME_FPS)
+		_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_impact = maxf(0.0, _impact - delta * 6.0)
+	_glitch = maxf(0.0, _glitch - delta * 2.5)
+	var pm: ShaderMaterial = _post.material
+	pm.set_shader_parameter("impact", 1.0 if _impact > 0.5 else 0.0)
+	pm.set_shader_parameter("glitch", _glitch)
+	pm.set_shader_parameter("speed", _speed)
+	pm.set_shader_parameter("tt", Time.get_ticks_msec() / 1000.0)
 	_flash.color.a = maxf(0.0, _flash.color.a - delta * 1.6)
 	_cam_update(delta)
 	for m in _moves:
