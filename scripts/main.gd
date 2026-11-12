@@ -1537,6 +1537,8 @@ func _beacon_targets() -> Array:
 	var out: Array = []
 	for p in pois:
 		if is_instance_valid(p) and p.get("state") != "done" and p.get("dead") != true:
+			if p.has_method("arrow_visible") and not p.arrow_visible():
+				continue   # тайник — без светового столба
 			out.append([p, p.color() if p.has_method("color") else Color(1.0, 0.3, 0.35)])
 	for c in get_tree().get_nodes_in_group("chests"):
 		if is_instance_valid(c):
@@ -1649,9 +1651,10 @@ func _handle_quest_pois(delta: float) -> void:
 	for p in pois:
 		if is_instance_valid(p) and p.get_script() == QuestPoiScript:
 			have[p.kind] += 1
-	var weights := {"cache": 3.0 if quest_wants("caches") else 1.2, "puzzle": 3.0 if quest_wants("puzzles") else 0.6,
+	# Тайники — редкость: даже по заданию появляются нечасто и без всякого шума
+	var weights := {"cache": 0.7 if quest_wants("caches") else 0.15, "puzzle": 3.0 if quest_wants("puzzles") else 0.6,
 		"beacons": 3.0 if quest_wants("beacons") else 0.6}
-	var cap := {"cache": 2, "puzzle": 1, "beacons": 1}
+	var cap := {"cache": 1, "puzzle": 1, "beacons": 1}
 	var sum := 0.0
 	for k in weights:
 		if have[k] >= cap[k]:

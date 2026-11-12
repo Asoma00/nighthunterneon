@@ -245,18 +245,18 @@ func _draw() -> void:
 	if kind == "":
 		return
 	var c := color()
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0, 0.6))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	for m in _meteors:
-		var p: Vector2 = Vector2(m[0].x, m[0].y / 0.6)
+		var p: Vector2 = m[0]
 		var k: float = 1.0 - m[1] / 1.4
 		draw_circle(p, 110.0, Color(1.0, 0.2, 0.15, 0.08 + 0.12 * k))
 		draw_arc(p, 110.0, 0.0, TAU, 32, Color(1.0, 0.3, 0.2, 0.5 + 0.4 * k), 3.0)
 		draw_arc(p, 110.0 * k, 0.0, TAU, 32, Color(1.0, 0.6, 0.3, 0.7), 2.0)
 	for b in _bolts:
-		var p: Vector2 = Vector2(b[0].x, b[0].y / 0.6)
+		var p: Vector2 = b[0]
 		draw_arc(p, 70.0, 0.0, TAU, 24, Color(c, 0.7), 2.5)
 	if _supply_pos.is_finite():
-		var p := Vector2(_supply_pos.x, _supply_pos.y / 0.6)
+		var p := _supply_pos
 		draw_circle(p, 75.0, Color(c, 0.1))
 		draw_arc(p, 75.0, _t, _t + TAU * 0.8, 32, Color(c, 0.9), 3.0)
 		if _supply_hold > 0.0:

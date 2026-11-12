@@ -70,7 +70,7 @@ func _controls_hint() -> String:
 		"touch":
 			return "Касание и сдвиг пальца — движение   •   двойное касание — способность   •   II — пауза   •   ≡ — характеристики"
 		"pad":
-			return "Левый стик — движение   •   A — способность   •   START — пауза   •   SELECT — характеристики   •   B — назад"
+			return "Левый стик — движение   •   A — способность   •   START — пауза   •   SELECT — характеристики   •   Y — профиль и ник"
 	return "WASD — движение   •   ПРОБЕЛ — способность   •   ESC — пауза   •   TAB — характеристики"
 
 
@@ -89,6 +89,12 @@ func _on_orientation(_p: bool) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not get_tree().get_nodes_in_group("vkeyboard").is_empty():
+		return
+	# Геймпад / Steam Deck: Y в главном меню — профиль и ник
+	if _page_name == "main" and event is InputEventJoypadButton and event.pressed and event.button_index == JOY_BUTTON_Y:
+		get_viewport().set_input_as_handled()
+		Sound.play("click")
+		_show("profile")
 		return
 	if event.is_action_pressed("ui_cancel") and _page_name not in ["main", "coop", "net"]:
 		get_viewport().set_input_as_handled()
@@ -365,13 +371,6 @@ func _build_main_page() -> void:
 		Sound.play("click")
 		_show("saves"))
 	v.add_child(saves)
-	# ПК / Steam Deck / геймпад: профиль и ник — обычной кнопкой (значок в углу геймпадом не выбрать)
-	if not Settings.is_mobile():
-		var prof := _button("ПРОФИЛЬ И НИК", Color(1.0, 0.8, 0.3))
-		prof.pressed.connect(func():
-			Sound.play("click")
-			_show("profile"))
-		v.add_child(prof)
 	var settings := _button("НАСТРОЙКИ", MAGENTA)
 	settings.pressed.connect(func():
 		Sound.play("click")
@@ -653,7 +652,7 @@ func _add_profile_badge() -> void:
 	_badge_name = _label("", 20, Color(1.0, 0.9, 0.6))
 	_badge_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(_badge_name)
-	var sub := _label("профиль", 13, Color(0.7, 0.7, 0.85))
+	var sub := _label("профиль  •  Y" if Settings.input_mode() == "pad" else "профиль", 13, Color(0.7, 0.7, 0.85))
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(sub)
 	_refresh_badge()

@@ -197,7 +197,7 @@ func _vanish() -> void:
 func _draw() -> void:
 	var c := color()
 	var a := 0.35 if state == "done" else 0.8
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0, 0.6))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	draw_circle(Vector2.ZERO, radius, Color(c, 0.08 if state != "done" else 0.03))
 	draw_arc(Vector2.ZERO, radius, _t, _t + TAU, 48, Color(c, a), 3.0)
 	# Руны по кругу
