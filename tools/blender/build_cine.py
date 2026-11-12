@@ -520,7 +520,6 @@ def hair_cap(hr, front=0.38, back=-0.45, mat="hair", puff=1.08):
     sol = o.modifiers.new("sol", "SOLIDIFY")
     sol.thickness = hr * 0.06
     apply_mods(o)
-    subsurf(o, 1)
     return o
 
 
@@ -595,7 +594,6 @@ def build_headwear(hr):
         sol = hood.modifiers.new("sol", "SOLIDIFY")
         sol.thickness = hr * 0.08
         apply_mods(hood)
-        subsurf(hood, 1)
         to_bone(hood, "head")
         if h == "skull":
             sk = head_mesh(hr * 0.98)
