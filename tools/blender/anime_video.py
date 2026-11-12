@@ -1014,11 +1014,19 @@ def build_video(scene_id):
         rnd = random.Random(bi)
         total = sum(float(s.get("t", 3.0)) for s in blk["shots"])
         nframes = int(round(total * FPS))
-        if TEST:
-            nframes = min(nframes, TEST)
         sc = bpy.context.scene
         sc.frame_start = 1
         sc.frame_end = nframes
+        if TEST:
+            sc.frame_step = max(1, nframes // TEST)
+        # Контровой свет — только на персонажей (иначе красит пол и стены)
+        recv = bpy.data.collections.new("rimrecv")
+        for an in actors:
+            recv.children.link(bpy.data.collections[an])
+        try:
+            rim_o.light_linking.receiver_collection = recv
+        except Exception as e:
+            print("light linking", e)
         # проход по кадрам
         shot_i = -1
         shot_t0 = 0.0
