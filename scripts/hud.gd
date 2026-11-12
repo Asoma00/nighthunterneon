@@ -132,6 +132,14 @@ func _update_tracker() -> void:
 		if q.has("hero"):
 			t = "★ " + t
 		lines.append("%s %s  %d/%d" % ["✓" if ok else "•", t, pr, int(q["g"])])
+	# Журнал подсказок рунной загадки — чтобы вывести порядок
+	for pz in main.pois:
+		if is_instance_valid(pz) and pz.has_method("found_clues") and pz.get("state") != "done":
+			var fc: Array = pz.found_clues()
+			if not fc.is_empty():
+				lines.append("Подсказки рун (▲ пламя ◆ лист ● вода ✚ солнце ★ звезда):")
+				for c in fc:
+					lines.append("  " + str(c))
 	var mats: Array = []
 	for m in main.Meta.MATERIALS:
 		var v := int(main.run.get("mat_" + m, 0))

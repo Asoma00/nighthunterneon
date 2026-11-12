@@ -16,8 +16,24 @@ const INFO := {
 	"puzzle": {"name": "Рунная загадка", "color": Color(0.55, 0.65, 1.0)},
 	"beacons": {"name": "Сигнальные маяки", "color": Color(0.4, 1.0, 0.85)},
 }
-const RUNE_COLORS := [Color(1.0, 0.35, 0.35), Color(0.35, 1.0, 0.45), Color(0.4, 0.6, 1.0), Color(1.0, 0.85, 0.3)]
-const RUNE_NAMES := ["огонь", "лист", "вода", "солнце"]
+const RUNE_COLORS := [Color(1.0, 0.35, 0.35), Color(0.35, 1.0, 0.45), Color(0.4, 0.6, 1.0), Color(1.0, 0.85, 0.3), Color(0.85, 0.7, 1.0)]
+const RUNE_NAMES := ["огонь", "лист", "вода", "солнце", "звезда"]
+## Имена рун для загадок: [именительный, родительный]
+const RUNE_WORDS := [["Пламя", "пламени"], ["Лист", "листа"], ["Вода", "воды"], ["Солнце", "солнца"], ["Звезда", "звезды"]]
+const ORD := ["первым", "вторым", "третьим", "четвёртым"]
+const ROMAN := ["Ⅰ", "Ⅱ", "Ⅲ", "Ⅳ"]
+
+# Загадка: 5 столбов, верный порядок — 4 руны из 5, одна лишняя.
+# Порядок нигде не показан: его выводят из подсказок — у камня, у духа-странника,
+# на скрижали в округе. Подсказки подбираются так, чтобы решение было единственным.
+var _clues: Array = []        # [тип, a, b] — все подсказки загадки
+var _clue_src: Array = []     # откуда каждая: "stone" / "spirit" / "tablet"
+var _found: Array = []        # какие найдены
+var _spirit_pos := Vector2.ZERO
+var _tablet_pos := Vector2.ZERO
+var _spirit_say := 0.0
+var _spirit_label: Label3D
+var _tablet_label: Label3D
 
 var main: Node2D
 var kind := "cache"
@@ -29,7 +45,7 @@ var _hold := 0.0
 var _models: Array = []
 var _labels: Array = []        # Label3D над столбами/маяками
 var _seq_labels: Array = []    # порядок над камнем
-const GLYPHS := ["▲", "◆", "●", "✚"]
+const GLYPHS := ["▲", "◆", "●", "✚", "★"]
 
 # Загадка
 var _pillars: Array = []     # позиции столбов (локальные)
@@ -72,22 +88,38 @@ func _ready() -> void:
 			_add_model("crate%d" % (randi() % 2), Vector2.ZERO, 1.0)
 		"puzzle":
 			_add_model("obelisk1", Vector2(0, -40), 1.0)
-			var order := [0, 1, 2, 3]
+			var order := [0, 1, 2, 3, 4]
 			order.shuffle()
 			_pillar_rune = order
-			for i in 4:
-				var p := Vector2.RIGHT.rotated(TAU * i / 4.0 + PI / 4.0) * Vector2(260, 200)
+			for i in 5:
+				var p := Vector2.RIGHT.rotated(TAU * i / 5.0 - PI / 2.0) * Vector2(280, 215)
 				_pillars.append(p)
 				_add_model("pillar%d" % (i % 2), p + Vector2(0, -60), 0.8)
 				var rc: Color = RUNE_COLORS[order[i]]
 				_labels.append(_add_label(GLYPHS[order[i]], p, 2.3, rc, 140))
-			_seq = [0, 1, 2, 3]
-			_seq.shuffle()
-			_labels.append(_add_label("РУННЫЙ КАМЕНЬ\nвстаньте, чтобы прочитать", Vector2.ZERO, 3.2, color(), 44))
-			for i in 4:
-				var l := _add_label(GLYPHS[_seq[i]], Vector2((i - 1.5) * 75.0, 0), 2.4, RUNE_COLORS[_seq[i]], 130)
-				l.visible = false
-				_seq_labels.append(l)
+			var all := [0, 1, 2, 3, 4]
+			all.shuffle()
+			_seq = all.slice(0, 4)
+			_make_clues()
+			_labels.append(_add_label("РУННЫЙ КАМЕНЬ", Vector2.ZERO, 3.2, color(), 44))
+			# Дух-странник и скрижаль — где-то в округе, без стрелок
+			_spirit_pos = Vector2.RIGHT.rotated(randf() * TAU) * randf_range(480.0, 720.0)
+			_tablet_pos = (-_spirit_pos).rotated(randf_range(-1.0, 1.0)).normalized() * randf_range(520.0, 780.0)
+			_add_model("statue0", _tablet_pos + Vector2(0, -40), 0.8)
+			_tablet_label = _add_label("", _tablet_pos, 2.0, Color(0.85, 0.85, 0.95), 64)
+			_tablet_label.visible = false
+			_spirit_label = _add_label("", _spirit_pos, 2.6, Color(0.6, 0.95, 1.0), 40)
+			_spirit_label.visible = false
+			var sp := Sprite3D.new()
+			sp.texture = Pixel.frames("villager_%d" % (randi() % 4))["base"][0]
+			sp.pixel_size = 0.03
+			sp.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+			sp.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+			sp.modulate = Color(0.5, 0.95, 1.0, 0.55)
+			sp.shaded = false
+			main.place3d(sp, position + _spirit_pos)
+			sp.position.y += 0.4
+			_models.append(sp)
 		"beacons":
 			for i in 3:
 				var p := Vector2.RIGHT.rotated(TAU * i / 3.0 + randf() * 0.6) * randf_range(420.0, 620.0)
@@ -193,25 +225,192 @@ func _tick_cache(delta: float) -> void:
 
 # ---------- Рунная загадка ----------
 
+# ---- Подсказки ----
+
+static func _sat(seq: Array, c: Array) -> bool:
+	var a: int = c[1]
+	var b: int = c[2]
+	var pa := seq.find(a)
+	var pb := seq.find(b)
+	match c[0]:
+		"before":
+			return pa >= 0 and pb >= 0 and pa < pb
+		"adjacent":
+			return pa >= 0 and pb >= 0 and absi(pa - pb) == 1
+		"first":
+			return pa == 0
+		"last":
+			return pa == 3
+		"silent":
+			return pa < 0
+		"pos":
+			return pa == b
+		"notpos":
+			return pa >= 0 and pa != b
+	return false
+
+
+static func _all_seqs() -> Array:
+	var out: Array = []
+	for a in 5:
+		for b in 5:
+			for c in 5:
+				for d in 5:
+					var s := [a, b, c, d]
+					var u := {}
+					for x in s:
+						u[x] = true
+					if u.size() == 4:
+						out.append(s)
+	return out
+
+
+func _random_clue() -> Array:
+	var r := randf()
+	var used: Array = _seq
+	var silent: int = [0, 1, 2, 3, 4].filter(func(x): return not (x in used))[0]
+	if r < 0.32:
+		var i := randi() % 3
+		var j := randi_range(i + 1, 3)
+		return ["before", used[i], used[j]]
+	if r < 0.5:
+		var i := randi() % 3
+		return ["adjacent", used[i], used[i + 1]] if randf() < 0.5 else ["adjacent", used[i + 1], used[i]]
+	if r < 0.6:
+		return ["first", used[0], 0]
+	if r < 0.7:
+		return ["last", used[3], 0]
+	if r < 0.8:
+		return ["silent", silent, 0]
+	if r < 0.9:
+		var k := randi() % 4
+		return ["pos", used[k], k]
+	var k2 := randi() % 4
+	var bad := (k2 + randi_range(1, 3)) % 4
+	return ["notpos", used[k2], bad]
+
+
+## Подсказки до единственного решения (без прямого «первым идёт X» как можно дольше).
+func _make_clues() -> void:
+	var cands := _all_seqs()
+	_clues = []
+	var guard := 0
+	while cands.size() > 1 and guard < 200:
+		guard += 1
+		var c := _random_clue()
+		var left := cands.filter(func(s): return _sat(s, c))
+		if left.size() < cands.size():
+			_clues.append(c)
+			cands = left
+	# Распределяем: 1 — камень, 2 — дух, остальное — скрижаль
+	_clue_src = []
+	_found = []
+	for i in _clues.size():
+		_clue_src.append("stone" if i == 0 else ("spirit" if i <= 2 else "tablet"))
+		_found.append(false)
+
+
+func _clue_text(c: Array) -> String:
+	var A: String = RUNE_WORDS[c[1]][0]
+	match c[0]:
+		"before":
+			return "%s просыпается раньше %s." % [A, RUNE_WORDS[c[2]][1]]
+		"adjacent":
+			return "%s и %s идут рука об руку." % [A, RUNE_WORDS[c[2]][0].to_lower()]
+		"first":
+			return "Первым говорит %s." % A.to_lower()
+		"last":
+			return "%s замыкает круг." % A
+		"silent":
+			return "%s в эту ночь молчит." % A
+		"pos":
+			return "%s звучит %s." % [A, ORD[c[2]]]
+		"notpos":
+			return "%s никогда не звучит %s." % [A, ORD[c[2]]]
+	return ""
+
+
+## Скрижаль — пиктограммы, а не слова.
+func _clue_glyph(c: Array) -> String:
+	var A: String = GLYPHS[c[1]]
+	match c[0]:
+		"before":
+			return "%s  ⋯  %s" % [A, GLYPHS[c[2]]]
+		"adjacent":
+			return "%s═%s" % [A, GLYPHS[c[2]]]
+		"first":
+			return "▸%s" % A
+		"last":
+			return "%s◂" % A
+		"silent":
+			return "%s ✕" % A
+		"pos":
+			return "%s %s" % [A, ROMAN[c[2]]]
+		"notpos":
+			return "%s ≠%s" % [A, ROMAN[c[2]]]
+	return ""
+
+
+func _find_clues(src: String) -> void:
+	var newly := false
+	for i in _clues.size():
+		if _clue_src[i] == src and not _found[i]:
+			_found[i] = true
+			newly = true
+	if newly:
+		Sound.play("gem", -4.0, 1.4)
+		main.combo_pop(main.player.position + Vector2(0, -120), "Подсказка найдена (%d / %d)" % [_found.count(true), _found.size()], color())
+
+
+## Найденные подсказки — для журнала в углу экрана.
+func found_clues() -> Array:
+	var out: Array = []
+	for i in _clues.size():
+		if _found[i]:
+			out.append(_clue_glyph(_clues[i]) if _clue_src[i] == "tablet" else _clue_text(_clues[i]))
+	return out
+
+
 func _tick_puzzle(delta: float) -> void:
 	_fail_flash = maxf(0.0, _fail_flash - delta)
-	_show_t = maxf(0.0, _show_t - delta)
-	# Камень в центре: постоять — он покажет порядок
+	# Камень: постоять — он отзовётся одной подсказкой
 	if _near(Vector2.ZERO, 70.0):
 		_hold = minf(1.0, _hold + delta)
-		if _hold >= 1.0 and _show_t <= 0.0:
-			_show_t = 8.0
-			_step = 0
+		if _hold >= 1.0 and not _found[0]:
 			Sound.play("zap", -6.0, 1.6)
-			main.combo_pop(position + Vector2(0, -150), "ЗАПОМНИТЕ ПОРЯДОК ЦВЕТОВ", color())
+			main.combo_pop(position + Vector2(0, -150), _clue_text(_clues[0]), color())
+			_find_clues("stone")
 	else:
 		_hold = maxf(0.0, _hold - delta * 2.0)
-	_labels[4].visible = _show_t <= 0.0 and _step == 0
-	for i in 4:
-		_seq_labels[i].visible = _show_t > 0.0 or i < _step
-		_seq_labels[i].modulate = Pixel.hdr(RUNE_COLORS[_seq[i]], 0.5 if i < _step else 1.5)
+	# Дух-странник: подойти — шепчет загадки
+	if _near(_spirit_pos, 140.0):
+		if _spirit_say <= 0.0:
+			var lines: Array = []
+			for i in _clues.size():
+				if _clue_src[i] == "spirit":
+					lines.append(_clue_text(_clues[i]))
+			_spirit_label.text = "«" + " ".join(lines) + "»"
+			_spirit_label.visible = true
+			Sound.play("zap", -12.0, 0.7)
+			_find_clues("spirit")
+		_spirit_say = 6.0
+	else:
+		_spirit_say = maxf(0.0, _spirit_say - delta)
+		if _spirit_say <= 0.0 and _spirit_label:
+			_spirit_label.visible = false
+	# Скрижаль: пиктограммы видны, только если подойти
+	if _near(_tablet_pos, 170.0):
+		var g: Array = []
+		for i in _clues.size():
+			if _clue_src[i] == "tablet":
+				g.append(_clue_glyph(_clues[i]))
+		_tablet_label.text = "\n".join(g) if not g.is_empty() else "◇"
+		_tablet_label.visible = true
+		_find_clues("tablet")
+	elif _tablet_label:
+		_tablet_label.visible = false
 	var on := -1
-	for i in 4:
+	for i in 5:
 		if _near(_pillars[i], 70.0):
 			on = i
 	if on != _stand:
@@ -229,13 +428,16 @@ func _press(i: int) -> void:
 		if _step >= 4:
 			_solve()
 	else:
-		# Ошибка: руны гаснут, приходит стража
+		# Ошибка: руны гаснут, вспышка бьёт по героям, приходит стража
 		_step = 0
 		_fail_flash = 0.8
 		Sound.play("hurt", -4.0, 0.6)
 		main.shake(5.0)
 		main.combo_pop(position + Vector2(0, -150), "НЕВЕРНО — РУНЫ ПОГАСЛИ", Color(1.0, 0.4, 0.4))
-		for k in 6:
+		for pl in main.players:
+			if not pl._dead and pl.position.distance_to(position) < 420.0:
+				pl.take_damage(pl.max_hp * 0.12)
+		for k in 8:
 			main.spawn_enemy(main.pick_enemy_kind(), position + Vector2.RIGHT.rotated(randf() * TAU) * randf_range(320.0, 420.0))
 
 
@@ -247,7 +449,7 @@ func _solve() -> void:
 	main.drop_material(position + Vector2(30, 0), "chips", 2)
 	main.drop_chest(position + Vector2(0, 70))
 	main.combo_pop(position + Vector2(0, -150), "ЗАГАДКА РЕШЕНА!", Pixel.hdr(Color(1.0, 0.85, 0.3), 1.5))
-	for i in 4:
+	for i in 5:
 		Fx.ring(main, position + _pillars[i], 10.0, 140.0, Pixel.hdr(RUNE_COLORS[_pillar_rune[i]], 2.2), 0.5, 5.0)
 	_done()
 
@@ -306,8 +508,8 @@ func _done() -> void:
 func quest_text() -> String:
 	if state == "done":
 		return ""
-	if kind == "puzzle" and (_show_t > 0.0 or _step > 0):
-		return "Рунная загадка: пройдите по столбам в порядке цветов  •  %d / 4" % _step
+	if kind == "puzzle" and _found.count(true) > 0:
+		return "Рунная загадка: подсказки %d / %d — ищите духа и скрижаль в округе  •  руны %d / 4" % [_found.count(true), _found.size(), _step]
 	if kind == "beacons" and _timer > 0.0:
 		var n := 0
 		for l in _lit:
@@ -343,9 +545,11 @@ func _draw() -> void:
 		"puzzle":
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 			draw_arc(Vector2.ZERO, 70.0, 0.0, TAU, 32, Color(c, a), 3.0)
-			if _hold > 0.0 and _show_t <= 0.0:
+			if _hold > 0.0 and not _found[0]:
 				draw_arc(Vector2.ZERO, 80.0, -PI / 2.0, -PI / 2.0 + TAU * _hold, 32, Pixel.hdr(Color.WHITE, 1.5), 5.0)
-			for i in 4:
+			# Едва заметное мерцание у духа (его ещё надо заметить)
+			draw_circle(_spirit_pos, 30.0 + 6.0 * sin(_t * 2.0), Color(0.5, 0.95, 1.0, 0.07))
+			for i in 5:
 				var p: Vector2 = _pillars[i]
 				var rc: Color = RUNE_COLORS[_pillar_rune[i]]
 				var used := _step > 0 and _seq.slice(0, _step).has(_pillar_rune[i])
