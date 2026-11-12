@@ -13,6 +13,9 @@ const BASE_URL := "https://asoma00.github.io/nighthunterneon/update/"
 const DIR := "user://update/"
 const STATE := "user://update/current.cfg"
 const CHECK_EVERY := 180.0   # раз в 3 минуты, пока игра открыта
+## Отменённые сборки (0.16.0–0.18.x с кат-сценами): их скачанные пакеты не подключаются.
+const REVOKED_FROM := 16000
+const REVOKED_TO := 18999
 
 signal status_changed(text: String)
 
@@ -35,7 +38,9 @@ func _init() -> void:
 		var path: String = cfg.get_value("update", "path", "")
 		var b: int = int(cfg.get_value("update", "build", 0))
 		var base_build: int = _builtin_build()
-		if path != "" and b > base_build and FileAccess.file_exists(path):
+		if b >= REVOKED_FROM and b <= REVOKED_TO:
+			_cleanup()   # пакет отменённых версий 0.16–0.18 — не подключаем, удаляем
+		elif path != "" and b > base_build and FileAccess.file_exists(path):
 			if not ProjectSettings.load_resource_pack(path, true):
 				push_warning("Обновление не подключилось — играем встроенной версией")
 		elif b <= base_build:
