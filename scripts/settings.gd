@@ -671,8 +671,9 @@ func set_api(new_api: String) -> String:
 		_:
 			cfg.set_value("rendering", "renderer/rendering_method", "forward_plus")
 			cfg.set_value("rendering", "rendering_device/driver.windows", "vulkan")
-	# Отдельный поток отрисовки нестабилен с OpenGL — для него рисуем в основном потоке
-	cfg.set_value("rendering", "driver/threads/thread_model", 1 if new_api == "opengl" else 2)
+	# Отдельный поток отрисовки — экспериментальный режим Godot, на ПК из-за него игра
+	# вылетала при загрузке убежища. Рисуем всегда в безопасном режиме.
+	cfg.set_value("rendering", "driver/threads/thread_model", 1)
 	# Если выбранный API не запустится, Godot сам вернётся к другому
 	cfg.set_value("rendering", "rendering_device/fallback_to_vulkan", true)
 	cfg.set_value("rendering", "rendering_device/fallback_to_d3d12", true)

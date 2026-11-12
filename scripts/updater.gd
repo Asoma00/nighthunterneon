@@ -61,13 +61,13 @@ func _safe_render_override() -> void:
 	if OS.has_feature("editor") or OS.has_feature("web") or OS.has_feature("mobile"):
 		return
 	var path := OS.get_executable_path().get_base_dir().path_join("override.cfg")
-	if FileAccess.file_exists(path) and FileAccess.get_file_as_string(path).contains("thread_model=1"):
+	var cfg := ConfigFile.new()
+	cfg.load(path)   # выбор графического API из настроек сохраняем
+	if int(cfg.get_value("rendering", "driver/threads/thread_model", 0)) == 1:
 		return
-	var f := FileAccess.open(path, FileAccess.WRITE)
-	if f == null:
+	cfg.set_value("rendering", "driver/threads/thread_model", 1)
+	if cfg.save(path) != OK:
 		return   # папка только для чтения — ничего не поделать
-	f.store_string("; Безопасный режим отрисовки (без отдельного потока рендера)\n[rendering]\n\ndriver/threads/thread_model=1\n")
-	f.close()
 	if int(ProjectSettings.get_setting("rendering/driver/threads/thread_model", 1)) == 2:
 		print("[Обновление] включён безопасный режим рендера — подействует после перезапуска")
 
