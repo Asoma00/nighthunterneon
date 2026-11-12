@@ -822,6 +822,8 @@ def setup_render():
     ls.select_material_boundary = True
     ls.select_by_collection = False
     ls.select_by_face_marks = False
+    if ls.linestyle is None:
+        ls.linestyle = bpy.data.linestyles.new("ink")
     lst = ls.linestyle
     lst.color = LINE
     lst.thickness = 2.2 * RES[1] / 720.0
