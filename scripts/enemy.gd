@@ -441,6 +441,10 @@ func _animate(dir: Vector2) -> void:
 		_emit.flip_h = _body.flip_h
 
 	var squash := _flash * (1.0 if is_boss else 2.5)
+	# Живой шаг: тяжёлые твари приседают на каждом шаге, в покое — дышат
+	if not _hover:
+		var step := 0.035 if not is_boss else 0.025
+		squash += (step * absf(sin(_t * _fps * 0.5 * PI)) - step * 0.5) if dir.length_squared() > 0.01 else 0.012 * sin(_t * 2.0 + float(get_instance_id() % 7))
 	var sc := Vector2(1.0 + squash, (1.0 - squash) * Pixel.STAND) * Pixel.PX * size_mult * _k
 	_body.scale = sc
 	_emit.scale = sc

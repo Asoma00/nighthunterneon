@@ -117,6 +117,11 @@ var _shadow: Sprite2D
 var _body: Sprite2D
 var _emit: Sprite2D
 var _halo: Sprite2D
+var _gear: Node3D
+var _idle_t := 0.0
+var _gear_key := ""
+var _gear_w: Array = []   # [Sprite3D, слот]
+var _gear_m: Array = []   # [Sprite3D, фаза]
 var _light: PointLight2D
 var _aura_glow: Sprite2D
 var _aura_ring: Sprite2D
@@ -1261,11 +1266,30 @@ func _animate(delta: float) -> void:
 	if absf(facing.x) > 0.1:
 		_body.flip_h = facing.x < 0.0
 		_emit.flip_h = _body.flip_h
+	# Стоит без дела — время от времени оглядывается по сторонам
+	_idle_t = (_idle_t + delta) if (not moving and _attack_t <= 0.0 and _cast_t <= 0.0 and _hurt_t <= 0.0) else 0.0
+	if _idle_t > 2.5 and fmod(_idle_t - 2.5, 5.0) < 0.9:
+		_body.flip_h = not _body.flip_h
+		_emit.flip_h = _body.flip_h
 	var vis := _shield_t > 0.0 or not (_invuln > 0.0 and int(_invuln * 20.0) % 2 == 0)
 	_body.visible = vis
 	_emit.visible = vis
+	# Живость: дыхание в покое, пружинящий шаг на бегу, рывок при ударе и касте
+	var sq := 0.0
+	if _hurt_t > 0.0:
+		sq = -0.1 * (_hurt_t / 0.3)
+	elif _attack_t > 0.0 or _cast_t > 0.0:
+		sq = 0.06 * sin(PI * (1.0 - maxf(_attack_t / ATTACK_T, _cast_t / CAST_T)))
+	elif moving:
+		sq = 0.045 * absf(sin(_anim_t * 9.5)) - 0.02
+	else:
+		sq = 0.018 * sin(_anim_t * 2.4)
+	var bsc := Vector2(Pixel.PX * (1.0 - sq * 0.6), Pixel.PX * Pixel.STAND * (1.0 + sq)) * float(_frames.get("k", 1.0))
+	_body.scale = bsc
+	_emit.scale = bsc
 	var pulse := 0.5 + 0.5 * sin(_anim_t * 3.0)
 	_light.energy = 1.15 + 0.15 * pulse
+	_update_gear(vis)
 	_halo.modulate.a = 0.2 + 0.15 * pulse
 
 	if not has_active("aura") and _aura_ring:
@@ -1389,6 +1413,8 @@ func _sync_swords() -> void:
 
 
 func _exit_tree() -> void:
+	if is_instance_valid(_gear):
+		_gear.queue_free()
 	for sw in _swords:
 		if is_instance_valid(sw):
 			sw.queue_free()
@@ -2127,3 +2153,72 @@ func _shurikens(count: int, dmg: float, speed: float, spiral: bool, radial := fa
 		p.color = Color(1.0, 0.4, 0.4)
 		main.projectiles_node.add_child(p)
 	Sound.play("slash", -12.0, 1.8, 0.1, 0.05)
+
+
+# ---------- Снаряжение на герое ----------
+# Каждое оружие видно на персонаже: дополнительные стволы и клинки закреплены
+# за спиной и на поясе (выглядывают из-за силуэта), модули — светящиеся
+# импланты-спутники, кружащие вокруг пояса и уходящие то вперёд, то за спину.
+
+const GEAR_SLOTS := [Vector3(-0.24, 0.62, -0.07), Vector3(0.25, 0.66, -0.07), Vector3(-0.27, 0.36, -0.05),
+	Vector3(0.28, 0.4, -0.05), Vector3(0.0, 0.86, -0.09), Vector3(-0.12, 0.2, 0.05)]
+
+
+func _gear_sprite(tex: Texture2D, px: float, unshaded: bool) -> Sprite3D:
+	var s := Sprite3D.new()
+	s.texture = tex
+	s.pixel_size = px
+	s.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	s.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	s.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+	s.shaded = not unshaded
+	s.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_gear.add_child(s)
+	return s
+
+
+func _rebuild_gear() -> void:
+	for c in _gear.get_children():
+		c.queue_free()
+	_gear_w.clear()
+	_gear_m.clear()
+	# Первое оружие герой держит в руках (оно уже на спрайте), остальные — на снаряжении
+	var ws: Array = weapons.keys()
+	for i in range(1, ws.size()):
+		if i - 1 >= GEAR_SLOTS.size():
+			break
+		var s := _gear_sprite(Pixel.icon(str(ws[i])), 0.0165, true)
+		s.modulate = Color(0.92, 0.92, 1.0)
+		_gear_w.append([s, GEAR_SLOTS[i - 1]])
+	var ps: Array = passives.keys()
+	for i in ps.size():
+		var s := _gear_sprite(Pixel.icon(str(ps[i])), 0.011, true)
+		s.modulate = Pixel.hdr(Color.WHITE, 1.25)
+		_gear_m.append([s, TAU * float(i) / maxf(1.0, float(ps.size()))])
+
+
+func _update_gear(vis: bool) -> void:
+	if main == null or main._mirror_root == null:
+		return
+	if not is_instance_valid(_gear):
+		_gear = Node3D.new()
+		main._mirror_root.add_child(_gear)
+		_gear_key = ""
+	var key := str(weapons.keys()) + "|" + str(passives.keys())
+	if key != _gear_key:
+		_gear_key = key
+		_rebuild_gear()
+	var show := vis and _body.visible and not _dead
+	_gear.visible = show
+	if not show:
+		return
+	_gear.position = main._bl(global_position, 0.0)
+	var flip := -1.0 if _body.flip_h else 1.0
+	var bob := sin(_anim_t * (11.0 if moving else 2.2)) * (0.025 if moving else 0.01)
+	for g in _gear_w:
+		var p: Vector3 = g[1]
+		(g[0] as Sprite3D).position = Vector3(p.x * flip, p.y + bob, p.z)
+		(g[0] as Sprite3D).flip_h = _body.flip_h
+	for m in _gear_m:
+		var a: float = float(m[1]) + _anim_t * 1.6
+		(m[0] as Sprite3D).position = Vector3(cos(a) * 0.42, 0.38 + sin(a * 2.0) * 0.04, sin(a) * 0.26)

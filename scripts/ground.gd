@@ -54,7 +54,7 @@ const LIGHT_PROPS := {
 	"house2": Color(1.0, 0.75, 0.35), "tower0": Color(0.7, 0.4, 1.0), "stall0": Color(1.0, 0.35, 0.75),
 	"stall1": Color(0.3, 0.9, 1.0), "well0": Color(0.3, 0.9, 1.0), "gate0": Color(0.3, 0.9, 1.0),
 	"pine1": Color(0.3, 0.9, 1.0), "pine2": Color(0.75, 0.6, 1.0), "tree3": Color(0.3, 0.9, 1.0),
-	"tree0": Color(0.35, 1.0, 0.55),
+	"tree0": Color(0.35, 1.0, 0.55), "manor0": Color(1.0, 0.78, 0.45), "keep0": Color(0.7, 0.4, 1.0),
 }
 
 var main: Node2D
@@ -620,7 +620,12 @@ func _house_row(nodes: Array, origin: Vector2, rng: RandomNumberGenerator, y: fl
 				blocked = true
 		if not blocked:
 			var roll := rng.randf()
-			if roll < 0.72:
+			if roll < 0.14 and x + 200.0 < x1:
+				# Особняк — крупное здание на два участка
+				x += 70.0
+				_put(nodes, origin, "manor0", Vector2(x, y + (-20.0 if rot == 0.0 else 20.0)), rot, true)
+				x += 90.0
+			elif roll < 0.72:
 				_put(nodes, origin, _house(rng), Vector2(x, y + rng.randf_range(-8, 8)), rot + rng.randf_range(-0.06, 0.06), rng.randf() < 0.3)
 			elif roll < 0.88:
 				_put(nodes, origin, _tree(rng, 0.2), Vector2(x, y + (-30.0 if rot == 0.0 else 30.0)), 0.0)
@@ -628,7 +633,7 @@ func _house_row(nodes: Array, origin: Vector2, rng: RandomNumberGenerator, y: fl
 			else:
 				_put(nodes, origin, _junk(rng), Vector2(x, y))
 				_put(nodes, origin, _junk(rng), Vector2(x + 34, y + 10))
-		x += rng.randf_range(140, 200)
+		x += rng.randf_range(235, 290)
 
 
 func _road_h(nodes: Array, origin: Vector2, rng: RandomNumberGenerator, y: float, x0 := 0.0, x1 := CHUNK) -> void:
@@ -824,8 +829,8 @@ func _build_district(dist: String, origin: Vector2, rng: RandomNumberGenerator, 
 			if anchor:
 				# Хутор: два дома, огороженный двор, телега, сад
 				var c := Vector2(H + rng.randf_range(-80, 80), H - 60)
-				_put(nodes, origin, "house2", c + Vector2(-90, -60), 0.0, true)
-				_put(nodes, origin, "house0", c + Vector2(110, -40), -0.15)
+				_put(nodes, origin, "manor0", c + Vector2(-120, -80), 0.0, true)
+				_put(nodes, origin, "house0", c + Vector2(175, -40), -0.15)
 				_fenced_plot(nodes, origin, rng, c + Vector2(0, 230), 3, 1)
 				_put(nodes, origin, "cart0", c + Vector2(30, 60), 0.4)
 				_put(nodes, origin, "well0", c + Vector2(-170, 80), 0.0, true)
@@ -938,11 +943,13 @@ func _build_district(dist: String, origin: Vector2, rng: RandomNumberGenerator, 
 					for k in 3:
 						_put(nodes, origin, "wall0", c + Vector2(sx, -hh + (k + 0.5) * (2.0 * hh / 3.0)), PI / 2.0)
 				_decal(nodes, origin, "decal_cobble", c, rng, 3.4, 0.0)
-				_put(nodes, origin, "well0", c + Vector2(0, -30), 0.0, true)
-				_put(nodes, origin, "banner0", c + Vector2(-110, -80))
-				_put(nodes, origin, "banner1", c + Vector2(110, -80))
-				_put(nodes, origin, "house2", c + Vector2(-150, 60), 0.0, true)
-				_put(nodes, origin, "stall1", c + Vector2(140, 70), PI)
+				# Донжон в глубине двора
+				_put(nodes, origin, "keep0", c + Vector2(0, -75), 0.0, true)
+				_put(nodes, origin, "well0", c + Vector2(150, -110), 0.0, true)
+				_put(nodes, origin, "banner0", c + Vector2(-150, 0))
+				_put(nodes, origin, "banner1", c + Vector2(150, 0))
+				_put(nodes, origin, "house2", c + Vector2(-190, 140), 0.0, true)
+				_put(nodes, origin, "stall1", c + Vector2(160, 110), PI)
 			elif v == 0:
 				# Крепостная стена поперёк местности: башни, ворота, лагерь у стены
 				var y := rng.randf_range(220, C - 300)
@@ -963,8 +970,8 @@ func _build_district(dist: String, origin: Vector2, rng: RandomNumberGenerator, 
 				# Сторожевой пост: башня, угол стены, припасы
 				var c := Vector2(rng.randf_range(250, C - 250), rng.randf_range(250, C - 250))
 				_put(nodes, origin, "tower0", c, 0.0, true)
-				_put(nodes, origin, "wall0", c + Vector2(110, 0))
-				_put(nodes, origin, "wall0", c + Vector2(0, 110), PI / 2.0)
+				_put(nodes, origin, "wall0", c + Vector2(135, 0))
+				_put(nodes, origin, "wall0", c + Vector2(0, 135), PI / 2.0)
 				_put(nodes, origin, "banner%d" % rng.randi_range(0, 1), c + Vector2(80, 80))
 				_scatter(nodes, origin, rng, ["barrel0", "barrel1", "crate0"], 4, c + Vector2(130, 120), Vector2(50, 40))
 				_scatter(nodes, origin, rng, ["TREE", "rock0", "bush0"], 6)
