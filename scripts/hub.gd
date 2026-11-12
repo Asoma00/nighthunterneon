@@ -1537,19 +1537,13 @@ func _hero_card(hid: String) -> Control:
 	v.add_child(tt)
 	card.tooltip_text = Data.HERO_LORE.get(hid, "")
 	var u: Dictionary = Meta.HERO_UNLOCK.get(hid, {"cost": 0, "conds": []})
-	if st != "owned":
-		var w_name: String = Data.WEAPONS[hc["weapon"]]["name"]
-		var rl := _label(("✓ " if Meta.hero_rescued(hid) else "✗ ") + "Спасён в бою", 11, Color(0.5, 1.0, 0.6) if Meta.hero_rescued(hid) else Color(1.0, 0.6, 0.6))
-		v.add_child(rl)
-		var pl := _label(("✓ " if Meta.parts_have(hid) >= Meta.PARTS_NEED else "✗ ") + "Оружие «%s»: %d / %d" % [w_name, Meta.parts_have(hid), Meta.PARTS_NEED], 11, Color(0.5, 1.0, 0.6) if Meta.parts_have(hid) >= Meta.PARTS_NEED else Color(1.0, 0.6, 0.6))
-		pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		pl.custom_minimum_size = Vector2(minf(150, _avail()), 0)
-		v.add_child(pl)
-		for c in u["conds"]:
-			var cl := _label(("✓ " if Meta.cond_met(c) else "✗ ") + Meta.cond_text(c), 11, Color(0.5, 1.0, 0.6) if Meta.cond_met(c) else Color(1.0, 0.6, 0.6))
-			cl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			cl.custom_minimum_size = Vector2(minf(150, _avail()), 0)
-			v.add_child(cl)
+	if st != "owned" and st != "open" and st != "expensive":
+		# Что именно нужно для найма — тайна: игрок узнаёт сам
+		var ql := _label("«Я пока не готов идти с тобой…»", 11, Color(0.75, 0.7, 0.85))
+		ql.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		ql.custom_minimum_size = Vector2(minf(150, _avail()), 0)
+		ql.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(ql)
 	var b: Button
 	match st:
 		"owned":
@@ -1579,9 +1573,9 @@ func _hero_card(hid: String) -> Control:
 		"lost":
 			b = _button("⊘ не найден", Color(0.5, 0.5, 0.6), false)
 		"parts":
-			b = _button("⊘ оружие %d/%d" % [Meta.parts_have(hid), Meta.PARTS_NEED], Color(0.5, 0.5, 0.6), false)
+			b = _button("⊘ не готов", Color(0.5, 0.5, 0.6), false)
 		_:
-			b = _button("⊘ %d ◆" % int(u["cost"]), Color(0.5, 0.5, 0.6), false)
+			b = _button("⊘ не готов", Color(0.5, 0.5, 0.6), false)
 	b.custom_minimum_size = Vector2(minf(150, _avail()), 40)
 	b.add_theme_font_size_override("font_size", 14)
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -2588,7 +2582,7 @@ func _fill_library() -> void:
 		head.add_child(pic)
 		head.add_child(_label("Ещё не открыто", 26, Color(0.7, 0.7, 0.8)))
 		art.add_child(head)
-		var hint := ("Спасите героя в бою (пленник встречается редко), соберите 3 части его оружия и наймите в таверне. Условия: " + ";  ".join(Meta.HERO_UNLOCK.get(sel_entry[0], {"conds": []})["conds"].map(func(c): return Meta.cond_text(c)))) if _lib_tab in ["heroes", "abilities"] else "Встретьте это в бою — запись появится здесь."
+		var hint := "Говорят, этого героя видели где-то в пустошах…" if _lib_tab in ["heroes", "abilities"] else "Встретьте это в бою — запись появится здесь."
 		art.add_child(_para(hint))
 	_add_close()
 
@@ -3062,7 +3056,7 @@ func _rebuild_tavern_heroes(prev_pos := Vector3.INF) -> void:
 		_world.add_child(node)
 		var fr := Pixel.frames(c["sprite"])
 		var pair := _sprite_pair(node, fr)
-		var lbl_text: String = c["name"] if owned else ("Наёмник %s — %d оск." % [c["name"], int(Meta.HERO_UNLOCK.get(hid, {"cost": 0})["cost"])] if Meta.parts_have(hid) >= Meta.PARTS_NEED else "%s — без оружия %d/%d" % [c["name"], Meta.parts_have(hid), Meta.PARTS_NEED])
+		var lbl_text: String = c["name"] if owned else "Наёмник %s" % c["name"]
 		var lbl := _label3d(node, lbl_text, Vector3(0, 2.2, 0), (c["color"] as Color).lightened(0.25) if owned else Color(1.0, 0.75, 0.6), 26)
 		lbl.visible = false
 		if not owned:
@@ -3241,11 +3235,6 @@ func _fill_hire(hid: String) -> void:
 	lore.custom_minimum_size = Vector2(minf(440 if _portrait() else 640, _avail()), 0)
 	lore.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_panel_box.add_child(_centered(lore))
-	var how := _label("Чтобы нанять: герой спасён в бою ✓  •  собрать 3 части его оружия (выпадают с врагов — 1 из 1000, иногда в тайниках)  •  выполнить условия и заплатить осколками.", 13, Color(1.0, 0.85, 0.6))
-	how.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	how.custom_minimum_size = Vector2(minf(440 if _portrait() else 640, _avail()), 0)
-	how.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_panel_box.add_child(_centered(how))
 	_panel_box.add_child(_centered(_hero_card(hid)))
 	_add_close()
 

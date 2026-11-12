@@ -1686,11 +1686,7 @@ var _beacon_t := 0.0
 
 func _beacon_targets() -> Array:
 	var out: Array = []
-	for p in pois:
-		if is_instance_valid(p) and p.get("state") != "done" and p.get("dead") != true:
-			if p.has_method("arrow_visible") and not p.arrow_visible():
-				continue   # тайник — без светового столба
-			out.append([p, p.color() if p.has_method("color") else Color(1.0, 0.3, 0.35)])
+	# Алтари, загадки, маяки и прочие места — без световых столбов (только сундуки)
 	for c in get_tree().get_nodes_in_group("chests"):
 		if is_instance_valid(c):
 			out.append([c, Color(1.0, 0.78, 0.3)])
@@ -1804,7 +1800,7 @@ func _handle_quest_pois(delta: float) -> void:
 			have[p.kind] = int(have.get(p.kind, 0)) + 1
 	# Пленник-герой: очень редко (1 из 100 на каждый бросок)
 	if int(have.get("captive", 0)) == 0 and rng.randf() < 0.01:
-		var cand := Meta.rescue_candidates()
+		var cand := Meta.rescue_candidates(level_index)
 		if not cand.is_empty():
 			_qpoi_t = rng.randf_range(80.0, 130.0)
 			_spawn_qpoi("captive", view_center() + Vector2.RIGHT.rotated(rng.randf() * TAU) * rng.randf_range(800.0, 1100.0), str(cand[rng.randi() % cand.size()]))

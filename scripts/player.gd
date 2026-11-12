@@ -629,14 +629,7 @@ func _update_aim(delta: float) -> void:
 		aim = st
 		_aim_hold = 0.6   # стик отпустили — взгляд ещё чуть держится, потом снова автоприцел
 		return
-	var kb_user: bool = input == null or input.dev == -1 or input.dev == -2
-	var now := Time.get_ticks_msec() / 1000.0
-	if kb_user and self == main.players[0] and Settings.input_mode() == "kb" and now - Settings.mouse_aim_t < 4.0:
-		var to: Vector2 = main.screen_to_world(get_tree().root.get_final_transform() * get_tree().root.get_mouse_position()) - position
-		if to.is_finite() and to.length() > 24.0:
-			aim = to.normalized()
-			_aim_hold = 0.0
-			return
+	# Прицел мышкой убран: взгляд — только правым стиком, иначе автоприцел
 	_aim_hold -= delta
 	if _aim_hold <= 0.0:
 		aim = Vector2.ZERO

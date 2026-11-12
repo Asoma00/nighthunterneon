@@ -211,7 +211,7 @@ func _build_common_rows(grid: GridContainer) -> void:
 		Settings._apply_3d_scale())
 	_mob_opt(grid, "Объёмные эффекты", ["Плоские — быстрее", "3D-искры, взрывы, обломки"], 1 if Settings.fx3d else 0, func(i): Settings.fx3d = i == 1)
 	if not Settings.is_mobile():
-		_mob_opt(grid, "Взгляд героя", ["Автоприцел", "Мышь / правый стик"], 1 if Settings.manual_aim else 0, func(i): Settings.manual_aim = i == 1)
+		_mob_opt(grid, "Взгляд героя", ["Автоприцел", "Правый стик"], 1 if Settings.manual_aim else 0, func(i): Settings.manual_aim = i == 1)
 	# --- Кадры и синхронизация ---
 	grid.add_child(_row_label("Кадры в секунду"))
 	var fps_names: Array = []

@@ -579,11 +579,15 @@ static func parts_have(id: String) -> int:
 	return mini(PARTS_NEED, int(parts.get(id, 0)))
 
 
-## Кого ещё можно встретить пленником в бою.
-static func rescue_candidates() -> Array:
+## Где томится каждый герой: найти его можно только на «своём» уровне (номер с 0).
+const HERO_LEVEL := {"rin": 0, "skyla": 1, "mora": 2, "iris": 3, "kira": 4, "bram": 5, "orm": 6, "kai": 7, "zephyr": 8}
+
+
+## Кого можно встретить пленником на этом уровне.
+static func rescue_candidates(level_i := -1) -> Array:
 	var out: Array = []
 	for h in HERO_ORDER:
-		if not hero_rescued(h):
+		if not hero_rescued(h) and (level_i < 0 or int(HERO_LEVEL.get(h, -1)) == level_i):
 			out.append(h)
 	return out
 

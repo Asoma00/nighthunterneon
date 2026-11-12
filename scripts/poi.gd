@@ -49,20 +49,10 @@ func title() -> String:
 
 func _ready() -> void:
 	z_index = -10
-	material = Pixel.mat_add()
 	_model = Props3D.build("obelisk%d" % (randi() % 3), RandomNumberGenerator.new())
 	_model.scale *= 1.4
 	main.place3d(_model, position + Vector2(0, -radius - 25.0))   # обелиск за кругом — не загораживает героя
-	var light := PointLight2D.new()
-	light.texture = Pixel.glow()
-	light.color = color()
-	light.energy = 1.4
-	light.texture_scale = 3.5
-	light.position = Vector2(0, -radius - 60.0)
-	add_child(light)
-	main.mirror_light(light, self, 1.8)
-	Fx.portal(main, position, color(), 2.0)
-	Fx.text_pop(main, position + Vector2(0, -120), "✦ " + title().to_upper() + " ✦", Pixel.hdr(color(), 1.5), 22)
+
 
 
 func _exit_tree() -> void:
@@ -190,7 +180,6 @@ func _finish(_won: bool) -> void:
 
 
 func _vanish() -> void:
-	Fx.portal(main, position, color(), 1.5)
 	queue_free()
 
 
@@ -198,12 +187,8 @@ func _draw() -> void:
 	var c := color()
 	var a := 0.35 if state == "done" else 0.8
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	draw_circle(Vector2.ZERO, radius, Color(c, 0.08 if state != "done" else 0.03))
-	draw_arc(Vector2.ZERO, radius, _t, _t + TAU, 48, Color(c, a), 3.0)
-	# Руны по кругу
-	for i in 8:
-		var ang := _t * 0.6 + TAU * i / 8.0
-		draw_circle(Vector2.RIGHT.rotated(ang) * (radius - 10.0), 3.5, Pixel.hdr(c, 1.4))
+	# Лёгкая обводка без свечения — алтарь не бросается в глаза
+	draw_arc(Vector2.ZERO, radius, 0.0, TAU, 48, Color(c, 0.12 if state == "done" else 0.3), 1.5)
 	if state == "idle" and _hold > 0.0:
 		draw_arc(Vector2.ZERO, radius + 10.0, -PI / 2.0, -PI / 2.0 + TAU * _hold / 1.5, 48, Pixel.hdr(Color.WHITE, 1.5), 6.0)
 	if state == "active" and task == "hold":

@@ -145,8 +145,6 @@ func _ready() -> void:
 				_bhold.append(0.0)
 				_add_model("lamp0" if i % 2 == 0 else "obelisk0", p + Vector2(0, -95), 1.2)
 				_labels.append(_add_label("МАЯК %d\n○" % (i + 1), p, 3.0, color(), 56))
-	if kind != "cache":
-		Fx.portal(main, position, color(), 1.2)
 
 
 func _add_label(text: String, at: Vector2, h: float, col: Color, size: int) -> Label3D:
@@ -156,7 +154,7 @@ func _add_label(text: String, at: Vector2, h: float, col: Color, size: int) -> L
 	l.font_size = size
 	l.outline_size = 14
 	l.pixel_size = 0.006
-	l.modulate = Pixel.hdr(col, 1.4)
+	l.modulate = Color(col.lerp(Color(0.82, 0.82, 0.88), 0.45), 0.7)   # без свечения — не бросается в глаза
 	l.outline_modulate = Color(0.04, 0.02, 0.08)
 	l.no_depth_test = true
 	main.place3d(l, position + at)
@@ -206,7 +204,6 @@ func _process(delta: float) -> void:
 		return
 	life -= delta
 	if life <= 0.0 or _far_from_all(3200.0):
-		Fx.portal(main, position, color(), 1.0)
 		queue_free()
 		return
 	match kind:
@@ -516,7 +513,7 @@ func _tick_beacons(delta: float) -> void:
 				_lit[i] = false
 				_bhold[i] = 0.0
 				_labels[i].text = "МАЯК %d\n○" % (i + 1)
-				_labels[i].modulate = Pixel.hdr(color(), 1.4)
+				_labels[i].modulate = Color(color().lerp(Color(0.82, 0.82, 0.88), 0.45), 0.7)
 			main.combo_pop(position + Vector2(0, -120), "МАЯКИ ПОГАСЛИ", Color(0.7, 0.7, 0.8))
 
 
@@ -564,7 +561,7 @@ func _draw() -> void:
 		"captive", "part":
 			if state != "done":
 				var rr := 90.0 if kind == "captive" else 50.0
-				draw_arc(Vector2.ZERO, rr, _t, _t + TAU * 0.85, 32, Color(c, a * (0.55 + 0.3 * sin(_t * 3.0))), 3.0)
+				draw_arc(Vector2.ZERO, rr, 0.0, TAU, 40, Color(c, 0.28), 1.5)
 				if _hold > 0.0:
 					draw_arc(Vector2.ZERO, rr + 12.0, -PI / 2.0, -PI / 2.0 + TAU * _hold / FREE_T, 32, Pixel.hdr(Color.WHITE, 1.5), 5.0)
 		"cache":
@@ -576,7 +573,7 @@ func _draw() -> void:
 				draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		"puzzle":
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-			draw_arc(Vector2.ZERO, 70.0, 0.0, TAU, 32, Color(c, a), 3.0)
+			draw_arc(Vector2.ZERO, 70.0, 0.0, TAU, 40, Color(c, 0.28), 1.5)
 			if _hold > 0.0 and not _found[0]:
 				draw_arc(Vector2.ZERO, 80.0, -PI / 2.0, -PI / 2.0 + TAU * _hold, 32, Pixel.hdr(Color.WHITE, 1.5), 5.0)
 			# Едва заметное мерцание у духа (его ещё надо заметить)
@@ -585,8 +582,9 @@ func _draw() -> void:
 				var p: Vector2 = _pillars[i]
 				var rc: Color = RUNE_COLORS[_pillar_rune[i]]
 				var used := _step > 0 and _seq.slice(0, _step).has(_pillar_rune[i])
-				draw_circle(p, 70.0, Color(rc, 0.18 if used else 0.08))
-				draw_arc(p, 70.0, 0.0, TAU, 32, Pixel.hdr(rc, 1.6) if used else Color(rc, 0.75), 5.0 if used else 3.0)
+				if used:
+					draw_circle(p, 70.0, Color(rc, 0.12))
+				draw_arc(p, 70.0, 0.0, TAU, 40, Color(rc, 0.8) if used else Color(rc, 0.3), 2.5 if used else 1.5)
 				if _fail_flash > 0.0:
 					draw_arc(p, 78.0, 0.0, TAU, 32, Color(1.0, 0.2, 0.2, _fail_flash), 5.0)
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -598,7 +596,7 @@ func _draw() -> void:
 					draw_circle(p, 80.0, Color(c, 0.12))
 					draw_arc(p, 80.0, 0.0, TAU, 32, Pixel.hdr(c, 1.6), 4.0)
 				else:
-					draw_arc(p, 80.0, _t, _t + TAU * 0.75, 32, Color(c, 0.5), 2.5)
+					draw_arc(p, 80.0, 0.0, TAU, 40, Color(c, 0.28), 1.5)
 					if _bhold[i] > 0.0:
 						draw_arc(p, 90.0, -PI / 2.0, -PI / 2.0 + TAU * _bhold[i] / 2.0, 32, Pixel.hdr(Color.WHITE, 1.5), 5.0)
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -610,7 +608,7 @@ func _draw() -> void:
 
 func _build_cage() -> void:
 	var cage := Node3D.new()
-	var bar := Props3D.emat(color(), 1.8)
+	var bar := Props3D.mat(Color(0.32, 0.3, 0.36), "panel", 3.0, 0.5)
 	var dark := Props3D.mat(Color(0.2, 0.19, 0.26), "panel", 2.0)
 	Props3D._add(cage, Props3D._cyl(0.62, 0.66, 0.14, 12), dark, Vector3(0, 0.07, 0))
 	Props3D._add(cage, Props3D._cyl(0.6, 0.6, 0.1, 12), dark, Vector3(0, 1.62, 0))
@@ -631,8 +629,7 @@ func _build_cage() -> void:
 	main.place3d(_hero_spr, position)
 	_hero_spr.position.y += fr["size"].y * _hero_spr.pixel_size / 2.0 + 0.1
 	_models.append(_hero_spr)
-	_labels.append(_add_label("ПОМОГИТЕ!", Vector2.ZERO, 2.4, color(), 48))
-	Fx.portal(main, position, color(), 1.0)
+	_labels.append(_add_label("ПОМОГИТЕ!", Vector2.ZERO, 2.4, color(), 40))
 
 
 func _tick_captive(delta: float) -> void:
@@ -649,7 +646,7 @@ func _tick_captive(delta: float) -> void:
 		var c: Dictionary = Data.CHARACTERS[hid]
 		Sound.play("levelup", 0.0)
 		main.combo_pop(position + Vector2(0, -150), "СПАСЁН: %s!" % str(c["name"]).to_upper(), Pixel.hdr(c["color"], 1.5))
-		Fx.text_pop(main, position + Vector2(0, -110), "Ждёт в таверне. Ищите части оружия «%s»" % Data.WEAPONS[c["weapon"]]["name"], Pixel.hdr(Color(1.0, 0.85, 0.5), 1.3), 18)
+		Fx.text_pop(main, position + Vector2(0, -110), "Ждёт вас в таверне", Pixel.hdr(Color(1.0, 0.85, 0.5), 1.3), 18)
 		Fx.ring(main, position, 10.0, 220.0, Pixel.hdr(c["color"], 2.0), 0.5, 6.0)
 		if is_instance_valid(_hero_spr):
 			_hero_spr.modulate = Color(1, 1, 1)
@@ -666,14 +663,12 @@ func _build_part() -> void:
 	sp.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	sp.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	sp.shaded = false
-	sp.modulate = Pixel.hdr(Color(1.0, 0.85, 0.6), 1.4)
+	sp.modulate = Color(0.85, 0.82, 0.78)
 	main.place3d(sp, position)
 	sp.position.y += 0.55
 	_models.append(sp)
 	_hero_spr = sp
-	_labels.append(_add_label("ЧАСТЬ ОРУЖИЯ", Vector2.ZERO, 1.25, color(), 34))
-	Fx.ring(main, position, 10.0, 120.0, Pixel.hdr(color(), 2.0), 0.4, 4.0)
-	Sound.play("chest", -2.0, 1.3)
+
 
 
 func _tick_part(_delta: float) -> void:
@@ -683,9 +678,9 @@ func _tick_part(_delta: float) -> void:
 		var n := Meta.add_part(hid)
 		var w: String = Data.CHARACTERS[hid]["weapon"]
 		Sound.play("evolve", -2.0)
-		var txt := "Часть оружия «%s»: %d / %d" % [Data.WEAPONS[w]["name"], n, Meta.PARTS_NEED]
+		var txt := "Найден обломок: «%s»" % Data.WEAPONS[w]["name"]
 		if n >= Meta.PARTS_NEED:
-			txt = "Оружие «%s» собрано! Оно доступно в бою, а %s — для найма в таверне" % [Data.WEAPONS[w]["name"], Data.CHARACTERS[hid]["name"]]
+			txt = "Оружие «%s» собрано!" % Data.WEAPONS[w]["name"]
 		main.combo_pop(position + Vector2(0, -120), txt, Pixel.hdr(color(), 1.4))
 		Fx.ring(main, position, 10.0, 160.0, Pixel.hdr(color(), 2.0), 0.4, 5.0)
 		_done()
