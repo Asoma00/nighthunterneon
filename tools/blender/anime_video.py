@@ -994,7 +994,7 @@ def build_video(scene_id):
             k = a[1]
             if k == "HERO":
                 k = "hero"
-            real = {"colossus": "knight", "queen": "caster"}.get(k, k)
+            real = {"colossus": "knight", "queen": "caster", "bat": "imp", "spider": "goblin", "slime": "ghoul", "wraith": "caster"}.get(k, k)
             act = Actor(a[0], real, a[2], a[3] if len(a) > 3 else 0)
             if k == "colossus":
                 act.scale = 2.3

@@ -64,7 +64,8 @@ jobs:
           n=0
           for f in $(ls frames/*.png | sort); do n=$((n+1)); cp "$f" "seq/$(printf %05d $n).png"; done
           ffmpeg -loglevel error -y -framerate 12 -i seq/%05d.png -c:v libtheora -q:v 8 -pix_fmt yuv420p out/${{ matrix.scene }}.ogv
-          i=0; for f in $(ls seq/*.png | awk 'NR%18==1'); do i=$((i+1)); cp $f out/${{ matrix.scene }}_s$(printf %03d $i).png; done
+          STEP=18; if [ "${{ github.event.inputs.test }}" != "0" ]; then STEP=1; fi
+          i=0; for f in $(ls seq/*.png | awk -v s=$STEP 'NR%s==1 || s==1'); do i=$((i+1)); cp $f out/${{ matrix.scene }}_s$(printf %03d $i).png; done
           ls -la out | head -40
       - name: Выложить в ветку
         run: |
