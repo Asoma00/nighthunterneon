@@ -65,6 +65,7 @@ def M(name):
         b.inputs["Roughness"].default_value = 0.35
     if name == "skin":
         b.inputs["Subsurface Weight"].default_value = 0.25
+    m["slot"] = name
     MATS[name] = m
     return m
 
@@ -1005,7 +1006,8 @@ def build_character(key, specs, prefix):
             c.objects.unlink(o)
         col.objects.link(o)
     for m in set(bpy.data.materials) - mats_before:
-        m["slot"] = m.name
+        if "slot" not in m:
+            m["slot"] = m.name.split(".")[0]
         m["char"] = key
         m.name = prefix + ":" + m.name
     rig = ARM
