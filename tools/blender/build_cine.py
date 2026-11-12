@@ -431,8 +431,10 @@ def build_eyes(hr, glow=False, iris_mat="iris"):
         c = on_head((s * 0.36, -0.9, 0.1), hr, 0.8)
         er = hr * 0.205
         if glow:
-            e = sphere("eye%d" % i, er, "neon", 16, 10, c, (1.15, 0.6, 0.75))
+            # Злые светящиеся щёлки под тяжёлой надбровной дугой
+            e = sphere("eye%d" % i, er * 0.9, "neon", 16, 10, on_head((s * 0.36, -0.9, 0.1), hr, 0.96), (1.3, 0.5, 0.55), (0, s * 0.25, -s * 0.3))
             to_bone(e, "head")
+            to_bone(box("browr%d" % i, er * 2.2, er * 0.6, er * 0.5, "skin", on_head((s * 0.36, -0.88, 0.32), hr, 1.0), (0.3, 0, s * 0.35), bev=0.01), "head")
             continue
         w = sphere("ew", er, "eye_white", 24, 16, c)
         ir = sphere("ir", er * 0.6, iris_mat, 20, 12, c + Vector((0, -er * 0.84, 0.0)), (1, 0.32, 1))
@@ -478,7 +480,7 @@ def build_face(hr, kind):
             to_bone(sphere("eye0", hr * 0.13, "neon", 14, 8, on_head((-0.34, -0.9, 0.12), hr, 0.85), (1.2, 0.6, 0.8)), "head")
         else:
             build_eyes(hr, glow=True)
-        jaw = sphere("mouth", hr * 0.42, "dark", 18, 10, on_head((0, -0.88, -0.48), hr, 0.92), (1.0, 0.3, 0.3))
+        jaw = sphere("mouth", hr * 0.42, "dark", 18, 10, on_head((0, -0.88, -0.48), hr, 1.0), (1.0, 0.35, 0.3))
         to_bone(jaw, "head")
         for k in range(5):
             x = (k - 2) * hr * 0.15
