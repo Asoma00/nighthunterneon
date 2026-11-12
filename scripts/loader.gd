@@ -162,18 +162,11 @@ func go(path: String) -> void:
 	tw.tween_property(_root, "modulate:a", 1.0, 0.18)
 	await tw.finished
 	await tree.process_frame
-	# 1. Сцена — в фоновом потоке
-	ResourceLoader.load_threaded_request(path)
-	var prog := []
-	while true:
-		var st := ResourceLoader.load_threaded_get_status(path, prog)
-		if st == ResourceLoader.THREAD_LOAD_LOADED:
-			break
-		if st == ResourceLoader.THREAD_LOAD_FAILED or st == ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
-			break
-		_setp(float(prog[0]) * 0.1 if prog.size() > 0 else 0.0, "")
-		await tree.process_frame
-	var ps: PackedScene = ResourceLoader.load_threaded_get(path)
+	# 1. Сцена — в основном потоке. Фоновая загрузка скриптов на ПК (Vulkan, много ядер)
+	# иногда роняла игру при нажатии «Играть»: гонка при компиляции GDScript в потоке.
+	_setp(0.05, "")
+	await tree.process_frame
+	var ps: PackedScene = load(path) as PackedScene
 	# 2. Текстуры — порциями, чтобы полоса и анимация не замирали
 	var jobs := _jobs_for(path)
 	var total := maxi(1, jobs.size())

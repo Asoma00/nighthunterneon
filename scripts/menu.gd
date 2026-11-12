@@ -28,7 +28,18 @@ var _focus := {}
 var _page_name := "main"
 
 
+var _redirect := false
+
+
 func _ready() -> void:
+	# Заставка при каждом запуске игры. На ПК с автообновлением стартовая сцена берётся
+	# из старого файла игры (меню), поэтому заставку запускаем отсюда.
+	if not preload("res://scripts/splash.gd").shown:
+		_redirect = true
+		set_process(false)
+		set_process_unhandled_input(false)
+		get_tree().change_scene_to_file.call_deferred("res://splash.tscn")
+		return
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_selected = Data.selected_character
@@ -332,21 +343,34 @@ func _sprite_stack(key: String, size: float, walking: bool) -> Control:
 
 # ---------- Главная ----------
 
+var _mbtn_h := 56.0
+
+
+func _main_btn(text: String, accent: Color) -> Button:
+	var b := _button(text, accent)
+	b.custom_minimum_size.y = _mbtn_h
+	b.add_theme_font_size_override("font_size", int(clampf(_mbtn_h * 0.4, 16.0, 22.0)))
+	return b
+
+
 func _build_main_page() -> void:
 	var v := _page("main")
-	# Логотип в стиле 80-х: хромированное «НОЧЬ ОХОТНИКА», неоновое «неон», треугольник
-	var vw := get_viewport().get_visible_rect().size.x
+	# Главное меню целиком помещается в экран: высота кнопок и логотипа
+	# считаются от высоты окна, прокрутки нет.
+	var vs := get_viewport().get_visible_rect().size
+	var n_btn := 6 - (1 if Settings.is_web() else 0) - (1 if Settings.is_mobile() else 0)
+	_mbtn_h = clampf((vs.y - 200.0) / (n_btn + 4.2) - 8.0, 38.0, 56.0)
+	v.add_theme_constant_override("separation", int(clampf(_mbtn_h * 0.2, 6.0, 14.0)))
+	var used := n_btn * (_mbtn_h + _mbtn_h * 0.2) + 70.0 + 80.0
+	var logo_h := clampf(vs.y - used, 90.0, 310.0)
 	var logo = preload("res://scripts/retro_logo.gd").new()
-	var lw := minf(vw - 30.0, 860.0)
+	var lw := minf(minf(vs.x - 30.0, 860.0), logo_h / 0.36)
 	logo.custom_minimum_size = Vector2(lw, lw * 0.36)
 	logo.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(logo)
 	logo.setup("НОЧЬ ОХОТНИКА", "неон", int(lw / 9.5), true)
 	logo.play()
-	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(0, 10)
-	v.add_child(spacer)
-	var play := _button("ИГРАТЬ", CYAN)
+	var play := _main_btn("ИГРАТЬ", CYAN)
 	play.pressed.connect(func():
 		Data.coop = false
 		Data.world_seed = 0
@@ -355,34 +379,34 @@ func _build_main_page() -> void:
 		tw.tween_property(self, "modulate", Color(0, 0, 0, 1), 0.35)
 		tw.tween_callback(func(): Loader.go("res://hub.tscn")))
 	v.add_child(play)
-	var coop := _button("ИГРАТЬ ВДВОЁМ", Color(1.0, 0.4, 0.75))
+	var coop := _main_btn("ИГРАТЬ ВДВОЁМ", Color(1.0, 0.4, 0.75))
 	coop.pressed.connect(func():
 		Sound.play("click")
 		_show("coop"))
 	v.add_child(coop)
-	var net := _button("СЕТЕВАЯ ИГРА (LAN)", Color(0.4, 1.0, 0.6))
+	var net := _main_btn("СЕТЕВАЯ ИГРА (LAN)", Color(0.4, 1.0, 0.6))
 	net.pressed.connect(func():
 		Sound.play("click")
 		_show("net"))
 	v.add_child(net)
 	net.visible = not Settings.is_web()   # в браузере сеть по Wi-Fi (LAN) недоступна
-	var saves := _button("СОХРАНЕНИЯ", GOLD)
+	var saves := _main_btn("СОХРАНЕНИЯ", GOLD)
 	saves.pressed.connect(func():
 		Sound.play("click")
 		_show("saves"))
 	v.add_child(saves)
-	var settings := _button("НАСТРОЙКИ", MAGENTA)
+	var settings := _main_btn("НАСТРОЙКИ", MAGENTA)
 	settings.pressed.connect(func():
 		Sound.play("click")
 		_show("settings"))
 	v.add_child(settings)
-	var quit := _button("ВЫХОД", Color(0.6, 0.6, 0.75))
+	var quit := _main_btn("ВЫХОД", Color(0.6, 0.6, 0.75))
 	quit.pressed.connect(func(): get_tree().quit())
 	v.add_child(quit)
 	_add_profile_badge()
 	if Settings.is_mobile():
 		quit.visible = false
-	var hint := _label(_controls_hint(), 15, Color(0.7, 0.7, 0.85))
+	var hint := _label(_controls_hint(), 13 if vs.y < 760.0 else 15, Color(0.7, 0.7, 0.85))
 	_hint_l = hint
 	Settings.input_mode_changed.connect(func(_m): if is_instance_valid(_hint_l): _hint_l.text = _controls_hint())
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

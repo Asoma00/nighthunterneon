@@ -9,6 +9,7 @@ const RATE := 16000
 const BPM := 112.0
 const STAGES := [3.6, 3.6, 4.6]
 
+static var shown := false
 var _t := 0.0
 var _all_t := 0.0
 var _stage := -1
@@ -21,6 +22,7 @@ var _stars: Array = []
 
 
 func _ready() -> void:
+	shown = true
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	for i in 70:
 		_stars.append(Vector3(randf(), randf() * 0.55, randf()))
