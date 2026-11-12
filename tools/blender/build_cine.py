@@ -491,6 +491,8 @@ def build_face(hr, kind):
         if S.get("ears"):
             for i, s in ((0, -1), (1, 1)):
                 to_bone(cyl("ear%d" % i, hr * 0.22, 0.0, hr * 1.1, "skin", 10, on_head((s, 0, 0.1), hr, 1.0) + Vector((s * hr * 0.4, 0, hr * 0.1)), (0, s * -1.2, 0), (0.45, 1, 1)), "head")
+    elif kind == "none":
+        pass
     elif kind == "visor":
         v = torus("visor", hr * 0.92, hr * 0.085, "visor", HC + Vector((0, -hr * 0.05, hr * 0.12)), (0, 0, 0), (1.0, 1.15, 1.6), 28, math.pi)
         v.rotation_euler = (0, 0, math.pi)
@@ -607,6 +609,48 @@ def build_headwear(hr):
             # Неоновая визор-маска поперёк глаз
             v = torus("visor", hr * 0.95, hr * 0.06, "visor", HC + Vector((0, 0, hr * 0.13)), (0, 0, math.pi), (0.95, 1.2, 1.4), 28, math.pi)
             to_bone(v, "head")
+    elif h in ("boss_hood", "boss_lich"):
+        if h == "boss_lich":
+            sk = head_mesh(hr * 1.02, True)
+            sk.name = "skull"
+            sk.data.materials[0] = M("bone")
+            to_bone(sk, "head")
+            for i, s in ((0, -1), (1, 1)):
+                to_bone(sphere("sock%d" % i, hr * 0.24, "dark", 16, 10, on_head((s * 0.36, -0.9, 0.12), hr, 0.9)), "head")
+                to_bone(sphere("eye%d" % i, hr * 0.1, "neon", 12, 8, on_head((s * 0.36, -0.9, 0.12), hr, 1.0)), "head")
+            crown = cyl("crown", hr * 0.95, hr * 0.92, hr * 0.3, "trim", 24, HC + Vector((0, 0, hr * 0.95)), caps=False)
+            parts = [crown]
+            for k in range(7):
+                a = 2 * math.pi * k / 7
+                parts.append(cyl("spk%d" % k, hr * 0.12, 0.0, hr * 0.6, "trim", 6, HC + Vector((math.cos(a) * hr * 0.92, math.sin(a) * hr * 0.92, hr * 1.35))))
+            parts.append(sphere("cgem", hr * 0.14, "gem", 8, 6, HC + Vector((0, -hr * 0.95, hr * 1.0))))
+            to_bone(join(parts, "crown"), "head")
+        else:
+            to_bone(sphere("void", hr * 1.0, "dark", 24, 16, HC, (0.9, 1.0, 1.1)), "head")
+            to_bone(torus("omega", hr * 0.38, hr * 0.07, "neon", HC + Vector((0, -hr * 0.98, hr * 0.12)), (math.pi / 2, 0, 0)), "head")
+            for i, s in ((0, -1), (1, 1)):
+                to_bone(box("foot%d" % i, hr * 0.3, hr * 0.06, hr * 0.12, "neon", HC + Vector((s * hr * 0.3, -hr * 0.98, -hr * 0.3))), "head")
+        bm = bmesh.new()
+        bmesh.ops.create_uvsphere(bm, u_segments=36, v_segments=24, radius=1.0)
+        kill = [v for v in bm.verts if v.co.y < -0.5 and v.co.z < 0.55]
+        bmesh.ops.delete(bm, geom=kill, context="VERTS")
+        for vtx in bm.verts:
+            p = vtx.co.copy()
+            p.z *= 1.25
+            if p.y > 0.2 and p.z > 0.0:
+                p.y += p.z * 0.7
+                p.z += p.z * 0.4
+            vtx.co = p * hr * 1.45 + HC + Vector((0, hr * 0.2, hr * 0.15))
+        hood = obj_from_bm("hood", bm, "hat")
+        sol = hood.modifiers.new("sol", "SOLIDIFY")
+        sol.thickness = hr * 0.1
+        apply_mods(hood)
+        to_bone(hood, "head")
+        to_bone(torus("hoodtrim", hr * 1.25, hr * 0.05, "neon2", HC + Vector((0, -hr * 0.55, hr * 0.15)), (math.pi / 2 - 0.15, 0, 0), (0.85, 1.0, 1.25)), "head")
+        # Шипастые наплечники
+        for i, s in ((0, -1), (1, 1)):
+            x = s * (S["tw"] + S["arm"] * 0.4)
+            to_bone(cyl("spike%d" % i, 0.07, 0.0, 0.32, "trim", 8, (x + s * 0.05, 0, 1.58), (0, -s * 0.5, 0)), "upperarm%d" % i)
     elif h == "samurai":
         build_hair(hr, "ponytail")
         to_bone(torus("band", hr * 1.0, hr * 0.07, "neon", HC + Vector((0, 0, hr * 0.45)), (0, 0, 0), (0.9, 1.0, 1.0)), "head")
@@ -911,11 +955,27 @@ def build_weapon():
 
 # ---------- Сборка персонажа ----------
 
+def boss_spec(src):
+    """Боссы в мантиях — тот же двуногий скелет, длинная роба скрывает ноги."""
+    main = src.get("main", [0.15, 0.15, 0.2])
+    neon = src.get("neon", [0.3, 1, 0.9])
+    n2 = src.get("neon2", neon)
+    lich = src["kind"] == "boss_lich"
+    return {"kind": "biped", "tw": 0.27, "td": 0.18, "arm": 0.085, "leg": 0.1, "head_r": 0.19,
+            "skin": [0.85, 0.83, 0.78], "main": main, "trim": n2, "legs": main, "boots": main,
+            "neon": neon, "neon2": n2, "gem": n2, "hair": main, "head": "boss_lich" if lich else "boss_hood",
+            "head_c": main, "back": "robe", "back_c": [main[0] * 0.8, main[1] * 0.8, main[2] * 0.8],
+            "weapon": "staff" if lich else ("none" if src.get("chorus") else "orbstaff"), "w_c": [0.25, 0.22, 0.28],
+            "face": "boss", "boss": True}
+
+
 def build(key):
     global S, MATS, ARM
     bpy.ops.wm.read_factory_settings(use_empty=True)
     MATS = {}
     S = dict(SPECS[key])
+    if S.get("kind", "").startswith("boss_"):
+        S = boss_spec(S)
     S.setdefault("hunch", 0.0)
     build_armature()
     build_body()
@@ -926,9 +986,9 @@ def build(key):
         face = "human"        # под капюшоном видно лицо, поверх — неоновый визор
     if head == "ninja":
         face = "ninja"
-    if head == "great_helm":
+    if head == "great_helm" or face == "boss":
         face = "none"
-    if face != "skull":
+    if face != "skull" and not S.get("boss"):
         hm = head_mesh(hr, S.get("mob", False))
         to_bone(hm, "head")
     build_face(hr, face if face != "visor" else "visor")
@@ -986,7 +1046,7 @@ def render_preview(key):
     bpy.ops.render.render(write_still=True)
 
 
-keys = ONLY if ONLY else [k for k, v in SPECS.items() if v.get("kind") == "biped"]
+keys = ONLY if ONLY else [k for k, v in SPECS.items() if v.get("kind") in ("biped", "boss_lich", "boss_omega")]
 fails = []
 for k in keys:
     try:
