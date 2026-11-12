@@ -153,6 +153,18 @@ func _update_tracker() -> void:
 	_tracker.position = Vector2(14.0 + float(sm[0]), (240.0 if portrait() else 150.0) + float(sm[1]))
 
 
+## Стрелка к месту появляется, только если место уже попадало в кадр, а потом герой ушёл от него.
+var _arrow_seen := {}
+
+
+func _arrow_ok(n: Node2D, pos: Vector2) -> bool:
+	var id := n.get_instance_id()
+	if main.on_screen(pos):
+		_arrow_seen[id] = true
+		return false
+	return _arrow_seen.has(id)
+
+
 func _draw_poi_arrows() -> void:
 	var vs := _poi_layer.size
 	var c := vs / 2.0
@@ -166,7 +178,7 @@ func _draw_poi_arrows() -> void:
 		if not pp.is_finite():
 			continue
 		var d: Vector2 = pp - me
-		if d.length() < 650.0:
+		if not _arrow_ok(p, pp):
 			continue
 		var col: Color = p.color() if p.has_method("color") else Color(1.0, 0.3, 0.35)
 		var dir := d.normalized()
@@ -180,7 +192,7 @@ func _draw_poi_arrows() -> void:
 		if not is_instance_valid(ch):
 			continue
 		var d: Vector2 = ch.position - me
-		if d.length() < 600.0:
+		if not _arrow_ok(ch, ch.position):
 			continue
 		var col := GOLD
 		var dir := d.normalized()

@@ -725,6 +725,13 @@ func screen_to_world(sp: Vector2) -> Vector2:
 	return Vector2(w.x, w.z) / PLANE_TEXEL
 
 
+## Точка мира сейчас в кадре камеры.
+func on_screen(p: Vector2) -> bool:
+	if _cam3d == null or camera == null:
+		return false
+	return _cam3d.is_position_in_frustum(to3d(p, 0.3))
+
+
 func _bl(p: Vector2, height := 0.0) -> Vector3:
 	return Vector3(p.x * PLANE_TEXEL, height, p.y * PLANE_TEXEL)
 

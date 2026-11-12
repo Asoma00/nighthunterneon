@@ -618,21 +618,9 @@ var _aim_in: RefCounted
 var _aim_hold := 0.0
 
 
-func _update_aim(delta: float) -> void:
-	if choosing or net_controlled or remote or Settings.is_mobile() or not Settings.manual_aim:
-		aim = Vector2.ZERO
-		return
-	if _aim_in == null:
-		_aim_in = preload("res://scripts/devinput.gd").new(input.dev if input != null else -1)
-	var st: Vector2 = _aim_in.aim_stick()
-	if st != Vector2.ZERO:
-		aim = st
-		_aim_hold = 0.6   # стик отпустили — взгляд ещё чуть держится, потом снова автоприцел
-		return
-	# Прицел мышкой убран: взгляд — только правым стиком, иначе автоприцел
-	_aim_hold -= delta
-	if _aim_hold <= 0.0:
-		aim = Vector2.ZERO
+func _update_aim(_delta: float) -> void:
+	# Ручное прицеливание убрано совсем: оружие всегда бьёт по автоприцелу
+	aim = Vector2.ZERO
 
 
 func in_aura(pos: Vector2) -> bool:
