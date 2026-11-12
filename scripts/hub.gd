@@ -720,17 +720,22 @@ func _build_decor() -> void:
 
 	# ---- Домики жителей: каменный низ, дощатый верх, неоновые окна и вывески ----
 	var spots: Array = []
-	for i in 40:
+	for i in 200:
 		var a := rng.randf() * TAU
-		var d := rng.randf_range(14.0, 20.5)
+		var d := rng.randf_range(13.0, 20.5)
 		var p := Vector3(cos(a) * d, 0, sin(a) * d)
-		if _near_building(p, 5.0) or absf(p.x) < 3.2 or _near_any(spots, p, 4.2):
+		if _near_building(p, 3.2) or absf(p.x) < 3.6 or _near_any(spots, p, 4.6) or p.distance_to(CAMPFIRE) < 5.0 or not _free(p, 2.0):
 			continue
 		spots.append(p)
-		if spots.size() >= 14:
+		if spots.size() >= 12:
 			break
-	for p in spots:
-		_house(p, rng)
+	# Дома — те же 3D-модели с пиксельными текстурами, что и в бою, фасадом к площади
+	for i in spots.size():
+		var p: Vector3 = spots[i]
+		var kind: String = ["house0", "house1", "house2", "house0", "house1", "manor0"][i % 6]
+		if kind == "manor0" and (_near_building(p, 7.0) or _near_any(spots.slice(0, i), p, 7.0)):
+			kind = "house2"
+		_prop(kind, p, atan2(-p.x, -p.z), 0.75)
 
 	# ---- Рыночные лавки: на свободных местах, подальше от зданий ----
 	var stalls := STALLS
@@ -755,14 +760,35 @@ func _build_decor() -> void:
 		var p := Vector3(cos(a) * d, 0, sin(a) * d)
 		_pine(p, rng, rng.randf_range(1.3, 2.2))
 
-	# ---- Мелочи: ящики, бочки, скамейки, лужи, мох ----
+	# ---- Детали из боя: ящики, бочки, телеги, вывески, знамёна, заборы, камни ----
+	var det := ["crate0", "crate1", "barrel0", "barrel1", "cart0", "sign0", "sign1", "banner0", "banner1",
+		"fence0", "rock0", "rock1", "lantern0", "crate0", "barrel0", "bush0", "bush1", "mushroom0", "mushroom1"]
+	var placed := 0
+	for i in 260:
+		if placed >= 70:
+			break
+		var a := rng.randf() * TAU
+		var d := rng.randf_range(8.0, 22.5)
+		var p := Vector3(cos(a) * d, 0, sin(a) * d)
+		if _near_building(p, 3.4) or absf(p.x) < 2.4 or p.distance_to(CAMPFIRE) < 3.5 or not _free(p, 1.1):
+			continue
+		var kind: String = det[rng.randi() % det.size()]
+		_prop(kind, p, rng.randf() * TAU, 1.0, not kind.begins_with("bush") and not kind.begins_with("mushroom"))
+		placed += 1
+	# Фонари вдоль главных дорожек
+	for i in 12:
+		var a := TAU * i / 12.0 + 0.26
+		var p := Vector3(cos(a) * 11.0, 0, sin(a) * 11.0)
+		if _near_building(p, 3.0) or absf(p.x) < 2.4 or not _free(p, 0.8):
+			continue
+		_prop(["lamp0", "lamp1"][i % 2], p, -a, 1.0)
 	for i in 30:
 		var a := rng.randf() * TAU
 		var d := rng.randf_range(8.5, 21.0)
 		var p := Vector3(cos(a) * d, 0, sin(a) * d)
-		if _near_building(p, 3.6) or absf(p.x) < 2.0:
+		if _near_building(p, 3.6) or absf(p.x) < 2.0 or not _free(p, 0.9):
 			continue
-		match rng.randi_range(0, 3):
+		match rng.randi_range(2, 3):
 			0:
 				var s := rng.randf_range(0.45, 0.7)
 				_add(_world, _box(s, s, s), wood, p + Vector3(0, s / 2.0, 0), Vector3(0, rng.randf() * 90.0, 0))
@@ -833,6 +859,36 @@ var _obstacles: Array = []
 var _flicker: Array = []   # [материал, базовая яркость, фаза]
 var _sway: Array = []      # [узел, фаза, сила]
 var _drones: Array = []    # [узел, радиус, скорость, угол, высота]
+
+
+## Модель из боя (Props3D) в убежище: тот же меш и текстуры, масштаб под рост жителей,
+## препятствия — по форме модели.
+const HUB_K := 1.45
+
+
+func _prop(kind: String, p: Vector3, rot := 0.0, k := 1.0, solid := true) -> Node3D:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector2(p.x, p.z))
+	var n := Props3D.build(kind, rng)
+	n.scale *= HUB_K * k
+	n.position = p
+	n.rotation.y = rot
+	_world.add_child(n)
+	if solid:
+		var s := n.scale.x
+		for sh in Props3D.shapes(kind):
+			var wo := (Vector2(sh[1], sh[2]) * s).rotated(-rot)
+			var c := p + Vector3(wo.x, 0, wo.y)
+			if sh[0] == "r":
+				_obstacles.append([c, Vector2(sh[3], sh[4]) * s, rot])
+			else:
+				_obstacles.append([c, float(sh[3]) * s])
+	return n
+
+
+## Место свободно: в радиусе r нет препятствий.
+func _free(p: Vector3, r: float) -> bool:
+	return _collide(p, r).distance_to(p) < 0.01
 
 
 func _near_building(p: Vector3, r: float) -> bool:
@@ -921,7 +977,12 @@ func _stall(p: Vector3, col: Color, rng: RandomNumberGenerator) -> void:
 	_obstacles.append([p, Vector2(1.0, 0.55), root.rotation.y])
 
 
+## Деревья — те же объёмные пиксельные (воксельные) деревья, что и в бою.
 func _pine(p: Vector3, rng: RandomNumberGenerator, scale := 1.0) -> void:
+	_prop(["pine0", "pine0", "pine1", "pine2"][rng.randi_range(0, 3)], p, rng.randf() * TAU, scale * rng.randf_range(0.9, 1.2), scale <= 1.0)
+
+
+func _pine_old(p: Vector3, rng: RandomNumberGenerator, scale := 1.0) -> void:
 	var root := Node3D.new()
 	root.position = p
 	root.scale = Vector3.ONE * scale * rng.randf_range(0.8, 1.25)
@@ -938,6 +999,10 @@ func _pine(p: Vector3, rng: RandomNumberGenerator, scale := 1.0) -> void:
 
 
 func _cyber_tree(p: Vector3, rng: RandomNumberGenerator) -> void:
+	_prop(["tree0", "tree1", "tree2", "tree3"][rng.randi_range(0, 3)], p, rng.randf() * TAU, rng.randf_range(0.9, 1.15))
+
+
+func _cyber_tree_old(p: Vector3, rng: RandomNumberGenerator) -> void:
 	var root := Node3D.new()
 	root.position = p
 	_world.add_child(root)
@@ -2118,6 +2183,9 @@ func _add_npc(role: String, pos: Vector3, extra := {}) -> void:
 	for k in extra:
 		v[k] = extra[k]
 	_apply_profile(v, _profile_for(role))
+	# Стартовая точка и «рабочее место» — не внутри моделей
+	(v["node"] as Node3D).position = _collide((v["node"] as Node3D).position, 0.5)
+	v["home"] = _collide(v["home"], 0.5)
 	_npc_n += 1
 
 
@@ -2148,6 +2216,75 @@ func _make_npc(role: String, pos: Vector3, seed: int, nm: String) -> Dictionary:
 		"bubble": bubble, "bubble_t": rng.randf_range(3.0, 14.0), "name": name_l, "speed": speed, "fx_t": rng.randf() * 2.0}
 	_villagers.append(v)
 	return v
+
+
+## Любимые места жителей — куда они ходят по своим делам.
+const HAUNTS := {
+	"Мира": ["gate", "gate", "campfire"], "Лекс": ["lab", "board", "portal"], "Ада": ["shrine", "hall", "campfire"],
+	"Нико": ["board", "portal", "gate"], "Рей": ["lab", "forge", "well"], "Зоя": ["gate", "board", "hall"],
+}
+
+
+func _place(id: String) -> Vector3:
+	match id:
+		"gate":
+			return Vector3(randf_range(-1.5, 1.5), 0, 20.5)
+		"board":
+			return BOARD + Vector3(randf_range(-1.0, 1.0), 0, 1.6)
+		"portal":
+			return PORTAL_POS + Vector3(randf_range(-2.0, 2.0), 0, 2.4)
+		"campfire":
+			return CAMPFIRE + Vector3(randf_range(-2.5, 2.5), 0, 2.8)
+		"well":
+			return WELL + Vector3(randf_range(-1.2, 1.2), 0, 1.8)
+		"market":
+			return STALLS[randi() % STALLS.size()] + Vector3(0, 0, 1.6)
+	if Meta.BUILDINGS.has(id):
+		return Meta.BUILDINGS[id]["pos"] + Vector3(randf_range(-1.2, 1.2), 0, 2.7)
+	return Vector3.ZERO
+
+
+## Шаг в обход препятствий: прямо, иначе пробуем отклониться в «свою» сторону,
+## потом в другую. Плюс лёгкое расталкивание с соседями.
+func _steer(pos: Vector3, dir: Vector3, step: float, v: Dictionary) -> Vector3:
+	var side: float = v.get("side", 1.0 if randf() < 0.5 else -1.0)
+	for a in [0.0, 35.0, 70.0, 105.0, 140.0]:
+		for s in ([1.0] if a == 0.0 else [side, -side]):
+			var d := dir.rotated(Vector3.UP, deg_to_rad(a * s))
+			var cand := pos + d * step
+			var c := _collide(cand, 0.35)
+			if c.distance_to(cand) < step * 0.35:
+				if a > 0.0:
+					v["side"] = s
+				return _separate(c, v)
+	return _separate(_collide(pos + dir * step, 0.35), v)
+
+
+func _separate(p: Vector3, v: Dictionary) -> Vector3:
+	for o in _villagers:
+		if o == v or o.has("chat") and o["chat"]["with"] == v:
+			continue
+		var op: Vector3 = (o["node"] as Node3D).position
+		var d := Vector3(p.x - op.x, 0, p.z - op.z)
+		var l := d.length()
+		if l < 0.55 and l > 0.001:
+			p += d / l * (0.55 - l) * 0.5
+	return p
+
+
+func _unstick(v: Dictionary) -> void:
+	var node: Node3D = v["node"]
+	var role: String = v["role"]
+	if role in ["merchant", "smith", "monk", "musician", "elder", "trainee", "barkeep", "blacksmith", "priestess", "engineer", "commander"]:
+		# Стоят на своём месте: если место занято моделью — переносим «дом» рядом
+		v["home"] = _collide(v["home"], 0.5)
+		node.position = _collide(node.position, 0.5)
+		return
+	v.erase("chat")
+	var a := randf() * TAU
+	v["target"] = _collide(node.position + Vector3(cos(a), 0, sin(a)) * randf_range(2.0, 4.0), 0.5)
+	v["wait"] = 0.3
+	v["side"] = -float(v.get("side", 1.0))
 
 
 ## Поведение NPC по ролям.
@@ -2189,7 +2326,11 @@ func _update_villagers(delta: float) -> void:
 					if v["wait"] <= 0.0:
 						v["wait"] = randf_range(2.0, 6.0)
 						var r := randf()
-						if r < 0.4:
+						var haunts: Array = HAUNTS.get(v.get("profile", {}).get("name", ""), [])
+						if not haunts.is_empty() and randf() < 0.65:
+							# У каждого жителя свои дела: лекарка — у алтаря, механик — у лаборатории…
+							v["target"] = _place(haunts[randi() % haunts.size()])
+						elif r < 0.4:
 							var ids := Meta.BUILDINGS.keys()
 							var bp: Vector3 = Meta.BUILDINGS[ids[randi() % ids.size()]]["pos"]
 							v["target"] = bp + Vector3(randf_range(-1.5, 1.5), 0, 2.6)
@@ -2200,14 +2341,32 @@ func _update_villagers(delta: float) -> void:
 						else:
 							var a := randf() * TAU
 							v["target"] = Vector3(cos(a), 0, sin(a)) * randf_range(1.5, 6.0)
+		# Цель внутри стены или модели — сдвигаем к ближайшему свободному месту
+		if v.get("tchk", Vector3.INF) != v["target"]:
+			v["target"] = _collide(v["target"], 0.45)
+			v["tchk"] = v["target"]
 		var to: Vector3 = v["target"] - node.position
 		to.y = 0
 		var moving := to.length() > 0.2
 		if moving:
 			var step := minf(to.length(), float(v["speed"]) * delta)
-			node.position = _collide(node.position + to.normalized() * step, 0.35)
-			(v["base"] as Sprite3D).flip_h = to.x < 0.0
-			(v["emit"] as Sprite3D).flip_h = to.x < 0.0
+			var before := node.position
+			node.position = _steer(node.position, to.normalized(), step, v)
+			var mv := node.position - before
+			if absf(mv.x) > 0.002:
+				(v["base"] as Sprite3D).flip_h = mv.x < 0.0
+				(v["emit"] as Sprite3D).flip_h = mv.x < 0.0
+			# Застрял: за 2 с почти не приблизился к цели — ищет другой путь
+			v["st"] = float(v.get("st", 0.0)) + delta
+			if float(v["st"]) > 2.0:
+				var d_now := to.length()
+				if float(v.get("st_d", 999.0)) - d_now < 0.4:
+					_unstick(v)
+				v["st_d"] = d_now
+				v["st"] = 0.0
+		else:
+			v["st"] = 0.0
+			v["st_d"] = 999.0
 		var fr: Dictionary = v["frames"]
 		var f: int
 		if role == "robot":
@@ -3412,6 +3571,7 @@ func _contract_card(q: Dictionary, i: int, taken: bool) -> Control:
 # Жители не бродят «болванчиками»: работают на своих местах, сходятся поболтать,
 # благодарят за выполненные просьбы. Над теми, у кого есть дело к охотнику, — «!».
 
+const Props3D := preload("res://scripts/props3d.gd")
 const Story := preload("res://scripts/story.gd")
 const COMMANDER_POS := Vector3(-5.6, 0, 0.4)
 var _role_n := {}

@@ -1,4 +1,4 @@
-# Ночь охотника: Неон — версия 0.14.24
+# Ночь охотника: Неон — версия 0.14.25
 
 **Скачать для любого устройства:** https://asoma00.github.io/nighthunterneon/download/
 (Windows, Steam Deck / Linux, Android, а на iPhone — игра прямо в Safari)

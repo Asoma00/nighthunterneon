@@ -148,6 +148,9 @@ const SPECS := {
 	"zephyr": [48, 60, 35, true, 0.56],
 	"iris": [48, 60, 35, true, 0.56],
 	"kai": [48, 60, 35, true, 0.56],
+	"lyra": [48, 60, 35, true, 0.56],
+	"sol": [48, 60, 35, true, 0.56],
+	"volt": [48, 60, 35, true, 0.56],
 	"goblin": [24, 24, 12, true, 0.667],
 	"slime": [30, 24, 12, true, 0.667],
 	"slimelet": [18, 15, 12, true, 0.667],
@@ -1292,6 +1295,18 @@ static func icon(id: String) -> ImageTexture:
 			ellipse(im, 9, 9, 7, 6, Color(0.6, 1.0, 0.3, 0.8))
 			rect(im, 8, 5, 2, 8, Color(1, 1, 1))
 			rect(im, 5, 8, 8, 2, Color(1, 1, 1))
+		"ab_lyra":
+			for i in 3:
+				var a := i * TAU / 3.0
+				line(im, 9, 9, int(9 + cos(a) * 8), int(9 + sin(a) * 8), Color(0.6, 1.0, 1.0))
+			ellipse(im, 9, 9, 2.5, 2.5, Color(0.35, 1.0, 0.95))
+		"ab_sol":
+			ellipse(im, 9, 9, 5, 5, Color(1.0, 0.85, 0.35))
+			for i in 8:
+				var a := i * TAU / 8.0
+				line(im, int(9 + cos(a) * 6), int(9 + sin(a) * 6), int(9 + cos(a) * 8.5), int(9 + sin(a) * 8.5), Color(1.0, 0.6, 0.2))
+		"ab_volt":
+			poly(im, PackedVector2Array([Vector2(10, 1), Vector2(4, 10), Vector2(8, 10), Vector2(6, 17), Vector2(14, 7), Vector2(10, 7), Vector2(12, 1)]), Color(0.6, 0.85, 1.0))
 		"ab_kai":
 			for i in 3:
 				var a := -0.6 + i * 0.6
@@ -2363,7 +2378,7 @@ static func _paint_tree(key: String, b: Image, e: Image) -> void:
 # Кадры: 0–3 покой (дыхание), 4–9 бег, 10–13 атака (замах, удар, доводка, возврат),
 # 14–15 получение урона. Герой смотрит вправо, отражение — flip_h.
 
-const HERO_KEYS := ["hero", "rin", "bram", "kira", "skyla", "orm", "mora", "zephyr", "iris", "kai"]
+const HERO_KEYS := ["hero", "rin", "bram", "kira", "skyla", "orm", "mora", "zephyr", "iris", "kai", "lyra", "sol", "volt"]
 ## 35 кадров: покой 6, бег 8, удар 5, способность 5, урон 2, смерть 6, рывок 3
 const HERO_ANIM := {"idle": [0, 6], "run": [6, 8], "attack": [14, 5], "cast": [19, 5], "hurt": [24, 2],
 	"death": [26, 6], "dash": [32, 3]}
@@ -2411,6 +2426,18 @@ const LOOKS := {
 		"legs": Color(0.2, 0.18, 0.15), "boots": Color(0.3, 0.22, 0.16), "back": "coat", "back_c": Color(0.78, 0.78, 0.74),
 		"head": "goggles", "head_c": Color(0.25, 0.25, 0.3), "hair": Color(0.8, 0.3, 0.2), "neon": Color(0.6, 1.0, 0.3),
 		"neon2": Color(1.0, 0.4, 0.6), "weapon": "flask", "w_c": Color(0.6, 0.8, 0.9), "gem": Color(0.6, 1.0, 0.3), "build": 0},
+	"lyra": {"skin": Color(0.92, 0.78, 0.7), "main": Color(0.12, 0.3, 0.36), "trim": Color(0.85, 0.85, 0.95),
+		"legs": Color(0.1, 0.16, 0.2), "boots": Color(0.75, 0.75, 0.85), "back": "scarf", "back_c": Color(0.3, 0.95, 0.9),
+		"head": "samurai", "head_c": Color(0.85, 0.85, 0.95), "hair": Color(0.25, 0.9, 0.85), "neon": Color(0.35, 1.0, 0.95),
+		"neon2": Color(1.0, 0.85, 1.0), "weapon": "blade", "w_c": Color(0.85, 0.9, 1.0), "gem": Color(0.35, 1.0, 0.95), "build": 0},
+	"sol": {"skin": Color(0.72, 0.52, 0.38), "main": Color(0.9, 0.8, 0.6), "trim": Color(0.95, 0.65, 0.2),
+		"legs": Color(0.6, 0.5, 0.35), "boots": Color(0.4, 0.3, 0.2), "back": "robe", "back_c": Color(0.85, 0.55, 0.2),
+		"head": "great_helm", "head_c": Color(0.95, 0.75, 0.35), "neon": Color(1.0, 0.8, 0.3), "neon2": Color(1.0, 1.0, 0.8),
+		"weapon": "orbstaff", "w_c": Color(0.75, 0.6, 0.3), "gem": Color(1.0, 0.85, 0.35), "build": 1},
+	"volt": {"skin": Color(0.88, 0.72, 0.6), "main": Color(0.22, 0.26, 0.36), "trim": Color(0.95, 0.8, 0.2),
+		"legs": Color(0.18, 0.18, 0.24), "boots": Color(0.3, 0.25, 0.2), "back": "coat", "back_c": Color(0.3, 0.34, 0.45),
+		"head": "goggles", "head_c": Color(0.3, 0.3, 0.36), "hair": Color(0.95, 0.95, 1.0), "neon": Color(0.55, 0.8, 1.0),
+		"neon2": Color(1.0, 0.95, 0.4), "weapon": "hammer", "w_c": Color(0.45, 0.45, 0.55), "gem": Color(0.55, 0.8, 1.0), "build": 1},
 	"kai": {"skin": Color(0.12, 0.12, 0.16), "main": Color(0.12, 0.12, 0.16), "trim": Color(0.7, 0.12, 0.15),
 		"legs": Color(0.1, 0.1, 0.13), "boots": Color(0.08, 0.08, 0.1), "back": "scarf", "back_c": Color(0.72, 0.12, 0.15),
 		"head": "ninja", "head_c": Color(0.15, 0.15, 0.2), "neon": Color(1.0, 0.3, 0.3), "neon2": Color(1.0, 0.8, 0.8),

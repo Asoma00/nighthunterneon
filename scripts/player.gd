@@ -167,6 +167,15 @@ func setup(id: String) -> void:
 			heal_mult = 1.25
 		"kai":
 			dodge = 0.12
+		"lyra":
+			damage_mult = 1.1
+			area_mult *= 1.1
+		"sol":
+			max_hp += 30.0
+			regen = 0.5
+		"volt":
+			cooldown_mult = 0.92
+			status_mult = 1.15
 	# Бонусы зданий Неонового убежища
 	var m: Dictionary = _m_run()
 	damage_mult *= m["damage"]
@@ -1172,6 +1181,38 @@ func _use_ability() -> void:
 			z.status = "chill"
 			z.color = Color(0.5, 1.0, 0.7)
 			main.zones_node.add_child(z)
+		"lyra":
+			# Три волны лезвий, каждая шире предыдущей
+			for w in 3:
+				_later(w * 0.18, func():
+					var r := (120.0 + w * 70.0) * area_mult
+					Fx.ring(main, position, 10.0, r, Pixel.hdr(Color(0.35, 1.0, 0.95), 2.0), 0.35, 5.0)
+					Fx.burst(main, position, [Pixel.hdr(Color(0.6, 1.0, 1.0), 2.0), Color(0.3, 0.9, 1.0, 0.0)], 14, r * 1.6, 0.4, 3.0)
+					set_source("blades")
+					main.attacker = self
+					main.damage_area(position, r, 16.0 * damage_mult * power, null, "bleed"))
+		"sol":
+			heal(20.0 * power)
+			Fx.ring(main, position, 10.0, 240.0 * area_mult, Pixel.hdr(Color(1.0, 0.8, 0.35), 2.2), 0.5, 8.0)
+			Fx.burst(main, position + Vector2(0, -20), [Pixel.hdr(Color(1.0, 0.9, 0.5), 2.2), Color(1.0, 0.4, 0.1, 0.0)], 30, 360.0, 0.6, 4.0)
+			main.shake(5.0)
+			for e in main.get_enemies():
+				if e.can_be_hit() and e.position.distance_to(position) < 240.0 * area_mult:
+					e.hit(22.0 * damage_mult * power, position, 380.0, "burn")
+		"volt":
+			var ts: Array = main.nearest_enemies_to(position, 8, 700.0, null)
+			for i in ts.size():
+				var e: Node2D = ts[i]
+				_later(i * 0.06, func():
+					if not is_instance_valid(e):
+						return
+					var g: Vector3 = main.to3d(e.position, 0.0)
+					main.beam3d(PackedVector3Array([g + Vector3(randf_range(-0.4, 0.4), 4.5, -0.3), g + Vector3(0.2, 2.0, 0), g]), Color(0.6, 0.8, 1.0), 0.04, 0.2, 0.15)
+					Fx.sparks(main, e.position, Color(0.6, 0.85, 1.0), 6)
+					if e.can_be_hit():
+						set_source("lightning")
+						main.attacker = self
+						e.hit(30.0 * damage_mult * power, position, 0.0, "shock"))
 		"kai":
 			_invuln = maxf(_invuln, 0.8)
 			Fx.afterimage(main, position, _body.texture, _body.offset, _body.flip_h, Color(1.0, 0.3, 0.3), float(_frames.get("k", 1.0)))

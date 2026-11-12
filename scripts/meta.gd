@@ -48,7 +48,7 @@ const BUILDINGS := {
 # ---------- Открытие героев ----------
 # Вега доступна сразу. Остальных нужно ОТКРЫТЬ в Зале героев: выполнить условие
 # и заплатить осколками. Чем дальше герой — тем сложнее условие.
-const HERO_ORDER := ["vega", "rin", "bram", "kira", "skyla", "orm", "mora", "zephyr", "iris", "kai"]
+const HERO_ORDER := ["vega", "rin", "bram", "kira", "skyla", "orm", "mora", "zephyr", "iris", "kai", "lyra", "sol", "volt"]
 const HERO_UNLOCK := {
 	"vega": {"cost": 0, "conds": []},
 	"rin": {"cost": 150, "conds": [["kills", 500]]},
@@ -60,6 +60,9 @@ const HERO_UNLOCK := {
 	"zephyr": {"cost": 1000, "conds": [["endless", 10]]},
 	"iris": {"cost": 1300, "conds": [["endless", 15], ["bosses", 20]]},
 	"kai": {"cost": 1700, "conds": [["endless", 20], ["level", 5]]},
+	"lyra": {"cost": 2000, "conds": [["bosses", 25]]},
+	"sol": {"cost": 2400, "conds": [["kills", 20000]]},
+	"volt": {"cost": 2800, "conds": [["reactions", 3000], ["bosses", 30]]},
 }
 static var heroes_owned: Array = ["vega"]
 # Поиск героев: сначала героя нужно СПАСТИ в бою (пленник, шанс 1 из 100 на каждый
@@ -671,7 +674,8 @@ static func parts_have(id: String) -> int:
 
 
 ## Где томится каждый герой: найти его можно только на «своём» уровне (номер с 0).
-const HERO_LEVEL := {"rin": 0, "skyla": 1, "mora": 2, "iris": 3, "kira": 4, "bram": 5, "orm": 6, "kai": 7, "zephyr": 8}
+const HERO_LEVEL := {"rin": 0, "skyla": 1, "mora": 2, "iris": 3, "kira": 4, "bram": 5, "orm": 6, "kai": 7, "zephyr": 8,
+	"lyra": 12, "sol": 15, "volt": 18}
 
 
 ## Кого можно встретить пленником на этом уровне.
@@ -704,6 +708,8 @@ static func rescue(id: String) -> void:
 
 ## Оружие героя недоступно в бою, пока его не соберут (у открытых героев — всегда доступно).
 static func weapon_available(w: String) -> bool:
+	if w in ["bolt", "blades", "aura", "lightning"]:
+		return true   # базовое оружие охотников доступно всем с начала
 	var D = preload("res://scripts/data.gd")
 	for h in D.CHARACTERS:
 		if h != "vega" and str(D.CHARACTERS[h].get("weapon", "")) == w:
