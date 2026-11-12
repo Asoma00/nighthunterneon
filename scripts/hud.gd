@@ -123,7 +123,7 @@ func _update_tracker() -> void:
 		_poi_layer.add_child(_tracker)
 	var lines: Array = []
 	var st: Dictionary = main.Meta.story_cur()
-	if not st.is_empty():
+	if not st.is_empty() and main.Meta.story_taken:
 		lines.append("◆ Сюжет: %s — %s" % [st["title"], main.Meta.story_goal_text(st)])
 	if main.challenge != "":
 		lines.append("⚠ %s  •  угроза %d" % [main.Meta.CHALLENGES[main.challenge]["name"], main.threat])

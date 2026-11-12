@@ -216,14 +216,28 @@ static func hero_step(hero: String) -> int:
 
 
 ## Все активные задания этого забега (доска + личное задание героя).
+## Задания не выдаются сами: с доски их нужно ВЗЯТЬ, личное задание героя — тоже.
 static func active(hero: String) -> Array:
-	var out: Array = board().duplicate(true)
+	var out: Array = []
+	for q in board():
+		if q.get("taken", false):
+			out.append(q.duplicate(true))
 	out.append_array(Meta.contracts.duplicate(true))
 	out.append_array(Meta.npc_quests.duplicate(true))
 	var hq := hero_quest(hero)
-	if not hq.is_empty():
+	if not hq.is_empty() and hero_taken(hero):
 		out.append(hq)
 	return out
+
+
+static func hero_taken(hero: String) -> bool:
+	return bool(Meta.stats.get("hq_taken", {}).get(hero, false))
+
+
+static func set_hero_taken(hero: String, v: bool) -> void:
+	var d: Dictionary = Meta.stats.get("hq_taken", {})
+	d[hero] = v
+	Meta.stats["hq_taken"] = d
 
 
 static func progress(q: Dictionary, run: Dictionary) -> int:
@@ -241,7 +255,7 @@ static func settle(run: Dictionary, hero: String) -> Array:
 	var out: Array = []
 	var keep: Array = []
 	for q in board():
-		if done(q, run):
+		if q.get("taken", false) and done(q, run):
 			var r := reward(q)
 			Meta.add_reward(r)
 			out.append([title(q), reward_text(r)])
@@ -273,7 +287,8 @@ static func settle(run: Dictionary, hero: String) -> Array:
 			kn.append(q)
 	Meta.npc_quests = kn
 	var hq := hero_quest(hero)
-	if not hq.is_empty() and done(hq, run):
+	if not hq.is_empty() and hero_taken(hero) and done(hq, run):
+		set_hero_taken(hero, false)   # следующий шаг истории нужно взять заново
 		var r := reward(hq)
 		Meta.add_reward(r)
 		var h: Dictionary = Meta.stats.get("hq", {})

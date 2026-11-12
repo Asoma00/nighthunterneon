@@ -68,6 +68,7 @@ static var heroes_owned: Array = ["vega"]
 static var rescued: Array = []
 # Сюжет: шаг главной линии (см. story.gd), видел ли игрок пролог, просьбы жителей
 static var story_step := 0
+static var story_taken := false
 static var intro_seen := false
 static var npc_quests: Array = []
 static var npc_cd := {}          # имя жителя -> номер забега, с которого он снова просит
@@ -233,6 +234,7 @@ static func reset() -> void:
 	rescued = []
 	parts = {}
 	story_step = 0
+	story_taken = false
 	intro_seen = false
 	npc_quests = []
 	npc_cd = {}
@@ -265,6 +267,7 @@ static func ensure_loaded() -> void:
 		heroes_owned = cfg.get_value("meta", "heroes_owned", ["vega"])
 		rescued = cfg.get_value("meta", "rescued", [])
 		story_step = cfg.get_value("meta", "story_step", 0)
+		story_taken = cfg.get_value("meta", "story_taken", false)
 		intro_seen = cfg.get_value("meta", "intro_seen", false)
 		npc_quests = cfg.get_value("meta", "npc_quests", [])
 		npc_cd = cfg.get_value("meta", "npc_cd", {})
@@ -316,6 +319,7 @@ static func save() -> void:
 	cfg.set_value("meta", "contracts", contracts)
 	cfg.set_value("meta", "rescued", rescued)
 	cfg.set_value("meta", "story_step", story_step)
+	cfg.set_value("meta", "story_taken", story_taken)
 	cfg.set_value("meta", "intro_seen", intro_seen)
 	cfg.set_value("meta", "npc_quests", npc_quests)
 	cfg.set_value("meta", "npc_cd", npc_cd)
@@ -375,7 +379,7 @@ static func story_goal_text(st: Dictionary) -> String:
 
 static func story_ready() -> bool:
 	var st := story_cur()
-	if st.is_empty():
+	if st.is_empty() or not story_taken:
 		return false
 	var p := story_progress(st)
 	return int(p[0]) >= int(p[1])
@@ -388,6 +392,7 @@ static func story_claim() -> Dictionary:
 	var st := story_cur()
 	add_reward(st["reward"])
 	story_step += 1
+	story_taken = false
 	save()
 	return st["reward"]
 

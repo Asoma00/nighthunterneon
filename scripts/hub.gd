@@ -2432,7 +2432,7 @@ func _build_board() -> void:
 
 func _fill_board() -> void:
 	_panel_box.add_child(_centered(_label("ДОСКА ЗАДАНИЙ", 34, Color.WHITE, Color(GOLD, 0.8))))
-	var info := _label("Задания выполняются за ОДНУ вылазку. Награда — осколки и материалы для базы. Выполненное задание сменяется новым, с каждым разом сложнее и щедрее.", 15, Color(0.8, 0.8, 0.95))
+	var info := _label("Задание нужно ВЗЯТЬ — тогда оно пойдёт с вами в бой. Выполняется за ОДНУ вылазку. Выполненное сменяется новым, с каждым разом сложнее и щедрее.", 15, Color(0.8, 0.8, 0.95))
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.custom_minimum_size = Vector2(minf(460 if _portrait() else 760, _avail()), 0)
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2467,6 +2467,16 @@ func _fill_board() -> void:
 		v.add_child(lore)
 		v.add_child(_label("Цель: " + Quests.desc(hq) + "  (только этим героем)", 16, GOLD))
 		v.add_child(_label("Награда: " + Quests.reward_text(Quests.reward(hq)) + "  •  открывает узлы дерева героя", 14, Color(0.7, 1.0, 0.75)))
+		var hid: String = Data.selected_character
+		var tk := Quests.hero_taken(hid)
+		var hb := _button("✓ Взято — отказаться" if tk else "ВЗЯТЬ", Color(0.6, 1.0, 0.7) if tk else GOLD)
+		hb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		hb.pressed.connect(func():
+			Quests.set_hero_taken(hid, not tk)
+			Meta.save()
+			Sound.play("click")
+			_fill_panel())
+		v.add_child(hb)
 		_panel_box.add_child(_centered(card))
 	_add_close()
 
@@ -2485,7 +2495,18 @@ func _quest_card(q: Dictionary, i: int) -> Control:
 	v.add_child(d)
 	v.add_child(_label("Сложность: " + "★".repeat(int(q.get("tier", 0)) + 1), 13, Color(0.75, 0.75, 0.9)))
 	v.add_child(_label("Награда: " + Quests.reward_text(Quests.reward(q)), 14, Color(0.6, 1.0, 0.7)))
-	var swap := _button("Заменить — 15 ◆", Color(0.6, 0.6, 0.75), Meta.shards >= 15)
+	var tk: bool = q.get("taken", false)
+	var take := _button("✓ Взято — отказаться" if tk else "ВЗЯТЬ", Color(0.6, 1.0, 0.7) if tk else GOLD)
+	take.custom_minimum_size = Vector2(minf(200, _avail()), 38)
+	take.add_theme_font_size_override("font_size", 14)
+	take.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	take.pressed.connect(func():
+		Meta.quests[i]["taken"] = not tk
+		Meta.save()
+		Sound.play("levelup" if not tk else "click", -6.0)
+		_fill_panel())
+	v.add_child(take)
+	var swap := _button("Заменить — 15 ◆", Color(0.6, 0.6, 0.75), Meta.shards >= 15 and not tk)
 	swap.custom_minimum_size = Vector2(minf(200, _avail()), 38)
 	swap.add_theme_font_size_override("font_size", 14)
 	swap.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -3423,6 +3444,8 @@ func _npc_offer(v: Dictionary) -> Dictionary:
 	if prof.is_empty() or not prof.has("quest"):
 		return {}
 	var nm: String = prof["name"]
+	if Meta.story_step < int(Story.NPC_UNLOCK.get(nm, 0)):
+		return {}   # пока не доверяет — просьбы откроются по ходу сюжета
 	for q in Meta.npc_quests:
 		if str(q.get("giver", "")) == nm:
 			return {}
@@ -3460,7 +3483,7 @@ func _update_marks() -> void:
 		var mk: Label3D = v["mark"]
 		var txt := ""
 		if v.get("profile", {}).get("name", "") == "Ворон":
-			txt = "?" if Meta.story_ready() else ("!" if not Meta.story_cur().is_empty() else "")
+			txt = "?" if Meta.story_ready() else ("!" if not Meta.story_cur().is_empty() and not Meta.story_taken else "")
 		elif not _npc_offer(v).is_empty() and Meta.npc_quests.size() < 3:
 			txt = "!"
 		mk.text = txt
@@ -3637,7 +3660,16 @@ func _fill_story() -> void:
 		var p := Meta.story_progress(st)
 		_panel_box.add_child(_centered(_label("Цель: %s  —  %d / %d" % [Meta.story_goal_text(st), int(p[0]), int(p[1])], 15, Color(0.6, 1.0, 0.7) if Meta.story_ready() else Color(0.9, 0.9, 1.0))))
 		_panel_box.add_child(_centered(_label("Награда: " + Meta.cost_text(st["reward"]), 14, Color(0.75, 0.75, 0.9))))
-		if Meta.story_ready():
+		if not Meta.story_taken:
+			var acc := _button("ПРИНЯТЬ ЗАДАНИЕ", GOLD)
+			acc.pressed.connect(func():
+				Meta.story_taken = true
+				Meta.save()
+				Sound.play("levelup", -6.0)
+				_toast_text("Сюжетное задание: «%s»" % st["title"])
+				_fill_panel())
+			_panel_box.add_child(_centered(acc))
+		elif Meta.story_ready():
 			var b := _button("ДОЛОЖИТЬ", GOLD)
 			b.pressed.connect(func():
 				var r := Meta.story_claim()

@@ -207,10 +207,7 @@ func _process(delta: float) -> void:
 	_ground.position = p
 	_ground_emit.position = p
 	_ground_emit.modulate.a = 0.4 + 0.25 * sin(_t * 1.5)
-	if _title:
-		var pulse := 0.5 + 0.5 * sin(_t * 2.0)
-		_title.add_theme_color_override("font_shadow_color", Color(MAGENTA.lerp(CYAN, pulse), 0.85))
-		_title.rotation = sin(_t * 0.7) * 0.01
+
 	# Анимация портретов героев
 	for k in range(_portraits.size() - 1, -1, -1):
 		if not is_instance_valid(_portraits[k][0]):
@@ -337,13 +334,15 @@ func _sprite_stack(key: String, size: float, walking: bool) -> Control:
 
 func _build_main_page() -> void:
 	var v := _page("main")
-	_title = _label("НОЧЬ ОХОТНИКА", 72, Color(1.0, 0.95, 1.0), Color(MAGENTA, 0.85))
-	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_title.pivot_offset = Vector2(300, 40)
-	v.add_child(_title)
-	var sub := _label("— Н Е О Н —", 26, CYAN, Color(CYAN, 0.7))
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(sub)
+	# Логотип в стиле 80-х: хромированное «НОЧЬ ОХОТНИКА», неоновое «неон», треугольник
+	var vw := get_viewport().get_visible_rect().size.x
+	var logo = preload("res://scripts/retro_logo.gd").new()
+	var lw := minf(vw - 30.0, 860.0)
+	logo.custom_minimum_size = Vector2(lw, lw * 0.36)
+	logo.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	v.add_child(logo)
+	logo.setup("НОЧЬ ОХОТНИКА", "неон", int(lw / 9.5), true)
+	logo.play()
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(0, 10)
 	v.add_child(spacer)
