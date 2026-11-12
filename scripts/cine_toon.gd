@@ -83,11 +83,6 @@ void fragment() {
 		ALBEDO = mix(wall.rgb, wall.rgb * 0.5, win);
 	}
 }
-void light() {
-	float w = clamp(dot(NORMAL, LIGHT) * 0.5 + 0.5, 0.0, 1.0);
-	float b = smoothstep(0.44, 0.6, w);
-	DIFFUSE_LIGHT += mix(shade.rgb, vec3(1.0), b) * LIGHT_COLOR * ATTENUATION * mix(0.55, 1.0, b);
-}
 """
 
 const SKY := """
@@ -171,25 +166,145 @@ static func shader(code_name: String) -> Shader:
 	return sh
 
 
-## Матовый мультяшный материал. glow > 0 — светится (неон).
-static func mat(c: Color, glow := 0.0, gloss := 0.25, rim := 0.16) -> ShaderMaterial:
+## Стилизованный PBR-материал, как в анимационных роликах: мягкая шероховатость,
+## контровая кайма света, металл с отражениями. glow > 0 — светится (неон).
+static func mat(c: Color, glow := 0.0, gloss := 0.25, rim := 0.16) -> Material:
 	var key := "m_%s_%.2f_%.2f_%.2f" % [c.to_html(), glow, gloss, rim]
 	if _cache.has(key):
 		return _cache[key]
-	var m := ShaderMaterial.new()
-	m.shader = shader("toon")
-	m.set_shader_parameter("albedo", c)
-	# Тень — того же цвета, но темнее и с уходом в сиреневый, как в мультфильмах
-	m.set_shader_parameter("shade", c.darkened(0.45).lerp(Color(0.3, 0.25, 0.6), 0.45))
-	m.set_shader_parameter("glow", glow)
-	m.set_shader_parameter("gloss", gloss)
-	m.set_shader_parameter("rim", rim)
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.roughness = clampf(0.85 - gloss * 0.9, 0.18, 0.9)
+	m.metallic = 0.75 if gloss >= 0.6 else 0.0
+	m.metallic_specular = 0.45
+	m.rim_enabled = rim > 0.0
+	m.rim = clampf(rim * 1.6, 0.0, 1.0)
+	m.rim_tint = 0.6
+	if glow > 0.0:
+		m.emission_enabled = true
+		m.emission = c
+		m.emission_energy_multiplier = glow * 1.3
 	_cache[key] = m
 	return m
 
 
-static func neon(c: Color, k := 2.5) -> ShaderMaterial:
-	return mat(c, k, 0.0, 0.2)
+static func neon(c: Color, k := 2.5) -> Material:
+	return mat(c, k, 0.0, 0.0)
+
+
+## Материалы слотов модели из Blender: кожа с подповерхностным рассеянием,
+## ткань, кожа-материал, металл, неон, глаза.
+static func slot(name: String, S: Dictionary) -> Material:
+	var key := "slot_%s_%s" % [name, str(S.get("_key", ""))]
+	if _cache.has(key):
+		return _cache[key]
+	var col := func(k: String, d: Color) -> Color:
+		return S[k] if S.has(k) and S[k] is Color else d
+	var m := StandardMaterial3D.new()
+	m.roughness = 0.75
+	m.rim_enabled = true
+	m.rim = 0.25
+	m.rim_tint = 0.65
+	var main_c: Color = col.call("main", Color(0.4, 0.4, 0.5))
+	match name:
+		"skin":
+			m.albedo_color = col.call("skin", Color(0.85, 0.68, 0.58))
+			m.roughness = 0.52
+			m.subsurf_scatter_enabled = true
+			m.subsurf_scatter_strength = 0.45
+			m.subsurf_scatter_skin_mode = true
+			m.rim = 0.35
+			m.rim_tint = 0.5
+		"main":
+			m.albedo_color = main_c
+			m.roughness = 0.78
+		"main2":
+			m.albedo_color = main_c.darkened(0.18)
+			m.roughness = 0.8
+		"glove":
+			m.albedo_color = main_c.darkened(0.5)
+			m.roughness = 0.5
+		"legs":
+			m.albedo_color = col.call("legs", Color(0.25, 0.25, 0.3))
+			m.roughness = 0.8
+		"boots":
+			m.albedo_color = col.call("boots", Color(0.2, 0.15, 0.12))
+			m.roughness = 0.45
+		"trim":
+			m.albedo_color = col.call("trim", Color(0.9, 0.7, 0.3))
+			m.metallic = 0.85
+			m.roughness = 0.3
+		"metal":
+			m.albedo_color = Color(0.62, 0.64, 0.72)
+			m.metallic = 0.9
+			m.roughness = 0.28
+		"weapon":
+			m.albedo_color = col.call("w_c", Color(0.5, 0.5, 0.6))
+			m.metallic = 0.6
+			m.roughness = 0.35
+		"neon", "neon2", "gem", "visor":
+			var nc: Color = col.call({"neon": "neon", "neon2": "neon2", "gem": "gem", "visor": "neon"}[name], Color(0.3, 0.9, 1.0))
+			m.albedo_color = nc
+			m.emission_enabled = true
+			m.emission = nc
+			m.emission_energy_multiplier = 3.2 if name != "visor" else 2.2
+			m.rim_enabled = false
+			if name == "visor":
+				m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				m.albedo_color.a = 0.75
+		"hair", "beard":
+			m.albedo_color = col.call("beard" if name == "beard" and S.has("beard") else "hair", Color(0.25, 0.17, 0.12))
+			m.roughness = 0.42
+			m.metallic_specular = 0.7
+			m.rim = 0.45
+		"hat":
+			m.albedo_color = col.call("head_c", Color(0.3, 0.3, 0.4))
+			m.roughness = 0.7
+		"back":
+			m.albedo_color = col.call("back_c", Color(0.3, 0.2, 0.3))
+			m.roughness = 0.82
+		"eye_white":
+			m.albedo_color = Color(0.96, 0.95, 0.97)
+			m.roughness = 0.12
+			m.clearcoat_enabled = true
+			m.rim_enabled = false
+		"iris":
+			var ic: Color = col.call("neon", Color(0.3, 0.6, 1.0))
+			m.albedo_color = ic.darkened(0.2)
+			m.emission_enabled = true
+			m.emission = ic
+			m.emission_energy_multiplier = 0.35
+			m.roughness = 0.1
+			m.clearcoat_enabled = true
+			m.rim_enabled = false
+		"pupil":
+			m.albedo_color = Color(0.02, 0.02, 0.03)
+			m.roughness = 0.05
+			m.rim_enabled = false
+		"mouth":
+			m.albedo_color = Color(0.3, 0.07, 0.09)
+			m.roughness = 0.6
+			m.rim_enabled = false
+		"teeth", "bone":
+			m.albedo_color = Color(0.92, 0.89, 0.82)
+			m.roughness = 0.4
+		"dark":
+			m.albedo_color = Color(0.05, 0.045, 0.06)
+			m.roughness = 0.5
+		"leather":
+			m.albedo_color = Color(0.35, 0.22, 0.14)
+			m.roughness = 0.55
+		"wood":
+			m.albedo_color = Color(0.42, 0.27, 0.16)
+			m.roughness = 0.7
+		"glass":
+			m.albedo_color = Color(0.7, 0.85, 0.95, 0.3)
+			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			m.roughness = 0.05
+		_:
+			m.albedo_color = main_c
+	_cache[key] = m
+	return m
 
 
 static func glass(c: Color, glow := 0.4) -> ShaderMaterial:

@@ -32,6 +32,10 @@ var _shake := 0.0
 var _was_paused := false
 var _done := false
 var _fireworks := 0.0
+var _cam_attr: CameraAttributesPractical
+var _key: SpotLight3D
+var _fill: OmniLight3D
+var _rimL: SpotLight3D
 var _fw_t := 0.0
 
 var _bars: Array = []
@@ -95,6 +99,47 @@ func _build_ui() -> void:
 	_cam.far = 400.0
 	_world.add_child(_cam)
 	_cam.make_current()
+	_cam_attr = CameraAttributesPractical.new()
+	_cam_attr.dof_blur_amount = 0.09
+	_cam.attributes = _cam_attr
+	# Свет «как на съёмочной площадке»: ключевой, заполняющий и контровой,
+	# каждый кадр выставляется вокруг того, на кого смотрит камера.
+	_key = SpotLight3D.new()
+	_key.spot_angle = 38.0
+	_key.spot_range = 14.0
+	_key.shadow_enabled = true
+	_key.light_volumetric_fog_energy = 0.6
+	_world.add_child(_key)
+	_fill = OmniLight3D.new()
+	_fill.omni_range = 9.0
+	_world.add_child(_fill)
+	_rimL = SpotLight3D.new()
+	_rimL.spot_angle = 35.0
+	_rimL.spot_range = 14.0
+	_rimL.light_volumetric_fog_energy = 1.5
+	_world.add_child(_rimL)
+
+	# Плёнка: виньетка и лёгкое зерно поверх картинки
+	var post := ColorRect.new()
+	post.set_anchors_preset(Control.PRESET_FULL_RECT)
+	post.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var psm := ShaderMaterial.new()
+	var psh := Shader.new()
+	psh.code = """
+shader_type canvas_item;
+void fragment() {
+	vec2 uv = SCREEN_UV;
+	float d = distance(uv, vec2(0.5)) * 1.25;
+	float vig = smoothstep(0.42, 1.0, d) * 0.65;
+	float n = fract(sin(dot(floor(FRAGCOORD.xy) + floor(TIME * 24.0) * 17.0, vec2(12.9898, 78.233))) * 43758.5453);
+	COLOR = vec4(vec3(n), 0.022);
+	COLOR = mix(COLOR, vec4(0.0, 0.0, 0.02, 1.0), vig);
+	COLOR.a = max(vig, 0.022);
+}
+"""
+	psm.shader = psh
+	post.material = psm
+	add_child(post)
 
 	# Кинополосы 2.35:1
 	for i in 2:
@@ -384,8 +429,41 @@ func _cam_update(_d: float) -> void:
 		p += Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * _shake * 0.3
 	if p.distance_to(l) > 0.01:
 		_cam.look_at_from_position(p, l)
+	_light_rig(p, l)
 	var fv: Array = _shot.get("fov", [45.0, 45.0])
 	_cam.fov = lerpf(float(fv[0]), float(fv[1] if fv.size() > 1 else fv[0]), k)
+
+
+func _light_rig(p: Vector3, l: Vector3) -> void:
+	if _set == null:
+		return
+	var fwd := l - p
+	var dist := fwd.length()
+	fwd.y = 0.0
+	if fwd.length() < 0.01:
+		fwd = Vector3.FORWARD
+	fwd = fwd.normalized()
+	var right := fwd.cross(Vector3.UP).normalized()
+	# Чем шире план, тем слабее «студийный» свет — там работает свет локации
+	var k := clampf(1.0 - (dist - 3.5) / 8.0, 0.2, 1.0)
+	var kp := l - fwd * 2.4 - right * 2.0 + Vector3.UP * 1.6
+	_key.look_at_from_position(kp, l)
+	_key.light_color = _set.key_color
+	_key.light_energy = 2.8 * k
+	_fill.position = l - fwd * 2.0 + right * 2.4 + Vector3.UP * 0.2
+	_fill.light_color = _set.fill_color
+	_fill.light_energy = 0.9 * k
+	var rp := l + fwd * 2.6 + right * 1.4 + Vector3.UP * 1.3
+	_rimL.look_at_from_position(rp, l + Vector3.UP * 0.1)
+	_rimL.light_color = _set.rim_color
+	_rimL.light_energy = 6.0 * k
+	# Глубина резкости: фокус на том, кого снимаем
+	_cam_attr.dof_blur_far_enabled = true
+	_cam_attr.dof_blur_far_distance = dist + 1.0
+	_cam_attr.dof_blur_far_transition = maxf(2.0, dist * 1.2)
+	_cam_attr.dof_blur_near_enabled = dist < 3.0
+	_cam_attr.dof_blur_near_distance = maxf(0.3, dist * 0.45)
+	_cam_attr.dof_blur_near_transition = 0.5
 
 
 func _process(delta: float) -> void:

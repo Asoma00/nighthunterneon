@@ -47,8 +47,158 @@ static func make(id: String) -> Node3D:
 	var a: Node3D = load("res://scripts/cine_actor.gd").new()
 	a.key = id
 	a.spec = spec_for(id)
-	a._build()
+	var glb := "res://assets/cine/%s.glb" % id
+	if ResourceLoader.exists(glb):
+		a._build_glb(glb)
+	else:
+		a._build()
 	return a
+
+
+# ================= Модель из Blender =================
+# Персонаж со скелетом: кости совпадают с суставами процедурного рига, поэтому
+# все позы (разговор, жесты, стойка, ходьба) работают так же. Материалы
+# подменяются по имени слота на PBR с цветами героя.
+
+var skel: Skeleton3D
+var _bone := {}
+var _rest_l := {}   # локальный поворот покоя
+var _rest_g := {}   # глобальный поворот покоя (в пространстве скелета)
+var _rest_p := {}
+var _eyes: Array = []
+var glb_mode := false
+
+
+func _build_glb(path: String) -> void:
+	glb_mode = true
+	_seed = randf() * 10.0
+	var scn: Node3D = (load(path) as PackedScene).instantiate()
+	add_child(scn)
+	var sp := spec.duplicate()
+	sp["_key"] = key
+	if str(spec["kind"]).begins_with("boss_"):
+		var mc: Color = spec.get("main", Color(0.15, 0.15, 0.2))
+		var n2: Color = spec.get("neon2", spec.get("neon", Color.WHITE))
+		sp.merge({"head_c": mc, "back_c": mc.darkened(0.2), "trim": n2, "legs": mc, "boots": mc,
+			"skin": Color(0.85, 0.83, 0.78), "w_c": Color(0.25, 0.22, 0.28), "gem": n2, "hair": mc}, true)
+	skel = _find_skel(scn)
+	for mi in _all_meshes(scn):
+		var mesh: Mesh = mi.mesh
+		for si in mesh.get_surface_count():
+			var mm := mesh.surface_get_material(si)
+			var nm := mm.resource_name if mm else "main"
+			mi.set_surface_override_material(si, T.slot(nm, sp))
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		if mi.name.begins_with("eye") and not mi.name.begins_with("eyeb"):
+			_eyes.append(mi)
+		if mi.name == "mouth":
+			mouth = mi
+	if skel:
+		for bn in ["hips", "spine", "chest", "neck", "head", "upperarm0", "forearm0", "hand0", "upperarm1", "forearm1", "hand1",
+				"thigh0", "shin0", "thigh1", "shin1"]:
+			var i := skel.find_bone(bn)
+			if i < 0:
+				continue
+			_bone[bn] = i
+			_rest_l[bn] = skel.get_bone_rest(i).basis.get_rotation_quaternion()
+			_rest_g[bn] = skel.get_bone_global_rest(i).basis.get_rotation_quaternion()
+			_rest_p[bn] = skel.get_bone_rest(i).origin
+		# Точка головы для взгляда и опоры эффектов
+		var ba := BoneAttachment3D.new()
+		ba.bone_name = "head"
+		skel.add_child(ba)
+		head = Node3D.new()
+		ba.add_child(head)
+		var bh := BoneAttachment3D.new()
+		bh.bone_name = "hand1"
+		skel.add_child(bh)
+		hand_r = bh
+		var bc := BoneAttachment3D.new()
+		bc.bone_name = "chest"
+		skel.add_child(bc)
+		spine = bc
+	hips = scn
+	if str(spec["kind"]).begins_with("boss_"):
+		_boss_extras()
+	if spec.get("orb", false) and hand_r:
+		var o := _node(hand_r, Vector3(0, -0.05, 0.12))
+		T.mi(T.sphere(0.2), T.halo(Color(spec["neon"], 0.5), 1.5), o, Vector3.ZERO)
+	scale = Vector3.ONE * float(spec.get("scale", 1.0))
+
+
+## Боссы-маги парят, вокруг вращаются руны-кольца и осколки.
+func _boss_extras() -> void:
+	floating = true
+	var neon: Color = spec.get("neon", Color(0.3, 1.0, 0.9))
+	var n2: Color = spec.get("neon2", neon)
+	for i in 3:
+		var ring := _node(self, Vector3(0, 1.3 + i * 0.25, 0))
+		T.mi(T.torus(0.95 + i * 0.28, 0.985 + i * 0.28), T.neon(neon if i != 1 else n2, 2.0), ring, Vector3.ZERO, Vector3.ONE, Vector3(0.4 * (i - 1), 0, 0.25 * i))
+		spin.append([ring, (0.5 + i * 0.3) * (-1.0 if i % 2 else 1.0)])
+	var orb := _node(self, Vector3(0, 1.4, 0))
+	for i in 6:
+		var a := TAU * i / 6.0
+		T.mi(T.sphere(0.06, 4), T.neon(n2, 3.0), orb, Vector3(cos(a) * 1.2, sin(a * 2.0) * 0.2, sin(a) * 1.2), Vector3(1, 1.8, 1))
+	spin.append([orb, 0.7])
+	if spec.get("chorus", false):
+		var hal := _node(self, Vector3(0, 2.1, -0.5))
+		for i in 14:
+			var a := TAU * i / 14.0
+			T.mi(T.sphere(0.08), T.neon(Color(1, 1, 1), 3.0), hal, Vector3(cos(a) * 1.3, sin(a) * 1.3, 0))
+		T.mi(T.torus(1.25, 1.33), T.neon(n2, 2.5), hal, Vector3.ZERO, Vector3.ONE, Vector3(PI / 2.0, 0, 0))
+	var l := OmniLight3D.new()
+	l.light_color = neon
+	l.light_energy = 1.5
+	l.omni_range = 4.0
+	l.position = Vector3(0, 1.5, 0.6)
+	add_child(l)
+
+
+static func _find_skel(n: Node) -> Skeleton3D:
+	if n is Skeleton3D:
+		return n
+	for c in n.get_children():
+		var r := _find_skel(c)
+		if r:
+			return r
+	return null
+
+
+static func _all_meshes(n: Node) -> Array:
+	var out: Array = []
+	if n is MeshInstance3D:
+		out.append(n)
+	for c in n.get_children():
+		out += _all_meshes(c)
+	return out
+
+
+## Поворот кости «как у узла-сустава»: углы заданы в пространстве персонажа
+## в позе покоя и переводятся в локальные оси кости.
+func _rot(bn: String, e: Vector3) -> void:
+	if not _bone.has(bn):
+		return
+	var g: Quaternion = _rest_g[bn]
+	var d := Quaternion.from_euler(e)
+	var q: Quaternion = _rest_l[bn] * (g.inverse() * d * g)
+	skel.set_bone_pose_rotation(_bone[bn], q)
+
+
+func _apply_skeleton(C: Dictionary) -> void:
+	if skel == null:
+		return
+	var hunch := float(spec.get("hunch", 0.0))
+	_rot("spine", Vector3((hunch + C["spx"]) * 0.5, C["spy"] * 0.5, 0))
+	_rot("chest", Vector3((hunch + C["spx"]) * 0.5, C["spy"] * 0.5, 0))
+	_rot("neck", Vector3(C["hx"] * 0.35, C["hy"] * 0.35, 0))
+	_rot("head", Vector3(C["hx"] * 0.65, C["hy"] * 0.65, 0))
+	for i in 2:
+		_rot("upperarm%d" % i, Vector3(C["sh%dx" % i], 0, C["sh%dz" % i]))
+		_rot("forearm%d" % i, Vector3(C["el%d" % i], 0, 0))
+		_rot("thigh%d" % i, Vector3(C["hp%d" % i], 0, 0))
+		_rot("shin%d" % i, Vector3(C["kn%d" % i], 0, 0))
+	if _bone.has("hips"):
+		skel.set_bone_pose_position(_bone["hips"], _rest_p["hips"] + Vector3(0, C["dy"], 0))
 
 
 ## Описание внешности по ключу: герой, житель, тварь или босс.
@@ -766,12 +916,15 @@ func _process(delta: float) -> void:
 		_blink = randf_range(2.0, 4.5)
 	for l in lids:
 		(l as Node3D).scale.y = 1.15 if closed else 0.05
+	for e in _eyes:
+		(e as Node3D).scale.y = 0.12 if closed else 1.0
 	# Рот при разговоре
 	if mouth:
 		var open := 0.0
 		if talking > 0.0:
 			open = absf(sin(_t * 13.0 + sin(_t * 5.0) * 2.0))
-		mouth.scale.y = lerpf(mouth.scale.y, 0.6 + open * 2.6, 1.0 - exp(-20.0 * delta))
+		var base := 1.0 if glb_mode else 0.6
+		mouth.scale.y = lerpf(mouth.scale.y, base + open * (1.1 if glb_mode else 2.6), 1.0 - exp(-20.0 * delta))
 	for s in spin:
 		var n: Node3D = s[0]
 		if float(s[1]) != 0.0:
@@ -784,7 +937,10 @@ func _process(delta: float) -> void:
 	if flying and hips:
 		hips.position.y = 1.4 + sin(_t * 3.0) * 0.1
 	if floating and hips:
-		hips.position.y = _hips_y_float() + sin(_t * 1.6 + _seed) * 0.08
+		if glb_mode:
+			hips.position.y = 0.3 + sin(_t * 1.6 + _seed) * 0.08
+		else:
+			hips.position.y = _hips_y_float() + sin(_t * 1.6 + _seed) * 0.08
 	for lg in legs_extra:
 		var p: Node3D = lg[0]
 		var sx: float = lg[1]
@@ -799,7 +955,7 @@ func _hips_y_float() -> float:
 
 
 func _pose(delta: float) -> void:
-	if hips == null:
+	if hips == null and not glb_mode:
 		return
 	var tg := {"sh0x": 0.1, "sh0z": -0.12, "sh1x": 0.1, "sh1z": 0.12, "el0": -0.2, "el1": -0.25,
 		"hp0": 0.0, "hp1": 0.0, "kn0": 0.05, "kn1": 0.05, "spx": 0.0, "spy": 0.0, "hx": 0.0, "hy": 0.0, "dy": 0.0, "hz": 0.0}
@@ -842,10 +998,10 @@ func _pose(delta: float) -> void:
 			tg["spx"] = -0.1
 		"cheer":
 			var bo := absf(sin(_t * 6.0))
-			tg["sh0x"] = -2.9
-			tg["sh1x"] = -2.9
-			tg["sh0z"] = -0.5
-			tg["sh1z"] = 0.5
+			tg["sh0x"] = -2.5 if glb_mode else -2.9
+			tg["sh1x"] = -2.5 if glb_mode else -2.9
+			tg["sh0z"] = -0.75 if glb_mode else -0.5
+			tg["sh1z"] = 0.75 if glb_mode else 0.5
 			tg["el0"] = -0.3
 			tg["el1"] = -0.3
 			tg["dy"] = bo * 0.12
@@ -878,7 +1034,7 @@ func _pose(delta: float) -> void:
 			tg["el0"] = -0.9
 			tg["el1"] = -0.9
 			if mouth:
-				mouth.scale.y = 3.0
+				mouth.scale.y = 2.0 if glb_mode else 3.0
 		"look":
 			tg["hy"] = 0.5
 			tg["spy"] = 0.15
@@ -906,6 +1062,9 @@ func _pose(delta: float) -> void:
 	for key2 in tg:
 		_cur[key2] = lerpf(float(_cur.get(key2, tg[key2])), float(tg[key2]), kk)
 	var C := _cur
+	if glb_mode:
+		_apply_skeleton(C)
+		return
 	for i in 2:
 		if sh[i]:
 			(sh[i] as Node3D).rotation = Vector3(C["sh%dx" % i], 0, C["sh%dz" % i])

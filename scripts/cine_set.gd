@@ -12,6 +12,9 @@ var spinners: Array = []    # [узел, ось, скорость]
 var bobbers: Array = []     # [узел, базовая высота, фаза]
 var flashes: Array = []     # молнии: [свет]
 var env: Environment
+var key_color := Color(1.0, 0.86, 0.72)
+var rim_color := Color(0.5, 0.8, 1.0)
+var fill_color := Color(0.5, 0.58, 1.0)
 var _t := 0.0
 var _rng := RandomNumberGenerator.new()
 
@@ -36,11 +39,13 @@ func _build() -> void:
 			for i in 7:
 				_island(Vector3(_rng.randf_range(-35, 35), _rng.randf_range(14, 26), _rng.randf_range(-60, -25)), _rng.randf_range(1.5, 3.5))
 			_rim(Vector3(20, 10, -40), Color(1.0, 0.3, 0.7), 2.0)
+			rim_color = Color(1.0, 0.45, 0.8)
 		"gate":
 			_sky(Color(0.06, 0.02, 0.1), Color(0.4, 0.1, 0.3), Color(1.0, 0.25, 0.5), 0.6, Color(0.22, 0.08, 0.2), 0.02)
 			_moon(Vector3(30, 40, -30), Color(1.0, 0.6, 0.8), 0.7)
 			_ground(Color(0.22, 0.16, 0.22))
 			_gate(Vector3(0, 0, -16), 7.0, Color(0.6, 0.2, 1.0), Color(1.0, 0.3, 0.7))
+			rim_color = Color(0.85, 0.4, 1.0)
 			for i in 14:
 				var a := _rng.randf_range(-1.2, 1.2)
 				_rock(Vector3(sin(a) * _rng.randf_range(8, 22), 0, -16 + cos(a) * _rng.randf_range(4, 14)), _rng.randf_range(0.6, 2.0))
@@ -50,6 +55,8 @@ func _build() -> void:
 			_moon(Vector3(-20, 50, -40), Color(0.6, 0.7, 1.0), 0.75)
 			_ground(Color(0.2, 0.24, 0.22))
 			_fire(Vector3(0, 0, 0))
+			key_color = Color(1.0, 0.68, 0.42)
+			rim_color = Color(0.45, 0.75, 1.0)
 			_wall(Vector3(0, 0, -11), 26.0)
 			for i in 5:
 				_house(Vector3(-12 + i * 6 + _rng.randf_range(-1, 1), 0, -6.5 - _rng.randf_range(0, 2)), _rng.randf_range(0.9, 1.3))
@@ -64,6 +71,8 @@ func _build() -> void:
 			_sky(Color(0.03, 0.05, 0.1), Color(0.15, 0.3, 0.4), Color(0.3, 1.0, 0.9), 0.5, Color(0.08, 0.14, 0.2), 0.01)
 			_moon(Vector3(10, 30, -40), Color(0.7, 0.95, 1.0), 0.9)
 			_platform(Color(0.2, 0.22, 0.3), Color(0.3, 1.0, 0.9))
+			key_color = Color(0.85, 0.92, 1.0)
+			rim_color = Color(0.3, 1.0, 0.9)
 			for i in 3:
 				var r := _node(Vector3(0, 9 + i * 3.0, -5))
 				T.mi(T.torus(9.0 + i * 3.5, 9.15 + i * 3.5), T.neon(Color(0.3, 1.0, 0.9), 0.9), r, Vector3.ZERO, Vector3.ONE, Vector3(0.35 * (i - 1), 0, 0.2 * i))
@@ -80,6 +89,9 @@ func _build() -> void:
 			_sky(Color(0.06, 0.02, 0.02), Color(0.5, 0.18, 0.05), Color(1.0, 0.45, 0.1), 0.0, Color(0.3, 0.1, 0.05), 0.03)
 			_moon(Vector3(0, 30, -40), Color(1.0, 0.6, 0.35), 0.6)
 			_ground(Color(0.2, 0.15, 0.13))
+			key_color = Color(1.0, 0.6, 0.35)
+			rim_color = Color(1.0, 0.4, 0.15)
+			fill_color = Color(0.4, 0.45, 0.8)
 			for i in 4:
 				var lv := MeshInstance3D.new()
 				var pm := PlaneMesh.new()
@@ -105,6 +117,8 @@ func _build() -> void:
 			_sky(Color(0.02, 0.02, 0.06), Color(0.2, 0.35, 0.5), Color(0.7, 0.95, 1.0), 1.0, Color(0.12, 0.16, 0.24), 0.012)
 			_moon(Vector3(0, 50, -40), Color(0.85, 0.95, 1.0), 1.0)
 			_platform(Color(0.45, 0.48, 0.58), Color(0.6, 0.95, 1.0))
+			key_color = Color(0.95, 0.95, 1.0)
+			rim_color = Color(1.0, 0.55, 0.9)
 			_gate(Vector3(0, 0, -13), 9.0, Color(0.5, 0.9, 1.0), Color(1.0, 0.5, 0.9))
 			for i in 10:
 				var a := TAU * i / 10.0
@@ -137,8 +151,9 @@ func _sky(top: Color, hor: Color, glowc: Color, rift: float, fog: Color, fog_d: 
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = hor.lerp(Color(0.5, 0.5, 0.7), 0.5)
 	env.ambient_light_energy = 0.45
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 0.95
+	env.tonemap_mode = Environment.TONE_MAPPER_ACES
+	env.tonemap_exposure = 1.0
+	env.tonemap_white = 6.0
 	env.glow_enabled = true
 	env.glow_intensity = 0.5
 	env.glow_bloom = 0.03
@@ -148,6 +163,26 @@ func _sky(top: Color, hor: Color, glowc: Color, rift: float, fog: Color, fog_d: 
 	env.fog_light_color = fog
 	env.fog_density = fog_d
 	env.fog_sky_affect = 0.15
+	# Объём как в роликах: затенение в складках, переотражённый свет, лучи в дымке.
+	# В вебе (Compatibility) эти эффекты недоступны — остаётся обычный туман.
+	if RenderingServer.get_current_rendering_method() == "forward_plus":
+		env.ssao_enabled = true
+		env.ssao_radius = 1.2
+		env.ssao_intensity = 2.2
+		env.ssao_detail = 0.6
+		env.ssil_enabled = true
+		env.ssil_intensity = 0.8
+		env.sdfgi_enabled = true
+		env.sdfgi_use_occlusion = true
+		env.sdfgi_min_cell_size = 0.15
+		env.sdfgi_energy = 0.8
+		env.volumetric_fog_enabled = true
+		env.volumetric_fog_density = fog_d * 1.6
+		env.volumetric_fog_albedo = fog.lightened(0.5)
+		env.volumetric_fog_emission = fog * 0.4
+		env.volumetric_fog_anisotropy = 0.5
+		env.volumetric_fog_length = 80.0
+		env.fog_density = fog_d * 0.4
 	env.adjustment_enabled = true
 	env.adjustment_saturation = 1.05
 	env.adjustment_contrast = 1.06
@@ -161,6 +196,7 @@ func _moon(pos: Vector3, c: Color, e: float) -> void:
 	d.light_energy = e
 	d.shadow_enabled = true
 	d.directional_shadow_max_distance = 40.0
+	d.light_volumetric_fog_energy = 2.0
 	add_child(d)
 	d.look_at_from_position(pos, Vector3.ZERO)
 	# Тёплая заливка снизу-спереди, чтобы лица не проваливались в тень
