@@ -70,7 +70,6 @@ var _choosers: Array = []    # кто выбирает улучшение (по 
 var _chooser: Node2D
 var hud: CanvasLayer
 var camera: Camera2D
-var cine_focus = null   # куда смотрит камера во время кат-сцены босса (null — на героя)
 var _cam_anchor: Node2D
 var world: Node2D
 var entities: Node2D
@@ -113,8 +112,6 @@ var _last_hp := -1.0
 var _run_sync_t := 0.0
 const QuestsScript := preload("res://scripts/quests.gd")
 const Story := preload("res://scripts/story.gd")
-const CineScenes := preload("res://scripts/cine_scenes.gd")
-const Cutscene := preload("res://scripts/cutscene.gd")
 const QuestPoiScript := preload("res://scripts/quest_poi.gd")
 const EventsScript := preload("res://scripts/events.gd")
 var events: Node
@@ -275,10 +272,6 @@ func _ready() -> void:
 		hud.show_story.call_deferred(Story.CHAPTERS[Data.chapter_of(level_index)]["short"] + "  •  " + str(level["name"]), Story.LEVEL_STORY[level_index]["brief"])
 	Fx.portal(self, player.position, Color(0.3, 0.9, 1.0), 2.0)
 	Fx.ring(self, player.position, 10.0, 160.0, Pixel.hdr(Color(0.3, 0.9, 1.0), 2.0), 0.8, 5.0)
-	# Сюжетная кат-сцена перед решающим боем главы (один раз; пересмотр — в летописи)
-	var cs_id: String = CineScenes.BEFORE_LEVEL.get(level_index, "")
-	if cs_id != "" and net_mode == "" and not Meta.cine_seen(cs_id):
-		_play_cine.call_deferred(cs_id, Callable())
 
 
 ## Центр между живыми героями — туда смотрит камера.
@@ -1132,7 +1125,7 @@ func _process(delta: float) -> void:
 	if net_mode == "":
 		_leash()
 	if _cam_anchor:
-		_cam_anchor.position = view_center() if cine_focus == null else cine_focus
+		_cam_anchor.position = view_center()
 	_update_shake(delta)
 	# Отражения в 3D, маяки — в «позднем» узле, после того как все сдвинулись и камера
 	# обновилась: иначе пол и предметы рисуются со сдвигом в кадр и «шатаются».
@@ -1959,14 +1952,7 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	shake(10.0)
 	Fx.text_pop(self, center() + Vector2(0, -80), "⚠ " + b.boss_name + " ⚠", Pixel.hdr(b.color, 1.6), 34)
 	hud.show_boss(b.boss_name, b.color)
-	if net_mode == "" and Settings.get("cutscenes") != false:
-		# Кат-сцена выхода босса: замедление, камера к нему, плашка с именем
-		var bi := preload("res://scripts/boss_intro.gd").new()
-		bi.main = self
-		bi.boss = b
-		add_child(bi)
-	else:
-		get_tree().create_timer(1.6).timeout.connect(func(): boss_say(b, "intro"))
+	get_tree().create_timer(1.6).timeout.connect(func(): boss_say(b, "intro"))
 
 
 ## Реплика босса над ним (вступление, половина здоровья, гибель).
@@ -2424,31 +2410,11 @@ var endless_min := 0
 var _level_done := false
 
 
-## Кат-сцена поверх боя: игра на паузе, после — продолжение (then).
-func _play_cine(id: String, then: Callable) -> void:
-	while Loader.busy:
-		await get_tree().process_frame
-	if not is_inside_tree() or game_over and then.is_null():
-		return
-	Meta.mark_cine(id)
-	var c := Cutscene.play(self, id)
-	if then.is_valid():
-		c.finished.connect(then)
-
-
 ## Уровень пройден: завершить или остаться в бесконечном режиме.
 func _offer_endless() -> void:
 	Sound.play("evolve", 0.0)
 	screen_flash(0.3)
 	if net_mode == "client":
-		return
-	var cs_id: String = CineScenes.AFTER_LEVEL.get(level_index, "")
-	if cs_id != "" and net_mode == "" and not Meta.cine_seen(cs_id):
-		# Финал главы: сначала кат-сцена, потом выбор
-		get_tree().create_timer(1.2).timeout.connect(func():
-			_play_cine(cs_id, func():
-				get_tree().paused = true
-				hud.show_endless_choice()))
 		return
 	get_tree().paused = true
 	if net_mode == "host":

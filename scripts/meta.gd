@@ -303,19 +303,6 @@ static func ensure_loaded() -> void:
 			seen["m:" + m] = true
 
 
-## Кат-сцены: какие уже видели (для первого показа и пересмотра в летописи).
-static func cine_seen(id: String) -> bool:
-	return id in stats.get("cine", [])
-
-
-static func mark_cine(id: String) -> void:
-	var a: Array = stats.get("cine", [])
-	if not (id in a):
-		a.append(id)
-	stats["cine"] = a
-	save()
-
-
 static func save() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("meta", "shards", shards)
