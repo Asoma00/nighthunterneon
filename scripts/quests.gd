@@ -110,6 +110,8 @@ static func reward(q: Dictionary) -> Dictionary:
 	var r := {"shards": 40 + 25 * t, "scrap": 5 + 3 * t, "chips": 1 + t / 2, "cores": 1 if t >= 3 else 0}
 	if q.has("hero"):
 		r = {"shards": 120, "scrap": 10, "chips": 3, "cores": 1}
+	if q.has("giver"):
+		r = {"shards": 60 + 30 * t, "scrap": 6 + 4 * t, "chips": 1 + t / 2, "cores": 1 if t >= 2 else 0}
 	if q.get("contract", false):
 		# Контракт трактирщика: цель тяжелее, награда почти вдвое щедрее
 		r = {"shards": 90 + 45 * t, "scrap": 10 + 5 * t, "chips": 2 + t, "cores": 1 + t / 2}
@@ -175,6 +177,8 @@ static func reward_text(r: Dictionary) -> String:
 static func title(q: Dictionary) -> String:
 	if q.has("hero"):
 		return str(q.get("title", ""))
+	if q.has("giver"):
+		return "Просьба (%s): %s" % [q["giver"], POOL[q["k"]]["t"]]
 	return ("Контракт: " if q.get("contract", false) else "") + str(POOL[q["k"]]["t"])
 
 
@@ -215,6 +219,7 @@ static func hero_step(hero: String) -> int:
 static func active(hero: String) -> Array:
 	var out: Array = board().duplicate(true)
 	out.append_array(Meta.contracts.duplicate(true))
+	out.append_array(Meta.npc_quests.duplicate(true))
 	var hq := hero_quest(hero)
 	if not hq.is_empty():
 		out.append(hq)
@@ -255,6 +260,18 @@ static func settle(run: Dictionary, hero: String) -> Array:
 		else:
 			kc.append(q)
 	Meta.contracts = kc
+	# Просьбы жителей: выполнил — житель благодарит при встрече
+	var kn: Array = []
+	for q in Meta.npc_quests:
+		if done(q, run):
+			var r := reward(q)
+			Meta.add_reward(r)
+			out.append([title(q), reward_text(r)])
+			Meta.npc_thanks.append(str(q.get("giver", "")))
+			Meta.npc_cd[str(q.get("giver", ""))] = Meta.total_runs + 2
+		else:
+			kn.append(q)
+	Meta.npc_quests = kn
 	var hq := hero_quest(hero)
 	if not hq.is_empty() and done(hq, run):
 		var r := reward(hq)

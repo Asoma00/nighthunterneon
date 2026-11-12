@@ -110,6 +110,10 @@ func _ready() -> void:
 	_build_post()
 	_build_hud()
 	Sound.set_track("hub")
+	if not Meta.intro_seen and not _net_client:
+		get_tree().create_timer(1.2).timeout.connect(func():
+			if _panel_id == "":
+				_open_panel("prologue"))
 	if not Meta.last_reward.is_empty():
 		_show_reward(Meta.last_reward)
 		Meta.last_reward = {}
@@ -1030,7 +1034,10 @@ func _process(delta: float) -> void:
 	_animate_decor(delta)
 	_animate_places()
 	_update_avatar(delta)
+	_update_chats(delta)
 	_update_villagers(delta)
+	_update_marks()
+	_update_thanks()
 	if _inside == "hall":
 		_update_tavern(delta)
 	_update_camera(delta)
@@ -1118,6 +1125,13 @@ func _update_interaction() -> void:
 	if _inside != "":
 		_near = _interior_interaction()
 		_prompt.visible = _near != ""
+		return
+	var ti := _talk_target()
+	if ti >= 0 and not _net_client:
+		var tv: Dictionary = _villagers[ti]
+		_near = "talk:%d" % ti
+		_prompt.text = _pk() + "Поговорить: %s, %s" % [tv["profile"]["name"], tv["profile"]["title"]]
+		_prompt.visible = true
 		return
 	var best := ""
 	var best_d := 999.0
@@ -1464,6 +1478,15 @@ func _fill_panel() -> void:
 	if id.begins_with("hire:"):
 		_fill_hire(id.substr(5))
 		return
+	if id.begins_with("talk:"):
+		_fill_talk(int(id.substr(5)))
+		return
+	if id == "story":
+		_fill_story()
+		return
+	if id == "prologue":
+		_fill_prologue()
+		return
 	if id in ["forge", "shrine", "lab"] and Meta.level(id) > 0:
 		_fill_tree_panel(id)
 		return
@@ -1679,9 +1702,38 @@ func _start_run() -> void:
 
 # ================= Портал: выбор уровня главы =================
 
+var _portal_ch := -1
+
+
 func _fill_portal() -> void:
 	var c: Dictionary = Data.CHARACTERS[Data.selected_character]
-	_panel_box.add_child(_centered(_label(Data.CHAPTER_NAME.to_upper(), 30, Color.WHITE, Color(MAGENTA, 0.8))))
+	var cur_ch := Data.chapter_of(mini(Meta.levels_cleared, Data.LEVELS.size() - 1))
+	if _portal_ch < 0 or _portal_ch > cur_ch:
+		_portal_ch = cur_ch
+	# Вкладки глав: открываются по мере прохождения
+	var tabs := HFlowContainer.new()
+	tabs.alignment = FlowContainer.ALIGNMENT_CENTER
+	tabs.add_theme_constant_override("h_separation", 8)
+	tabs.add_theme_constant_override("v_separation", 6)
+	tabs.custom_minimum_size = Vector2(minf(760, _avail()), 0)
+	for ci in Story.CHAPTERS.size():
+		var open := ci <= cur_ch
+		var tb := _button(("Глава %s" % ["I", "II", "III"][ci]) if open else "Глава %s  🔒" % ["I", "II", "III"][ci], MAGENTA if ci == _portal_ch else MAGENTA.darkened(0.55), open)
+		tb.custom_minimum_size = Vector2(150, 40)
+		tb.add_theme_font_size_override("font_size", 15)
+		var cc := ci
+		tb.pressed.connect(func():
+			_portal_ch = cc
+			Sound.play("click")
+			_fill_panel())
+		tabs.add_child(tb)
+	_panel_box.add_child(_centered(tabs))
+	_panel_box.add_child(_centered(_label(str(Story.CHAPTERS[_portal_ch]["name"]).to_upper(), 28, Color.WHITE, Color(MAGENTA, 0.8))))
+	var intro := _label(Story.CHAPTERS[_portal_ch]["intro"], 14, Color(0.82, 0.8, 0.95))
+	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	intro.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	intro.custom_minimum_size = Vector2(minf(700, _avail()), 0)
+	_panel_box.add_child(_centered(intro))
 	_panel_box.add_child(_centered(_label(("Герой: %s — %s\nпройдено %d / %d" if _portrait() else "Герой: %s — %s   •   пройдено %d / %d") % [c["name"], c["title"], Meta.levels_cleared, Data.LEVELS.size()], 17, c["color"])))
 	if Net.mode == "host":
 		var ok: bool = Net.lobby.get("client", false)
@@ -1692,7 +1744,7 @@ func _fill_portal() -> void:
 	grid.columns = _cols(220)   # вертикальный экран: уровни в две колонки, ничего не вылезает
 	grid.add_theme_constant_override("h_separation", 10)
 	grid.add_theme_constant_override("v_separation", 10)
-	for i in Data.LEVELS.size():
+	for i in range(_portal_ch * Data.LEVELS_PER_CHAPTER, mini((_portal_ch + 1) * Data.LEVELS_PER_CHAPTER, Data.LEVELS.size())):
 		var lv: Dictionary = Data.LEVELS[i]
 		var unlocked := i <= Meta.levels_cleared
 		var cleared := i < Meta.levels_cleared
@@ -1706,7 +1758,7 @@ func _fill_portal() -> void:
 		var b := _button("%d. %s%s\n%s" % [i + 1, lv["name"], boss_mark, status_txt], accent, unlocked and (Net.mode != "host" or Net.lobby.get("client", false)))
 		b.custom_minimum_size = Vector2(minf(210, _avail()), 64)
 		b.add_theme_font_size_override("font_size", 14)
-		b.tooltip_text = lv["desc"]
+		b.tooltip_text = Story.LEVEL_STORY[i]["brief"] if i < Story.LEVEL_STORY.size() else lv["desc"]
 		var idx := i
 		b.pressed.connect(func():
 			Data.selected_level = idx
@@ -2019,7 +2071,7 @@ const NPC_NAMES := ["Мира", "Тим", "Ольга", "Сэм", "Варя", "�
 const NPC_TITLES := {"merchant": "торговка", "guard": "стражник", "kid": "ребёнок", "smith": "подмастерье",
 	"monk": "кибер-монах", "musician": "музыкант", "elder": "старейшина", "walker": "житель",
 	"gardener": "садовница", "robot": "робот-уборщик", "trainee": "новобранец",
-	"barkeep": "трактирщик", "blacksmith": "кузнец", "priestess": "жрица", "engineer": "инженер"}
+	"barkeep": "трактирщик", "blacksmith": "кузнец", "priestess": "жрица", "engineer": "инженер", "commander": "командир"}
 
 
 func _spawn_npcs() -> void:
@@ -2049,6 +2101,8 @@ func _spawn_npcs() -> void:
 	for i in 2:
 		add.call("trainee", TRAINING + Vector3(1.4, 0, -1.0 + i * 2.0), {"home": TRAINING + Vector3(1.4, 0, -1.0 + i * 2.0)})
 	add.call("gardener", GARDEN + Vector3(1.5, 0, 0))
+	# Командир Ворон у доски заданий — ведёт сюжет
+	add.call("commander", COMMANDER_POS, {"home": COMMANDER_POS})
 	for i in 2:
 		add.call("robot", Vector3(rng.randf_range(-6, 6), 0, rng.randf_range(-2, 8)))
 	for i in 6:
@@ -2063,6 +2117,7 @@ func _add_npc(role: String, pos: Vector3, extra := {}) -> void:
 	var v := _make_npc(role, pos, 100 + _npc_n * 7, NPC_NAMES[_npc_n % NPC_NAMES.size()])
 	for k in extra:
 		v[k] = extra[k]
+	_apply_profile(v, _profile_for(role))
 	_npc_n += 1
 
 
@@ -2111,7 +2166,7 @@ func _update_villagers(delta: float) -> void:
 				if node.position.distance_to(v["target"]) < 0.4:
 					var a := randf() * TAU
 					v["target"] = Vector3(cos(a), 0, sin(a) + 0.6) * randf_range(1.0, 5.5)
-			"merchant", "smith", "monk", "musician", "elder", "trainee", "barkeep", "blacksmith", "priestess", "engineer":
+			"merchant", "smith", "monk", "musician", "elder", "trainee", "barkeep", "blacksmith", "priestess", "engineer", "commander":
 				v["target"] = v["home"]
 				_npc_work(v, delta)
 			"robot":
@@ -2172,7 +2227,7 @@ func _update_villagers(delta: float) -> void:
 				bubble.visible = false
 				v["bubble_t"] = randf_range(7.0, 16.0)
 			else:
-				var ph: Array = NPC_PHRASES.get(role, HOST_PHRASES.get(role, NPC_PHRASES["walker"]))
+				var ph: Array = v["profile"]["lines"] if v.has("profile") and randf() < 0.6 else NPC_PHRASES.get(role, HOST_PHRASES.get(role, NPC_PHRASES["walker"]))
 				bubble.text = ph[randi() % ph.size()]
 				bubble.visible = true
 				v["bubble_t"] = 3.0
@@ -2449,9 +2504,9 @@ func _quest_card(q: Dictionary, i: int) -> Control:
 	return card
 
 
-const LIB_TABS := [["heroes", "Герои"], ["abilities", "Способности"], ["weapons", "Оружие"],
+const LIB_TABS := [["chronicle", "Летопись"], ["bestiary", "Бестиарий"], ["heroes", "Герои"], ["abilities", "Способности"], ["weapons", "Оружие"],
 	["modules", "Модули"], ["aspects", "Аспекты"], ["statuses", "Эффекты"], ["reactions", "Реакции"]]
-var _lib_tab := "heroes"
+var _lib_tab := "chronicle"
 var _lib_sel := ""
 
 
@@ -2459,6 +2514,14 @@ var _lib_sel := ""
 func _lib_entries(tab: String) -> Array:
 	var out: Array = []
 	match tab:
+		"chronicle":
+			out.append(["prologue", "Слияние и Ночь Врат", Pixel.icon("book"), true])
+			for c in Story.CHAPTERS.size():
+				out.append(["ch%d" % c, Story.CHAPTERS[c]["short"], Pixel.icon("book"), Meta.levels_cleared >= c * Data.LEVELS_PER_CHAPTER])
+		"bestiary":
+			for e in Story.ENEMY_INFO:
+				var spr: String = Data.ENEMIES.get(e, {}).get("sprite", e)
+				out.append([e, Story.ENEMY_INFO[e]["name"], Pixel.frames(spr)["base"][0], Meta.discovered("e:" + e)])
 		"heroes":
 			for h in Data.CHARACTERS:
 				var c: Dictionary = Data.CHARACTERS[h]
@@ -2640,6 +2703,32 @@ func _reactions_of(st: String) -> Array:
 
 func _lib_article(art: VBoxContainer, tab: String, key: String) -> void:
 	match tab:
+		"chronicle":
+			if key == "prologue":
+				_lib_head(art, Pixel.icon("book"), 3.0, "Летопись Слияния", "как всё началось", Color(0.75, 0.6, 1.0))
+				for para in Story.PROLOGUE:
+					art.add_child(_para(para, Color(0.9, 0.88, 1.0), 15))
+			else:
+				var c := int(key.substr(2))
+				_lib_head(art, Pixel.icon("book"), 3.0, Story.CHAPTERS[c]["name"], "", Color(0.75, 0.6, 1.0))
+				art.add_child(_para(Story.CHAPTERS[c]["intro"], Color(0.9, 0.88, 1.0), 15))
+				for i in range(c * Data.LEVELS_PER_CHAPTER, (c + 1) * Data.LEVELS_PER_CHAPTER):
+					if i < Meta.levels_cleared:
+						_section(art, "%d. %s" % [i + 1, Data.LEVELS[i]["name"]])
+						art.add_child(_para(Story.LEVEL_STORY[i]["after"], Color(0.85, 0.85, 0.98), 14))
+		"bestiary":
+			var info: Dictionary = Story.ENEMY_INFO[key]
+			var ed: Dictionary = Data.ENEMIES.get(key, {})
+			var col: Color = ed.get("color", Color.WHITE)
+			_lib_head(art, Pixel.frames(ed.get("sprite", key))["base"][0], 3.0, info["name"], "тварь из орды Врат", col)
+			art.add_child(_para(info["lore"], Color(0.9, 0.88, 1.0), 15))
+			if not ed.is_empty():
+				_section(art, "Повадки")
+				art.add_child(_para("Здоровье: %d   •   скорость: %d   •   урон: %d" % [int(ed["hp"]), int(ed["speed"]), int(ed["damage"])], Color(0.8, 0.8, 0.95), 14))
+			var barks: Array = info.get("barks", [])
+			if not barks.is_empty():
+				_section(art, "Что бормочет в бою")
+				art.add_child(_para("«" + "»   «".join(barks) + "»", Color(1.0, 0.9, 0.75), 14))
 		"heroes":
 			var c: Dictionary = Data.CHARACTERS[key]
 			_lib_head(art, Pixel.portrait(c["sprite"]), 5.0, c["name"], c["title"], c["color"])
@@ -3295,3 +3384,287 @@ func _contract_card(q: Dictionary, i: int, taken: bool) -> Control:
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(b)
 	return card
+
+
+# ================= Сюжет и жители =================
+# Командир Ворон ведёт главную линию; у каждого жителя есть имя, история и просьба.
+# Жители не бродят «болванчиками»: работают на своих местах, сходятся поболтать,
+# благодарят за выполненные просьбы. Над теми, у кого есть дело к охотнику, — «!».
+
+const Story := preload("res://scripts/story.gd")
+const COMMANDER_POS := Vector3(-5.6, 0, 0.4)
+var _role_n := {}
+var _chat_t := 6.0
+
+
+## Анкета жителя по роли (по порядку появления).
+func _profile_for(role: String) -> Dictionary:
+	var list: Array = Story.VILLAGERS.get(role, [])
+	if list.is_empty():
+		return {}
+	var i := int(_role_n.get(role, 0))
+	_role_n[role] = i + 1
+	return list[i % list.size()]
+
+
+func _apply_profile(v: Dictionary, prof: Dictionary) -> void:
+	if prof.is_empty():
+		return
+	v["profile"] = prof
+	(v["name"] as Label3D).text = "%s, %s" % [prof["name"], prof["title"]]
+	var mark := _label3d(v["node"], "!", Vector3(0, 2.35, 0), GOLD, 56)
+	mark.visible = false
+	v["mark"] = mark
+
+
+## Предложение жителя: его просьба, если он сейчас ничего не ждёт.
+func _npc_offer(v: Dictionary) -> Dictionary:
+	var prof: Dictionary = v.get("profile", {})
+	if prof.is_empty() or not prof.has("quest"):
+		return {}
+	var nm: String = prof["name"]
+	for q in Meta.npc_quests:
+		if str(q.get("giver", "")) == nm:
+			return {}
+	if Meta.total_runs < int(Meta.npc_cd.get(nm, 0)):
+		return {}
+	var k: String = prof["quest"]
+	var t := Quests.tier()
+	return {"k": k, "g": int(Quests.POOL[k]["g"][t]), "tier": t, "giver": nm}
+
+
+func _npc_active(v: Dictionary) -> Dictionary:
+	var nm: String = v.get("profile", {}).get("name", "")
+	for q in Meta.npc_quests:
+		if str(q.get("giver", "")) == nm:
+			return q
+	return {}
+
+
+## Метки над головами: «!» — есть просьба или сюжет, «?» — пора доложить.
+func _update_marks() -> void:
+	# Подписи: только у ближайшего жителя — чтобы имена не наезжали друг на друга
+	var nearest: Dictionary = {}
+	var nd := 3.0
+	for v in _villagers:
+		var d := (v["node"] as Node3D).position.distance_to(_avatar.position)
+		(v["name"] as Label3D).visible = false
+		if d < nd:
+			nd = d
+			nearest = v
+	if not nearest.is_empty():
+		(nearest["name"] as Label3D).visible = true
+	for v in _villagers:
+		if not v.has("mark"):
+			continue
+		var mk: Label3D = v["mark"]
+		var txt := ""
+		if v.get("profile", {}).get("name", "") == "Ворон":
+			txt = "?" if Meta.story_ready() else ("!" if not Meta.story_cur().is_empty() else "")
+		elif not _npc_offer(v).is_empty() and Meta.npc_quests.size() < 3:
+			txt = "!"
+		mk.text = txt
+		mk.visible = txt != "" and not v.has("chat")
+		mk.position.y = 2.35 + sin(float(v["t"]) * 3.0) * 0.06
+
+
+## Ближайший житель с историей, с которым можно поговорить.
+func _talk_target() -> int:
+	var best := -1
+	var bd := 1.5
+	for i in _villagers.size():
+		var v: Dictionary = _villagers[i]
+		if not v.has("profile"):
+			continue
+		var d := (v["node"] as Node3D).position.distance_to(_avatar.position)
+		if d < bd:
+			bd = d
+			best = i
+	return best
+
+
+## Болтовня: житель подходит к соседу, и они обмениваются репликами.
+func _update_chats(delta: float) -> void:
+	_chat_t -= delta
+	if _chat_t <= 0.0:
+		_chat_t = randf_range(9.0, 16.0)
+		var walkers: Array = []
+		var free: Array = []
+		for v in _villagers:
+			if v.has("profile") and not v.has("chat") and v["role"] in ["walker", "elder", "trainee", "gardener", "merchant", "musician"]:
+				free.append(v)
+				if v["role"] == "walker":
+					walkers.append(v)
+		if not walkers.is_empty() and free.size() >= 2:
+			var a: Dictionary = walkers[randi() % walkers.size()]
+			var b: Dictionary = a
+			var bd := 999.0
+			for o in free:
+				if o != a:
+					var d := (o["node"] as Node3D).position.distance_to((a["node"] as Node3D).position)
+					if d < bd:
+						bd = d
+						b = o
+			if b != a and bd < 14.0:
+				var pair: Array = Story.CHATS[randi() % Story.CHATS.size()]
+				a["chat"] = {"with": b, "line": pair[0], "lead": true, "t": 0.0}
+				b["chat"] = {"with": a, "line": pair[1], "lead": false, "t": 0.0}
+	for v in _villagers:
+		if not v.has("chat"):
+			continue
+		var c: Dictionary = v["chat"]
+		var o: Dictionary = c["with"]
+		var op: Vector3 = (o["node"] as Node3D).position
+		var me: Vector3 = (v["node"] as Node3D).position
+		if me.distance_to(op) > 1.5 and float(c["t"]) <= 0.0:
+			v["target"] = op + (me - op).normalized() * 1.1
+			v["wait"] = 1.0
+			c["far"] = float(c.get("far", 0.0)) + delta
+			if float(c["far"]) > 14.0 or not o.has("chat"):
+				v.erase("chat")
+			continue
+		v["target"] = me
+		v["wait"] = 1.0
+		(v["base"] as Sprite3D).flip_h = op.x < me.x
+		(v["emit"] as Sprite3D).flip_h = op.x < me.x
+		c["t"] = float(c["t"]) + delta
+		var start := 0.4 if c["lead"] else 3.0
+		var bubble: Label3D = v["bubble"]
+		if float(c["t"]) > start and float(c["t"]) < start + 2.6:
+			bubble.text = c["line"]
+			bubble.visible = true
+			v["bubble_t"] = 3.0
+		elif float(c["t"]) >= 6.0:
+			bubble.visible = false
+			v.erase("chat")
+			v["wait"] = randf_range(2.0, 5.0)
+
+
+## Благодарность за выполненную просьбу — когда охотник проходит рядом.
+func _update_thanks() -> void:
+	if Meta.npc_thanks.is_empty():
+		return
+	for v in _villagers:
+		var nm: String = v.get("profile", {}).get("name", "")
+		if nm != "" and nm in Meta.npc_thanks and (v["node"] as Node3D).position.distance_to(_avatar.position) < 3.0:
+			Meta.npc_thanks.erase(nm)
+			var bubble: Label3D = v["bubble"]
+			bubble.text = ["Спасибо, охотник! Я не забуду.", "Ты сдержал слово!", "Вот это да! Спасибо!"][randi() % 3]
+			bubble.visible = true
+			v["bubble_t"] = 4.0
+			_particles(_world, (v["node"] as Node3D).position + Vector3(0, 1.6, 0), GOLD, 16, Vector3(0.3, 0.3, 0.3), Vector3(0, 1.5, 0), 0.8, 0.06, true, 1.5)
+			Meta.save()
+			return
+
+
+# ---- Панели: разговор, сюжет, пролог ----
+
+func _story_w() -> float:
+	return minf(640.0, _avail())
+
+
+func _fill_talk(i: int) -> void:
+	if i < 0 or i >= _villagers.size():
+		_add_close()
+		return
+	var v: Dictionary = _villagers[i]
+	var prof: Dictionary = v["profile"]
+	if prof["name"] == "Ворон":
+		_fill_story()
+		return
+	_panel_box.add_child(_centered(_label(str(prof["name"]).to_upper(), 30, Color.WHITE, Color(CYAN, 0.7))))
+	_panel_box.add_child(_centered(_label(prof["title"], 16, Color(0.75, 0.8, 1.0))))
+	var lines: Array = prof["lines"]
+	var quote := _label("«%s»" % lines[randi() % lines.size()], 17, Color(1.0, 0.92, 0.75))
+	quote.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	quote.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	quote.custom_minimum_size = Vector2(_story_w(), 0)
+	_panel_box.add_child(_centered(quote))
+	var story := _label(prof["story"], 15, Color(0.85, 0.85, 0.98))
+	story.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	story.custom_minimum_size = Vector2(_story_w(), 0)
+	_panel_box.add_child(_centered(story))
+	var act := _npc_active(v)
+	var offer := _npc_offer(v)
+	if not act.is_empty():
+		_panel_box.add_child(_centered(_label("Вы обещали помочь:", 15, GOLD)))
+		_panel_box.add_child(_centered(_label(Quests.desc(act) + "  •  награда: " + Quests.reward_text(Quests.reward(act)), 15, Color(0.92, 0.92, 1.0))))
+		var drop := _button("Не смогу — отказаться", Color(1.0, 0.5, 0.5))
+		drop.pressed.connect(func():
+			Meta.npc_quests.erase(act)
+			Meta.save()
+			_fill_panel())
+		_panel_box.add_child(_centered(drop))
+	elif not offer.is_empty():
+		_panel_box.add_child(_centered(_label("Просьба:", 15, GOLD)))
+		var d := _label(Quests.desc(offer) + "  •  награда: " + Quests.reward_text(Quests.reward(offer)), 15, Color(0.92, 0.92, 1.0))
+		d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		d.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		d.custom_minimum_size = Vector2(_story_w(), 0)
+		_panel_box.add_child(_centered(d))
+		var can := Meta.npc_quests.size() < 3
+		var take := _button("ПОМОГУ" if can else "Слишком много обещаний (3)", GOLD, can)
+		take.pressed.connect(func():
+			Meta.npc_quests.append(offer)
+			Meta.save()
+			Sound.play("levelup", -6.0)
+			_toast_text("%s: «Спасибо! Я буду ждать.»" % prof["name"])
+			_close_panel())
+		_panel_box.add_child(_centered(take))
+	_add_close()
+
+
+func _fill_story() -> void:
+	var ch := Data.chapter_of(Meta.levels_cleared if Meta.levels_cleared < Data.LEVELS.size() else Data.LEVELS.size() - 1)
+	_panel_box.add_child(_centered(_label("КОМАНДИР ВОРОН", 30, Color.WHITE, Color(GOLD, 0.7))))
+	_panel_box.add_child(_centered(_label(Story.CHAPTERS[ch]["name"], 18, Color(0.85, 0.75, 1.0))))
+	var intro := _label(Story.CHAPTERS[ch]["intro"], 15, Color(0.82, 0.82, 0.95))
+	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	intro.custom_minimum_size = Vector2(_story_w(), 0)
+	_panel_box.add_child(_centered(intro))
+	var st := Meta.story_cur()
+	if st.is_empty():
+		var fin := _label("«Первые Врата закрыты. Но я слышу, как где-то тлеют малые… Отдыхай, охотник. Пока.»", 17, Color(1.0, 0.92, 0.75))
+		fin.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		fin.custom_minimum_size = Vector2(_story_w(), 0)
+		_panel_box.add_child(_centered(fin))
+	else:
+		_panel_box.add_child(_centered(_label("Задание: «%s»" % st["title"], 20, GOLD)))
+		var t := _label("«%s»" % st["text"], 16, Color(1.0, 0.92, 0.75))
+		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		t.custom_minimum_size = Vector2(_story_w(), 0)
+		_panel_box.add_child(_centered(t))
+		var p := Meta.story_progress(st)
+		_panel_box.add_child(_centered(_label("Цель: %s  —  %d / %d" % [Meta.story_goal_text(st), int(p[0]), int(p[1])], 15, Color(0.6, 1.0, 0.7) if Meta.story_ready() else Color(0.9, 0.9, 1.0))))
+		_panel_box.add_child(_centered(_label("Награда: " + Meta.cost_text(st["reward"]), 14, Color(0.75, 0.75, 0.9))))
+		if Meta.story_ready():
+			var b := _button("ДОЛОЖИТЬ", GOLD)
+			b.pressed.connect(func():
+				var r := Meta.story_claim()
+				Sound.play("evolve", -2.0)
+				_toast_text("Сюжет продвинулся! Награда: " + Meta.cost_text(r))
+				_fill_panel())
+			_panel_box.add_child(_centered(b))
+	var pro := _button("Летопись: как всё началось", Color(0.75, 0.6, 1.0))
+	pro.pressed.connect(func():
+		_panel_id = "prologue"
+		_fill_panel())
+	_panel_box.add_child(_centered(pro))
+	_add_close()
+
+
+func _fill_prologue() -> void:
+	_panel_box.add_child(_centered(_label("ЛЕТОПИСЬ СЛИЯНИЯ", 30, Color.WHITE, Color(Color(0.75, 0.6, 1.0), 0.8))))
+	for para in Story.PROLOGUE:
+		var l := _label(para, 16, Color(0.9, 0.88, 1.0))
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.custom_minimum_size = Vector2(_story_w(), 0)
+		_panel_box.add_child(_centered(l))
+	var go := _button("К КОМАНДИРУ ВОРОНУ", GOLD)
+	go.pressed.connect(func():
+		Meta.intro_seen = true
+		Meta.save()
+		_panel_id = "story"
+		_fill_panel())
+	_panel_box.add_child(_centered(go))
+	_add_close()

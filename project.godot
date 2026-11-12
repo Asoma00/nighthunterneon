@@ -11,8 +11,10 @@ config_version=5
 [application]
 
 config/name="Ночь охотника: Неон"
-config/version="0.14.22"
-run/main_scene="res://menu.tscn"
+config/version="0.14.23"
+run/main_scene="res://splash.tscn"
+boot_splash/show_image=false
+boot_splash/bg_color=Color(0.02, 0.01, 0.04, 1)
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"
 config/quit_on_go_back=false

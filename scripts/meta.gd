@@ -66,6 +66,12 @@ static var heroes_owned: Array = ["vega"]
 # бросок места задания), потом собрать его оружие из 3 частей (шанс 1 из 1000 с врага,
 # иногда в тайнике). Только тогда его можно нанять в таверне (старые условия тоже нужны).
 static var rescued: Array = []
+# Сюжет: шаг главной линии (см. story.gd), видел ли игрок пролог, просьбы жителей
+static var story_step := 0
+static var intro_seen := false
+static var npc_quests: Array = []
+static var npc_cd := {}          # имя жителя -> номер забега, с которого он снова просит
+static var npc_thanks: Array = []
 static var parts := {}
 const PARTS_NEED := 3
 
@@ -226,6 +232,11 @@ static func reset() -> void:
 	offers = []
 	rescued = []
 	parts = {}
+	story_step = 0
+	intro_seen = false
+	npc_quests = []
+	npc_cd = {}
+	npc_thanks = []
 	construct = {}
 	just_built = ""
 
@@ -253,6 +264,11 @@ static func ensure_loaded() -> void:
 	if cfg.has_section_key("meta", "heroes_owned"):
 		heroes_owned = cfg.get_value("meta", "heroes_owned", ["vega"])
 		rescued = cfg.get_value("meta", "rescued", [])
+		story_step = cfg.get_value("meta", "story_step", 0)
+		intro_seen = cfg.get_value("meta", "intro_seen", false)
+		npc_quests = cfg.get_value("meta", "npc_quests", [])
+		npc_cd = cfg.get_value("meta", "npc_cd", {})
+		npc_thanks = cfg.get_value("meta", "npc_thanks", [])
 		parts = cfg.get_value("meta", "parts", {})
 	else:
 		# Старое сохранение: герои открывались уровнем зала — оставляем уже открытых
@@ -299,11 +315,81 @@ static func save() -> void:
 	cfg.set_value("meta", "quests", quests)
 	cfg.set_value("meta", "contracts", contracts)
 	cfg.set_value("meta", "rescued", rescued)
+	cfg.set_value("meta", "story_step", story_step)
+	cfg.set_value("meta", "intro_seen", intro_seen)
+	cfg.set_value("meta", "npc_quests", npc_quests)
+	cfg.set_value("meta", "npc_cd", npc_cd)
+	cfg.set_value("meta", "npc_thanks", npc_thanks)
 	cfg.set_value("meta", "parts", parts)
 	cfg.set_value("meta", "offers", offers)
 	cfg.set_value("meta", "construct", construct)
 	cfg.set_value("meta", "saved_at", Time.get_datetime_string_from_system(false, true))
 	cfg.save(slot_path(current_slot()))
+
+
+# ---------- Сюжетная линия ----------
+
+static func story_cur() -> Dictionary:
+	var S = preload("res://scripts/story.gd")
+	return S.STORY[story_step] if story_step < S.STORY.size() else {}
+
+
+## [сделано, всего] для цели шага.
+static func story_progress(st: Dictionary) -> Array:
+	var g: Array = st.get("goal", [])
+	if g.is_empty():
+		return [0, 1]
+	match str(g[0]):
+		"clear":
+			return [mini(levels_cleared, int(g[1])), int(g[1])]
+		"rescue":
+			var n := 0
+			for h in HERO_ORDER:
+				if h != "vega" and (h in rescued or h in heroes_owned):
+					n += 1
+			return [mini(n, int(g[1])), int(g[1])]
+		"build":
+			return [mini(level(str(g[1])), 1), 1]
+		"level":
+			return [mini(level(str(g[1])), int(g[2])), int(g[2])]
+	return [0, 1]
+
+
+static func story_goal_text(st: Dictionary) -> String:
+	var g: Array = st.get("goal", [])
+	if g.is_empty():
+		return ""
+	var L = preload("res://scripts/data.gd").LEVELS
+	match str(g[0]):
+		"clear":
+			var i := int(g[1]) - 1
+			return "Пройти уровень %d «%s»" % [i + 1, L[i]["name"]]
+		"rescue":
+			return "Освободить пленного героя"
+		"build":
+			return "Построить: %s" % BUILDINGS[str(g[1])]["name"]
+		"level":
+			return "%s — уровень %d" % [BUILDINGS[str(g[1])]["name"], int(g[2])]
+	return ""
+
+
+static func story_ready() -> bool:
+	var st := story_cur()
+	if st.is_empty():
+		return false
+	var p := story_progress(st)
+	return int(p[0]) >= int(p[1])
+
+
+## Доложить командиру: награда и следующий шаг.
+static func story_claim() -> Dictionary:
+	if not story_ready():
+		return {}
+	var st := story_cur()
+	add_reward(st["reward"])
+	story_step += 1
+	save()
+	return st["reward"]
 
 
 ## Отметить найденное для библиотеки (сохраняется вместе с итогом забега).

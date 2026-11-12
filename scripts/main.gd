@@ -111,6 +111,7 @@ var _nodmg_t := 0.0
 var _last_hp := -1.0
 var _run_sync_t := 0.0
 const QuestsScript := preload("res://scripts/quests.gd")
+const Story := preload("res://scripts/story.gd")
 const QuestPoiScript := preload("res://scripts/quest_poi.gd")
 const EventsScript := preload("res://scripts/events.gd")
 var events: Node
@@ -267,6 +268,8 @@ func _ready() -> void:
 
 	Sound.set_track("battle", true)
 	Fx.text_pop(self, player.position + Vector2(0, -40), "%d. %s" % [level_index + 1, level["name"]], Color(1.0, 0.9, 1.0), 30)
+	if level_index < Story.LEVEL_STORY.size():
+		hud.show_story.call_deferred(Story.CHAPTERS[Data.chapter_of(level_index)]["short"] + "  •  " + str(level["name"]), Story.LEVEL_STORY[level_index]["brief"])
 	Fx.portal(self, player.position, Color(0.3, 0.9, 1.0), 2.0)
 	Fx.ring(self, player.position, 10.0, 160.0, Pixel.hdr(Color(0.3, 0.9, 1.0), 2.0), 0.8, 5.0)
 
@@ -1130,6 +1133,7 @@ func _process(delta: float) -> void:
 	_update_music_intensity(delta)
 	if Loader.busy:
 		return  # мир уже рисуется под экраном загрузки, но время забега ещё не идёт
+	_barks(delta)
 	status_fx_budget = 6
 	flash_budget = 5
 	explosion_budget = 2
@@ -1466,6 +1470,7 @@ func _separate_enemies() -> void:
 
 func on_enemy_killed(enemy: Node2D) -> void:
 	kills += 1
+	Meta.discover("e:" + str(enemy.get("kind")))
 	# Часть оружия спасённого героя: 1 из 1000
 	if net_mode != "client" and rng.randf() < 0.001:
 		spawn_part(enemy.position)
@@ -1925,7 +1930,7 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	b.main = self
 	b.player = player
 	b.kind = kind
-	b.boss_name = info["name"]
+	b.boss_name = Story.BOSS_NAMES[Data.chapter_of(level_index)].get(kind, info["name"])
 	# Боссы — настоящее испытание: очень плотные и крепнут вместе с боем
 	b.max_hp = info["hp"] * 2.2 * (0.7 + 0.3 * float(level["hp"])) * (1.0 + time_alive / 300.0) * (1.0 + 0.35 * endless_min) * (3.0 if is_super else 1.0)
 	b.is_super = is_super
@@ -1947,6 +1952,41 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	shake(10.0)
 	Fx.text_pop(self, center() + Vector2(0, -80), "⚠ " + b.boss_name + " ⚠", Pixel.hdr(b.color, 1.6), 34)
 	hud.show_boss(b.boss_name, b.color)
+	get_tree().create_timer(1.6).timeout.connect(func(): boss_say(b, "intro"))
+
+
+## Реплика босса над ним (вступление, половина здоровья, гибель).
+func boss_say(b: Node2D, when: String) -> void:
+	if not is_instance_valid(b) and when != "death":
+		return
+	var lines: Array = Story.BOSS_LINES.get(str(b.get("kind")), {}).get(when, [])
+	if lines.is_empty():
+		return
+	var at: Vector2 = b.position if is_instance_valid(b) else center()
+	Fx.text_pop(self, at + Vector2(0, -130), "«%s»" % lines[rng.randi() % lines.size()], Pixel.hdr(Color(1.0, 0.85, 0.9), 1.3), 22)
+
+
+## Реплики тварей: изредка кто-то из видимых врагов что-то бормочет.
+var _bark_t := 6.0
+
+
+func _barks(delta: float) -> void:
+	_bark_t -= delta
+	if _bark_t > 0.0:
+		return
+	_bark_t = rng.randf_range(7.0, 13.0)
+	var es := get_tree().get_nodes_in_group("enemies")
+	if es.is_empty():
+		return
+	for i in 6:
+		var e: Node2D = es[rng.randi() % es.size()]
+		if not is_instance_valid(e) or e == boss or not on_screen(e.position):
+			continue
+		var lines: Array = Story.ENEMY_INFO.get(str(e.get("kind")), {}).get("barks", [])
+		if lines.is_empty():
+			continue
+		Fx.text_pop(self, e.position + Vector2(0, -50), lines[rng.randi() % lines.size()], Color(0.95, 0.85, 1.0, 0.9), 14)
+		return
 
 
 func on_boss_killed(b: Node2D) -> void:
@@ -1959,6 +1999,7 @@ func on_boss_killed(b: Node2D) -> void:
 	shake(16.0)
 	screen_flash(0.5)
 	Fx.text_pop(self, b.position + Vector2(0, -40), "БОСС ПОВЕРЖЕН", Pixel.hdr(Color(1.0, 0.85, 0.3), 1.6), 34)
+	boss_say(b, "death")
 	Sound.set_track("battle")
 
 

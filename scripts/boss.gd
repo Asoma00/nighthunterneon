@@ -215,6 +215,8 @@ func _check_phase() -> void:
 
 func _enter_phase(want: int) -> void:
 	phase = want
+	if want == 2 and not puppet:
+		main.boss_say(self, "half")
 	_phase_t = 2.0
 	stun_t = 0.0
 	frozen = false

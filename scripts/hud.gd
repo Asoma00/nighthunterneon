@@ -122,6 +122,9 @@ func _update_tracker() -> void:
 		_tracker.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_poi_layer.add_child(_tracker)
 	var lines: Array = []
+	var st: Dictionary = main.Meta.story_cur()
+	if not st.is_empty():
+		lines.append("◆ Сюжет: %s — %s" % [st["title"], main.Meta.story_goal_text(st)])
 	if main.challenge != "":
 		lines.append("⚠ %s  •  угроза %d" % [main.Meta.CHALLENGES[main.challenge]["name"], main.threat])
 	var Q = main.QuestsScript
@@ -1063,11 +1066,42 @@ func _build_game_over() -> void:
 	v.add_child(hub_btn)
 
 
+## Сюжетная карточка в начале уровня: заголовок и бриф, гаснет сама.
+func show_story(title: String, text: String) -> void:
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", _neon_box(Color(0.75, 0.6, 1.0, 0.7), Color(0.04, 0.02, 0.09, 0.82), 2, 8, 10))
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	box.add_child(v)
+	var t := _label(title.to_upper(), 16, Color(0.85, 0.75, 1.0))
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(t)
+	var b := _label(text, 15, Color(0.95, 0.92, 1.0))
+	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(b)
+	var vs := get_viewport().get_visible_rect().size
+	var w := minf(620.0, vs.x - 40.0)
+	b.custom_minimum_size = Vector2(w - 24.0, 0)
+	add_child(box)
+	box.position = Vector2((vs.x - w) / 2.0, vs.y * (0.62 if portrait() else 0.66))
+	box.modulate.a = 0.0
+	var tw := box.create_tween()
+	tw.tween_property(box, "modulate:a", 1.0, 0.6)
+	tw.tween_interval(6.5)
+	tw.tween_property(box, "modulate:a", 0.0, 1.0)
+	tw.tween_callback(box.queue_free)
+
+
 func show_game_over(victory: bool, time_alive: float, kills: int, level: int, reactions := 0) -> void:
 	_over_title.text = ("УРОВЕНЬ %d ПРОЙДЕН" % (main.level_index + 1)) if victory else "СИГНАЛ ПОТЕРЯН"
 	var c := GOLD if victory else MAGENTA
 	_over_title.add_theme_color_override("font_shadow_color", Color(c, 0.8))
-	_over_stats.text = "%s  •  %s\n\nВремя:  %s\nУничтожено:  %d\nУровень:  %d\nРеакций:  %d" % [
+	var after := ""
+	if victory and main.level_index < main.Story.LEVEL_STORY.size():
+		after = "«" + str(main.Story.LEVEL_STORY[main.level_index]["after"]) + "»\n\n"
+	_over_stats.text = after + "%s  •  %s\n\nВремя:  %s\nУничтожено:  %d\nУровень:  %d\nРеакций:  %d" % [
 		_me().char_data["name"], _me().char_data["title"], _fmt_time(time_alive), kills, _me().level, reactions]
 	if not main.reward.is_empty():
 		_over_stats.text += "\n\nНаграда:  +%d ◆ осколков" % main.reward["total"]
