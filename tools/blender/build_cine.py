@@ -10,14 +10,10 @@
 import bpy, bmesh, json, math, sys, os, random
 from mathutils import Vector, Matrix, Euler
 
-argv = sys.argv[sys.argv.index("--") + 1:]
-SPECS = json.load(open(argv[0]))
-OUT = argv[1]
-PREVIEW = "--preview" in argv
-ONLY = [a for a in argv[2:] if not a.startswith("--")]
-os.makedirs(OUT, exist_ok=True)
-if PREVIEW:
-    os.makedirs(os.path.join(OUT, "preview"), exist_ok=True)
+SPECS = {}
+OUT = ""
+PREVIEW = False
+ONLY = []
 
 S = {}          # текущее описание
 ARM = None      # арматура
@@ -967,6 +963,54 @@ def boss_spec(src):
             "face": "boss", "boss": True}
 
 
+def build_character(key, specs, prefix):
+    """Собрать персонажа в текущую сцену (без сброса). Возвращает арматуру.
+    Все объекты получают префикс и попадают в коллекцию prefix."""
+    global S, MATS, ARM, SPECS
+    SPECS = specs
+    before = set(bpy.data.objects)
+    mats_before = set(bpy.data.materials)
+    MATS = {}
+    S = dict(SPECS[key])
+    if S.get("kind", "").startswith("boss_"):
+        S = boss_spec(S)
+    S.setdefault("hunch", 0.0)
+    build_armature()
+    build_body()
+    hr = 0.132 if not S.get("mob") else 0.14
+    face = S.get("face", "human")
+    head = S.get("head", "plain")
+    if head == "hood":
+        face = "human"
+    if head == "ninja":
+        face = "ninja"
+    if head == "great_helm" or face == "boss":
+        face = "none"
+    if face != "skull" and not S.get("boss"):
+        to_bone(head_mesh(hr, S.get("mob", False)), "head")
+    build_face(hr, face)
+    build_headwear(hr)
+    for i, s in ((0, -1), (1, 1)):
+        build_hand(i, s)
+        build_boot(i, s)
+    build_clothes()
+    build_weapon()
+    col = bpy.data.collections.new(prefix)
+    bpy.context.scene.collection.children.link(col)
+    for o in set(bpy.data.objects) - before:
+        o.name = prefix + ":" + o.name
+        for c in list(o.users_collection):
+            c.objects.unlink(o)
+        col.objects.link(o)
+    for m in set(bpy.data.materials) - mats_before:
+        m["slot"] = m.name
+        m["char"] = key
+        m.name = prefix + ":" + m.name
+    rig = ARM
+    rig["spec"] = json.dumps(S)
+    return rig
+
+
 def build(key):
     global S, MATS, ARM
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -1044,13 +1088,27 @@ def render_preview(key):
     bpy.ops.render.render(write_still=True)
 
 
-keys = ONLY if ONLY else [k for k, v in SPECS.items() if v.get("kind") in ("biped", "boss_lich", "boss_omega")]
-fails = []
-for k in keys:
-    try:
-        build(k)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        fails.append(k)
-print("FAILED:", fails)
+def main():
+    global SPECS, OUT, PREVIEW, ONLY
+    argv = sys.argv[sys.argv.index("--") + 1:]
+    SPECS = json.load(open(argv[0]))
+    OUT = argv[1]
+    PREVIEW = "--preview" in argv
+    ONLY = [a for a in argv[2:] if not a.startswith("--")]
+    os.makedirs(OUT, exist_ok=True)
+    if PREVIEW:
+        os.makedirs(os.path.join(OUT, "preview"), exist_ok=True)
+    keys = ONLY if ONLY else [k for k, v in SPECS.items() if v.get("kind") in ("biped", "boss_lich", "boss_omega")]
+    fails = []
+    for k in keys:
+        try:
+            build(k)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            fails.append(k)
+    print("FAILED:", fails)
+
+
+if __name__ == "__main__":
+    main()
