@@ -53,12 +53,32 @@ static func _builtin_build() -> int:
 	return int(parts[1]) if parts.size() > 1 else 0
 
 
+## На ПК старые сборки запускались с отдельным потоком рендера (экспериментальный режим
+## Godot) — с ним игра вылетала при загрузке убежища. Настройки движка из обновления
+## не применяются (они зашиты в .exe), поэтому кладём рядом с игрой override.cfg:
+## со следующего запуска рендер работает в безопасном режиме.
+func _safe_render_override() -> void:
+	if OS.has_feature("editor") or OS.has_feature("web") or OS.has_feature("mobile"):
+		return
+	var path := OS.get_executable_path().get_base_dir().path_join("override.cfg")
+	if FileAccess.file_exists(path) and FileAccess.get_file_as_string(path).contains("thread_model=1"):
+		return
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return   # папка только для чтения — ничего не поделать
+	f.store_string("; Безопасный режим отрисовки (без отдельного потока рендера)\n[rendering]\n\ndriver/threads/thread_model=1\n")
+	f.close()
+	if int(ProjectSettings.get_setting("rendering/driver/threads/thread_model", 1)) == 2:
+		print("[Обновление] включён безопасный режим рендера — подействует после перезапуска")
+
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	var bs = load("res://scripts/build.gd")
 	build = int(bs.BUILD)
 	version = str(bs.VERSION)
 	print("[Обновление] работает сборка %s (%d)" % [version, build])
+	_safe_render_override()
 	_http = HTTPRequest.new()
 	_http.timeout = 30.0
 	_http.use_threads = not OS.has_feature("web")

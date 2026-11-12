@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Ночь охотника: Неон"
-config/version="0.15.2"
+config/version="0.15.3"
 run/main_scene="res://splash.tscn"
 boot_splash/show_image=false
 boot_splash/bg_color=Color(0.02, 0.01, 0.04, 1)
@@ -42,7 +42,7 @@ run/main_run_args="--gpu-index 0"
 
 [rendering]
 
-driver/threads/thread_model=2
+driver/threads/thread_model=1
 driver/threads/thread_model.mobile=1
 
 rendering_device/driver.windows="vulkan"
