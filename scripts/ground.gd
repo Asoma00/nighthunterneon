@@ -11,7 +11,7 @@ const Props3D := preload("res://scripts/props3d.gd")
 const CHUNK := 768.0
 ## Мир замкнут: через WORLD_CHUNKS чанков (≈123 м) в любую сторону местность повторяется,
 ## как на торе. Уйдя достаточно далеко, герой снова выходит к знакомым местам.
-const WORLD_CHUNKS := 16
+const WORLD_CHUNKS := 40   # ≈ 300 м до повтора — за забег одно и то же место не встречается
 const WORLD_SIZE := CHUNK * WORLD_CHUNKS
 
 
@@ -184,8 +184,154 @@ func _build_chunk(key: Vector2i) -> Array:
 				dn.visible = false
 			nodes.append(dn)
 	_lights = 0
+	_road_bands = []
+	_build_roads(key, origin, rng, nodes)
 	_build_district(district_at(key), origin, rng, nodes, key)
 	return nodes
+
+
+# ================= Сквозные дороги =================
+# Каждые ROAD_EVERY участков проходит дорога через всю карту (в своей строке/колонке
+# со своим смещением), на пересечениях — площади. Постройки дорогу не перекрывают.
+
+const ROAD_EVERY := 3
+const ROAD_HALF := 64.0
+var _road_bands: Array = []    # [ось ("h"/"v"), координата в участке]
+
+
+func _line_off(axis: String, idx: int) -> float:
+	var h := hash(Vector3i(idx, 7 if axis == "h" else 13, _noise.seed))
+	return float(posmod(h, 300)) - 150.0
+
+
+func _build_roads(key: Vector2i, origin: Vector2, rng: RandomNumberGenerator, nodes: Array) -> void:
+	var wk := wrap_key(key)
+	var has_h := posmod(wk.y, ROAD_EVERY) == 1
+	var has_v := posmod(wk.x, ROAD_EVERY) == 1
+	var H := CHUNK / 2.0
+	var hy := H + _line_off("h", floori(float(wk.y) / ROAD_EVERY))
+	var vx := H + _line_off("v", floori(float(wk.x) / ROAD_EVERY))
+	if has_h:
+		_road_h(nodes, origin, rng, hy)
+		_road_bands.append(["h", hy])
+	if has_v:
+		_road_v(nodes, origin, rng, vx)
+		_road_bands.append(["v", vx])
+	if has_h and has_v:
+		# Перекрёсток-площадь: мощёный круг, четыре фонаря, указатель
+		var c := Vector2(vx, hy)
+		_decal(nodes, origin, "decal_cobble", c, rng, 2.4, 0.0)
+		for k in [Vector2(-1, -1), Vector2(1, -1), Vector2(-1, 1), Vector2(1, 1)]:
+			_put_force(nodes, origin, "lamp%d" % (0 if k.x < 0 else 1), c + k * 105.0, 0.0, k.x < 0 and k.y < 0)
+		_put_force(nodes, origin, "sign%d" % rng.randi_range(0, 1), c + Vector2(118, -18), 0.0, false)
+	elif has_h or has_v:
+		# Вдоль дороги — придорожные фонари через равные промежутки
+		for i in 2:
+			var t := 192.0 + i * 384.0
+			var p := Vector2(t, hy - 92.0) if has_h else Vector2(vx + 92.0, t)
+			_put_force(nodes, origin, "lamp%d" % (i % 2), p, 0.0, i == 0 and rng.randf() < 0.5)
+
+
+## Точка на дороге? Тогда постройки сюда не ставим.
+func _on_road(local: Vector2, pad := 0.0) -> bool:
+	for b in _road_bands:
+		var d: float = absf(local.y - b[1]) if b[0] == "h" else absf(local.x - b[1])
+		if d < ROAD_HALF + pad:
+			return true
+	return false
+
+
+func _put_force(nodes: Array, origin: Vector2, kind: String, local: Vector2, rot := 0.0, light := false) -> void:
+	var bands := _road_bands
+	_road_bands = []
+	_put(nodes, origin, kind, local, rot, light)
+	_road_bands = bands
+
+
+# ================= Постройки из комнат (каждый раз своя планировка) =================
+# Прямоугольник делится на комнаты (BSP), стены — сегментами, в каждой стене проход.
+# Размер, пропорции, число комнат, проходы и содержимое — случайные: двух одинаковых нет.
+
+const WALL_SEG := 148.0
+
+
+func _wall_line(nodes: Array, origin: Vector2, a: Vector2, b: Vector2, kind: String, rng: RandomNumberGenerator, door := true) -> void:
+	var d := b - a
+	var ln := d.length()
+	if ln < 60.0:
+		return
+	var n := maxi(1, int(round(ln / WALL_SEG)))
+	var step := ln / n
+	var gap := rng.randi_range(0, n - 1) if door else -1
+	var rot := 0.0 if absf(d.x) > absf(d.y) else PI / 2.0
+	for i in n:
+		if i == gap:
+			continue
+		_put(nodes, origin, kind, a + d.normalized() * (step * (i + 0.5)), rot)
+
+
+func _bsp(rect: Rect2, rng: RandomNumberGenerator, depth: int, out: Array) -> void:
+	var can_x := rect.size.x > 330.0
+	var can_y := rect.size.y > 330.0
+	if depth <= 0 or (not can_x and not can_y) or (depth < 2 and rng.randf() < 0.3):
+		out.append(rect)
+		return
+	var split_x := can_x and (not can_y or rect.size.x > rect.size.y * (0.8 + rng.randf() * 0.4))
+	var t := rng.randf_range(0.35, 0.65)
+	if split_x:
+		var w := snappedf(rect.size.x * t, 37.0)
+		_bsp(Rect2(rect.position, Vector2(w, rect.size.y)), rng, depth - 1, out)
+		_bsp(Rect2(rect.position + Vector2(w, 0), Vector2(rect.size.x - w, rect.size.y)), rng, depth - 1, out)
+	else:
+		var h := snappedf(rect.size.y * t, 37.0)
+		_bsp(Rect2(rect.position, Vector2(rect.size.x, h)), rng, depth - 1, out)
+		_bsp(Rect2(rect.position + Vector2(0, h), Vector2(rect.size.x, rect.size.y - h)), rng, depth - 1, out)
+
+
+## Комплекс: стены по периметру и между комнатами, в комнатах — наполнение района.
+func _compound(nodes: Array, origin: Vector2, rng: RandomNumberGenerator, wall: String, fill: Array, corner := "", center_piece := "") -> void:
+	var C := CHUNK
+	var w := rng.randf_range(420.0, 640.0)
+	var h := rng.randf_range(380.0, 600.0)
+	var p0 := Vector2(rng.randf_range(40.0, C - w - 40.0), rng.randf_range(40.0, C - h - 40.0))
+	var outer := Rect2(p0, Vector2(w, h))
+	if _on_road(outer.get_center(), 120.0):
+		# Комплекс не строим поперёк дороги — сдвигаем к краю участка
+		p0.y = 40.0 if _road_bands.size() > 0 and _road_bands[0][1] > C / 2.0 else C - h - 40.0
+		outer = Rect2(p0, Vector2(w, h))
+	var rooms: Array = []
+	_bsp(outer, rng, rng.randi_range(1, 3), rooms)
+	# Внешние стены: в 1–2 сторонах проходы
+	var sides := [[outer.position, outer.position + Vector2(w, 0)], [outer.position + Vector2(0, h), outer.end],
+		[outer.position, outer.position + Vector2(0, h)], [outer.position + Vector2(w, 0), outer.end]]
+	var doors := [rng.randi_range(0, 3), rng.randi_range(0, 3)]
+	for i in 4:
+		_wall_line(nodes, origin, sides[i][0], sides[i][1], wall, rng, i in doors)
+	# Внутренние стены: правая и нижняя граница каждой комнаты, если она внутри
+	for r in rooms:
+		var rr: Rect2 = r
+		if rr.end.x < outer.end.x - 5.0:
+			_wall_line(nodes, origin, Vector2(rr.end.x, rr.position.y), rr.end, wall, rng, true)
+		if rr.end.y < outer.end.y - 5.0:
+			_wall_line(nodes, origin, Vector2(rr.position.x, rr.end.y), rr.end, wall, rng, true)
+		# Наполнение комнаты — ближе к углам, центр свободен для боя
+		var n := rng.randi_range(1, 3)
+		for k in n:
+			var cx := rr.position.x + (40.0 if rng.randf() < 0.5 else rr.size.x - 40.0)
+			var cy := rr.position.y + (40.0 if rng.randf() < 0.5 else rr.size.y - 40.0)
+			var kind: String = fill[rng.randi_range(0, fill.size() - 1)]
+			if kind == "TREE":
+				kind = _tree(rng)
+			_put(nodes, origin, kind, Vector2(cx, cy) + Vector2(rng.randf_range(-15, 15), rng.randf_range(-15, 15)), rng.randf() * TAU if kind.begins_with("rock") or kind.begins_with("wreck") else 0.0, rng.randf() < 0.12)
+	if corner != "":
+		for k in [outer.position, outer.position + Vector2(w, 0), outer.position + Vector2(0, h), outer.end]:
+			_put(nodes, origin, corner, k, 0.0, rng.randf() < 0.3)
+	if center_piece != "":
+		var big: Rect2 = rooms[0]
+		for r in rooms:
+			if (r as Rect2).get_area() > big.get_area():
+				big = r
+		_put(nodes, origin, center_piece, big.get_center(), 0.0, true)
 
 
 func _make_decal(kind: String, pos: Vector2, rng: RandomNumberGenerator, scale_k := 1.0) -> Node2D:
@@ -413,6 +559,8 @@ func _put(nodes: Array, origin: Vector2, kind: String, local: Vector2, rot := 0.
 	var p := origin + local
 	if wrap_pos(p).length() < 230.0:
 		return  # точка появления героя всегда свободна
+	if not kind.begins_with("puddle") and _on_road(local, 10.0):
+		return  # сквозная дорога всегда проходима
 	if light:
 		if _lights >= 5:
 			light = false
@@ -537,6 +685,27 @@ func _build_district(dist: String, origin: Vector2, rng: RandomNumberGenerator, 
 	var H := C / 2.0
 	var anchor := _is_anchor(key)
 	var v := rng.randi_range(0, 2)
+	# Примерно каждый третий не-центральный участок — уникальный комплекс из комнат
+	if not anchor and rng.randf() < 0.34:
+		match dist:
+			"ruins":
+				_compound(nodes, origin, rng, "wall0", ["pillar1", "rock1", "statue0", "TREE", "bush1"], "pillar0", "obelisk%d" % rng.randi_range(0, 2))
+				return
+			"castle":
+				_compound(nodes, origin, rng, "wall0", ["barrel0", "crate1", "banner%d" % rng.randi_range(0, 1), "stall1", "lantern0"], "tower0", "well0")
+				return
+			"junk":
+				_compound(nodes, origin, rng, "fence0", ["wreck0", "wreck1", "barrel1", "crate0", "crate1"], "", "cart0")
+				return
+			"field", "street":
+				_compound(nodes, origin, rng, "fence0", ["bush0", "LEAF", "barrel0", "cart0", "mushroom0"], "lantern0", "house%d" % rng.randi_range(0, 2))
+				return
+			"crystal":
+				_compound(nodes, origin, rng, "crystal_big%d" % rng.randi_range(0, 1), ["crystal0", "crystal1", "rock0"], "", "obelisk%d" % rng.randi_range(0, 2))
+				return
+			"forest", "park":
+				_compound(nodes, origin, rng, "fence0", ["TREE", "TREE", "bush0", "mushroom1"], "lantern0", "statue0")
+				return
 	match dist:
 		"street":
 			_road_h(nodes, origin, rng, H)
