@@ -573,8 +573,12 @@ def build_headwear(hr):
             to_bone(box("patch", hr * 0.42, hr * 0.06, hr * 0.32, "dark", on_head((-0.36, -0.95, 0.1), hr, 1.02), bev=0.01), "head")
             to_bone(tube("strap", [on_head((-0.75, -0.5, 0.45), hr, 1.03), on_head((0, -0.6, 0.85), hr, 1.05), on_head((0.8, 0.0, 0.5), hr, 1.05)], [hr * 0.03] * 3, "dark"), "head")
         if S.get("beard"):
-            b = sphere("beard", hr * 0.5, "beard", 24, 14, on_head((0, -0.7, -0.7), hr, 0.78), (1.0, 0.7, 0.7))
-            to_bone(b, "head")
+            # Короткая щетина-бородка прядками вдоль челюсти
+            parts = []
+            for k in range(7):
+                a = -0.9 + k * 0.3
+                parts.append(clump("st%d" % k, (math.sin(a) * 0.75, -0.65, -0.55 - (0.15 if abs(a) < 0.35 else 0.0)), (math.sin(a) * 0.05, -0.12, -0.35), hr, 0.1, "beard"))
+            to_bone(join(parts, "beard"), "head")
     elif h in ("hood", "hood_white", "skull"):
         if face != "skull":
             build_hair(hr, "long" if h == "hood_white" else "short")
