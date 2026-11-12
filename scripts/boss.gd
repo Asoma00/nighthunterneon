@@ -28,6 +28,7 @@ var _beam_rot := 0.0
 var _marks: Array = []    # метки на земле: {pos, t, r, kind}
 var _ability_i := 0
 var _tele_node: Node2D
+var spc_anim := 0.0   # кадры особого приёма
 
 const PHASE_NAMES := {
 	"lich": ["", "Пробуждение", "Буря душ", "Последний ритуал"],
@@ -146,6 +147,7 @@ func _ai(delta: float) -> Vector2:
 	# Основная атака — своя у каждого
 	if _attack_t <= 0.0:
 		_attack_t = [0, 2.0, 1.6, 1.25][phase]
+		atk_anim = 0.55
 		_basic(dir)
 	# Особые приёмы — по кругу из доступных в этой фазе
 	if _special_t <= 0.0:
@@ -153,6 +155,7 @@ func _ai(delta: float) -> Vector2:
 		var pool := _pool()
 		var ab: String = pool[_ability_i % pool.size()]
 		_ability_i += 1 + randi() % 2
+		spc_anim = 0.7
 		_use(ab, dir)
 		# Омега в третьей фазе применяет два приёма сразу
 		if kind == "omega" and phase == 3:

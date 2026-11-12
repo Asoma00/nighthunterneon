@@ -402,7 +402,25 @@ var atk_anim := 0.0
 func _animate(dir: Vector2) -> void:
 	var count: int = _frames["base"].size()
 	var f := int(_t * _fps * speed_mult()) % count
-	if _beast:
+	if is_boss and count >= 20:
+		# Босс: ярость при смене фазы, урон, особый приём, удар, движение
+		var dt := get_process_delta_time()
+		atk_anim = maxf(0.0, atk_anim - dt)
+		var sa: float = get("spc_anim") if get("spc_anim") != null else 0.0
+		if sa > 0.0:
+			set("spc_anim", maxf(0.0, sa - dt))
+		var pt: float = get("_phase_t") if get("_phase_t") != null else 0.0
+		if pt > 0.0:
+			f = 18 + int(_t * 8.0) % 2
+		elif _flash > 0.0:
+			f = 16 + int(_t * 12.0) % 2
+		elif sa > 0.0:
+			f = 12 + clampi(int((1.0 - sa / 0.7) * 4.0), 0, 3)
+		elif atk_anim > 0.0 or _dash_t > 0.0 or (get("_charge_t") != null and float(get("_charge_t")) > 0.0):
+			f = 6 + clampi(int((1.0 - atk_anim / 0.55) * 6.0), 0, 5)
+		else:
+			f = int(_t * _fps * speed_mult()) % 6
+	elif _beast:
 		atk_anim = maxf(0.0, atk_anim - get_process_delta_time())
 		var close: bool = player != null and is_instance_valid(player) and position.distance_squared_to(player.position) < pow(radius + 50.0, 2)
 		if _flash > 0.0:
