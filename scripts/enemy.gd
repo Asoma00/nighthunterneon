@@ -87,7 +87,9 @@ func _ready() -> void:
 	var sk: String = info.get("sprite", kind)   # адские мобы используют облик обычных
 	hell = info.get("hell", false)
 	_frames = Pixel.frames(sk)
-	var size: Vector2 = _frames["size"]
+	_k = float(_frames.get("k", 1.0))
+	_beast = _frames["base"].size() >= 12 and sk in Pixel.BEAST_KEYS
+	var size: Vector2 = _frames["size"] * _k
 	_t = randf() * 10.0
 	_hover = sk in ["imp", "bat", "wraith", "lich", "queen", "bomber", "omega"]
 	_fps = {"imp": 8.0, "bat": 12.0, "ghoul": 6.0, "wraith": 7.0, "brute": 4.0,
@@ -98,6 +100,7 @@ func _ready() -> void:
 	_shadow = Sprite2D.new()
 	_shadow.texture = Pixel.shadow()
 	var sw := size.x * Pixel.PX / 14.0 * (0.7 if sk in ["bat", "queen"] else 0.9)
+	size = _frames["size"]   # дальше — размер текстуры (смещение спрайта в её пикселях)
 	_shadow.scale = Vector2(sw, Pixel.PX * (0.8 if _hover else 1.0) * (1.6 if is_boss else 1.0))
 	_shadow.position = Vector2(0, 1)
 	_shadow.z_index = -5
@@ -105,7 +108,7 @@ func _ready() -> void:
 
 	_body = Sprite2D.new()
 	_body.texture = _frames["base"][0]
-	_body.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND) * size_mult
+	_body.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND) * size_mult * _k
 	_body.offset = Vector2(0, -size.y / 2.0 + 2.0)
 	add_child(_body)
 	_emit = Sprite2D.new()
@@ -125,7 +128,7 @@ func _ready() -> void:
 		aura.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 		aura.material = Pixel.mat_add()
 		aura.modulate = Color(Data.AFFIXES[affixes[0]]["color"], 0.55)
-		aura.scale = Vector2(1.3, 0.7) * size_mult * maxf(1.0, size.x / 16.0)
+		aura.scale = Vector2(1.3, 0.7) * size_mult * maxf(1.0, size.x * _k / 16.0)
 		aura.z_index = -4
 		add_child(aura)
 		if affixes.size() > 1:
@@ -144,7 +147,7 @@ func _ready() -> void:
 		embers.amount = 5
 		embers.lifetime = 0.7
 		embers.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
-		embers.emission_sphere_radius = size.x * Pixel.PX * 0.3
+		embers.emission_sphere_radius = size.x * _k * Pixel.PX * 0.3
 		embers.position = Vector2(0, -size.y * Pixel.PX * 0.5)
 		embers.gravity = Vector2(0, -90)
 		embers.initial_velocity_min = 5.0
@@ -201,7 +204,7 @@ func can_be_hit() -> bool:
 
 
 func _set_spawn_visual(k: float) -> void:
-	_body.scale = Vector2(Pixel.PX * (1.0 + (1.0 - k) * 0.6), Pixel.PX * Pixel.STAND * maxf(0.05, k)) * size_mult
+	_body.scale = Vector2(Pixel.PX * (1.0 + (1.0 - k) * 0.6), Pixel.PX * Pixel.STAND * maxf(0.05, k)) * size_mult * _k
 	_emit.scale = _body.scale
 	_body.modulate.a = k * (0.75 if kind == "wraith" else 1.0)
 	_emit.modulate = Color(color, 0.25 + 0.35 * k) if k < 0.6 else Pixel.hdr(Color.WHITE, 1.3)
@@ -346,6 +349,7 @@ func _ai(delta: float) -> Vector2:
 			move = dir * clampf((dist - want) / 80.0, -1.0, 1.0) + Vector2(-dir.y, dir.x) * 0.4
 			if _ai_t <= 0.0 and dist < 520.0:
 				_ai_t = randf_range(2.6, 3.4)
+				atk_anim = 0.45
 				var b := BulletScript.new()
 				b.main = main
 				b.player = player
@@ -390,9 +394,23 @@ func speed_mult() -> float:
 	return m
 
 
+var _k := 1.0          # масштаб детальных спрайтов (холст крупнее — на экране тот же размер)
+var _beast := false     # кибер-тварь с кадрами ходьбы/атаки/урона
+var atk_anim := 0.0
+
+
 func _animate(dir: Vector2) -> void:
 	var count: int = _frames["base"].size()
 	var f := int(_t * _fps * speed_mult()) % count
+	if _beast:
+		atk_anim = maxf(0.0, atk_anim - get_process_delta_time())
+		var close: bool = player != null and is_instance_valid(player) and position.distance_squared_to(player.position) < pow(radius + 50.0, 2)
+		if _flash > 0.0:
+			f = 10 + int(_t * 12.0) % 2
+		elif atk_anim > 0.0 or close or _dash_t > 0.0:
+			f = 6 + int(_t * 10.0) % 4
+		else:
+			f = int(_t * _fps * speed_mult()) % 6
 	_body.texture = _frames["base"][f]
 	if _flash > 0.0:
 		_emit.texture = _frames["flash"][f]
@@ -405,7 +423,7 @@ func _animate(dir: Vector2) -> void:
 		_emit.flip_h = _body.flip_h
 
 	var squash := _flash * (1.0 if is_boss else 2.5)
-	var sc := Vector2(1.0 + squash, (1.0 - squash) * Pixel.STAND) * Pixel.PX * size_mult
+	var sc := Vector2(1.0 + squash, (1.0 - squash) * Pixel.STAND) * Pixel.PX * size_mult * _k
 	_body.scale = sc
 	_emit.scale = sc
 	if _hover:

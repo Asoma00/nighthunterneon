@@ -148,14 +148,14 @@ const SPECS := {
 	"zephyr": [48, 60, 35, true, 0.56],
 	"iris": [48, 60, 35, true, 0.56],
 	"kai": [48, 60, 35, true, 0.56],
-	"goblin": [16, 16, 4, true],
-	"slime": [20, 16, 4, true],
-	"slimelet": [12, 10, 4, true],
-	"spider": [24, 16, 4, true],
-	"spiderling": [14, 10, 4, true],
-	"caster": [18, 24, 4, true],
-	"bomber": [16, 16, 4, true],
-	"knight": [20, 26, 4, true],
+	"goblin": [24, 24, 12, true, 0.667],
+	"slime": [30, 24, 12, true, 0.667],
+	"slimelet": [18, 15, 12, true, 0.667],
+	"spider": [36, 24, 12, true, 0.667],
+	"spiderling": [21, 15, 12, true, 0.667],
+	"caster": [27, 36, 12, true, 0.667],
+	"bomber": [24, 24, 12, true, 0.667],
+	"knight": [30, 40, 12, true, 0.667],
 	"omega": [50, 54, 4, true],
 	"arrow": [16, 5, 1, false],
 	"spirit": [11, 13, 2, false],
@@ -168,11 +168,11 @@ const SPECS := {
 	"drone": [22, 16, 2, true],
 	"shard": [9, 5, 1, false],
 	"sword": [9, 20, 1, false],
-	"imp": [18, 19, 4, true],
-	"bat": [26, 16, 4, true],
-	"ghoul": [20, 26, 4, true],
-	"wraith": [20, 26, 4, false],
-	"brute": [36, 38, 4, true],
+	"imp": [28, 30, 12, true, 0.667],
+	"bat": [38, 24, 12, true, 0.667],
+	"ghoul": [30, 40, 12, true, 0.667],
+	"wraith": [30, 40, 12, false, 0.667],
+	"brute": [54, 57, 12, true, 0.667],
 	"gem1": [11, 13, 1, true],
 	"gem3": [11, 13, 1, true],
 	"gem5": [11, 13, 1, true],
@@ -294,6 +294,9 @@ static func _paint(key: String, b: Image, e: Image, f: int) -> void:
 		return
 	if key in HERO_KEYS:
 		_paint_hero48(key, b, e, f)
+		return
+	if key in BEAST_KEYS:
+		_paint_beast(key, b, e, f)
 		return
 	match key:
 		"hero":
@@ -2965,3 +2968,303 @@ static func _hero_weapon(weapon: String, L: Dictionary, b: Image, e: Image, h: V
 			if strike:
 				for i in 3:
 					spx(e, int(t.x + d.x * (4 + i * 2)), int(t.y + d.y * (4 + i * 2) - i), Color(gem, 0.8))
+
+
+# ================= Враги: кибер-твари 1.5×, 12 кадров =================
+# Помесь чудовищ и кибернетики: оптические импланты, металлические рёбра,
+# кабели, поршни, светящиеся трубки. Кадры: 0–5 ходьба, 6–9 атака, 10–11 урон.
+
+const BEAST_KEYS := ["imp", "bat", "ghoul", "wraith", "brute", "goblin", "slime", "slimelet", "spider",
+	"spiderling", "caster", "bomber", "knight"]
+const BEAST_ANIM := {"walk": [0, 6], "attack": [6, 4], "hurt": [10, 2]}
+const FLESH := Color(0.36, 0.22, 0.34)
+const FLESH2 := Color(0.28, 0.32, 0.26)
+const METAL := Color(0.42, 0.45, 0.55)
+const METAL_D := Color(0.24, 0.25, 0.32)
+const RED_EYE := Color(1.0, 0.18, 0.15)
+
+
+static func beast_frame(state: String, t: float, fps: float) -> int:
+	var a: Array = BEAST_ANIM[state]
+	return int(a[0]) + int(t * fps) % int(a[1])
+
+
+static func _beast_pose(f: int) -> Dictionary:
+	if f < 6:
+		var ph := TAU * f / 6.0
+		return {"st": "walk", "ph": ph, "s": sin(ph), "c": cos(ph), "a": 0.0, "h": 0.0}
+	if f < 10:
+		return {"st": "attack", "ph": 0.0, "s": 0.0, "c": 1.0, "a": [-0.6, 1.0, 0.7, 0.2][f - 6], "h": 0.0}
+	return {"st": "hurt", "ph": 0.0, "s": 0.0, "c": 1.0, "a": 0.0, "h": [1.0, 0.6][f - 10]}
+
+
+static func _optic(e: Image, x: float, y: float, r: float, c: Color) -> void:
+	ellipse(e, x, y, r + 0.6, r + 0.6, Color(c, 0.35))
+	ellipse(e, x, y, r, r, c)
+	px(e, int(x), int(y), Color(1, 1, 0.9))
+
+
+static func _leg2(b: Image, hip: Vector2, foot: Vector2, bend: float, w: int, c: Color) -> Vector2:
+	var mid := (hip + foot) * 0.5
+	var nrm := (foot - hip).orthogonal().normalized()
+	var knee := mid + nrm * bend
+	_limb(b, hip, knee, w, c)
+	_limb(b, knee, foot, maxi(1, w - 1), c.darkened(0.1))
+	return knee
+
+
+static func _ribs(b: Image, x0: int, y0: int, n: int, w: int, c: Color) -> void:
+	for i in n:
+		line(b, x0, y0 + i * 2, x0 + w, y0 + i * 2 + 1, c)
+
+
+static func _paint_beast(key: String, b: Image, e: Image, f: int) -> void:
+	var P := _beast_pose(f)
+	var s: float = P["s"]
+	var a: float = P["a"]
+	var hu: float = P["h"]
+	var att: bool = P["st"] == "attack"
+	match key:
+		"imp":
+			# Кибер-бес: рога, жвалы-челюсть из металла, имплант-глаз, крылья-платы, хвост-кабель
+			var by := 18.5 + s * 1.2 - hu
+			var cx := 14.0 + a * 2.0 - hu * 2.0
+			var wing := 4.0 + s * 3.0
+			for d in [-1.0, 1.0]:
+				poly(b, PackedVector2Array([Vector2(cx + d * 3, by - 3), Vector2(cx + d * 13, by - 6 - wing), Vector2(cx + d * 11, by + 2), Vector2(cx + d * 6, by + 3)]), Color(0.25, 0.12, 0.22))
+				line(e, int(cx + d * 4), int(by - 2), int(cx + d * 12), int(by - 5 - wing), Color(1.0, 0.3, 0.5, 0.7))
+			sline_tail(b, e, Vector2(cx - 4, by + 4), s)
+			ellipse(b, cx, by, 6.0, 6.5, FLESH)
+			_ribs(b, int(cx - 3), int(by - 1), 3, 5, METAL_D)
+			ellipse(b, cx + 2, by - 7, 5.0, 4.5, FLESH.lightened(0.08))
+			poly(b, PackedVector2Array([Vector2(cx - 2, by - 10), Vector2(cx - 5, by - 16), Vector2(cx, by - 11)]), Color(0.75, 0.7, 0.6))
+			poly(b, PackedVector2Array([Vector2(cx + 4, by - 10), Vector2(cx + 7, by - 16), Vector2(cx + 6, by - 10)]), Color(0.75, 0.7, 0.6))
+			rect(b, int(cx + 1), int(by - 5), 6, 3, METAL)
+			for i in 3:
+				px(b, int(cx + 2 + i * 2), int(by - 3), Color(0.9, 0.9, 0.85))
+			_optic(e, cx + 4, by - 8, 1.4, RED_EYE)
+			px(e, int(cx), int(by - 8), Color(1.0, 0.5, 0.2))
+			for d in [-1.0, 1.0]:
+				_limb(b, Vector2(cx + d * 4, by + 4), Vector2(cx + d * 5 + a * 3, by + 10 - a * 2), 2, FLESH.darkened(0.2))
+			if att and a > 0.5:
+				line(e, int(cx + 7), int(by + 1), int(cx + 12), int(by + 6), Color(1.0, 0.5, 0.3, 0.9))
+		"bat":
+			# Нетопырь-дрон: крылья на металлических спицах, объектив вместо морды
+			var cx := 19.0
+			var cy := 11.0 - hu
+			var fl := s * 6.0
+			for d in [-1.0, 1.0]:
+				var tip := Vector2(cx + d * 18, cy - 2 - fl)
+				var mid := Vector2(cx + d * 10, cy - 5 - fl * 0.6)
+				poly(b, PackedVector2Array([Vector2(cx + d * 3, cy - 2), mid, tip, Vector2(cx + d * 14, cy + 4 - fl * 0.3), Vector2(cx + d * 8, cy + 3)]), Color(0.2, 0.1, 0.2))
+				_limb(b, Vector2(cx + d * 3, cy - 2), mid, 1, METAL)
+				_limb(b, mid, tip, 1, METAL)
+				for i in 3:
+					var q := mid.lerp(Vector2(cx + d * (9 + i * 3), cy + 3), 0.9)
+					line(b, int(mid.x), int(mid.y), int(q.x), int(q.y), METAL_D)
+				px(e, int(tip.x), int(tip.y), Color(1.0, 0.3, 0.3))
+			ellipse(b, cx, cy + 1, 4.5, 5.0, FLESH.darkened(0.1))
+			ellipse(b, cx, cy - 3, 3.5, 3.0, METAL)
+			poly(b, PackedVector2Array([Vector2(cx - 3, cy - 5), Vector2(cx - 4, cy - 9), Vector2(cx - 1, cy - 6)]), FLESH)
+			poly(b, PackedVector2Array([Vector2(cx + 3, cy - 5), Vector2(cx + 4, cy - 9), Vector2(cx + 1, cy - 6)]), FLESH)
+			_optic(e, cx, cy - 3, 1.6 + (0.6 if att else 0.0), RED_EYE)
+			for i in 2:
+				px(b, int(cx - 1 + i * 2), int(cy + 5), Color(0.9, 0.9, 0.8))
+		"ghoul":
+			# Гуль-киборг: сгорбленный, металлические рёбра наружу, трубки, когти-лезвия
+			var cx := 14.0 + a * 2.0 - hu * 2.0
+			var by := 22.0 + absf(s) * 1.0
+			_leg2(b, Vector2(cx - 2, by + 6), Vector2(cx - 4 - s * 3, 39), 2.0, 3, FLESH2.darkened(0.25))
+			_leg2(b, Vector2(cx + 2, by + 6), Vector2(cx + 3 + s * 3, 39), 2.0, 3, FLESH2)
+			poly(b, PackedVector2Array([Vector2(cx - 6, by - 6), Vector2(cx + 6, by - 9), Vector2(cx + 7, by + 7), Vector2(cx - 5, by + 7)]), FLESH2)
+			_ribs(b, int(cx - 3), int(by - 4), 5, 7, METAL.lightened(0.1))
+			for i in 2:
+				line(e, int(cx - 5 + i * 3), int(by - 7), int(cx - 7 + i * 3), int(by + 5), Color(0.4, 1.0, 0.5, 0.7))
+			ellipse(b, cx + 6, by - 11, 4.5, 4.0, FLESH2.lightened(0.1))
+			rect(b, int(cx + 6), int(by - 9), 5, 3, METAL)
+			for i in 3:
+				px(b, int(cx + 6 + i * 2), int(by - 7), Color(0.85, 0.85, 0.75))
+			_optic(e, cx + 8, by - 12, 1.2, Color(0.5, 1.0, 0.4))
+			var arm_a := -0.4 + s * 0.5 + a * 1.4
+			var hand := Vector2(cx + 5, by - 4) + Vector2(sin(arm_a + 1.2), cos(arm_a + 1.2)) * 9.0
+			_limb(b, Vector2(cx + 5, by - 4), hand, 2, FLESH2.darkened(0.1))
+			for i in 3:
+				line(b, int(hand.x), int(hand.y), int(hand.x + 3 + i), int(hand.y + 2 - i * 2), Color(0.8, 0.82, 0.9))
+			if att and a > 0.5:
+				for i in 3:
+					line(e, int(hand.x + 2), int(hand.y - 4 + i * 3), int(hand.x + 7), int(hand.y - 2 + i * 3), Color(0.6, 1.0, 0.6, 0.85))
+		"wraith":
+			# Призрак кода: рваный саван, лицо из битых пикселей, цепи с данными
+			var cx := 15.0 + a * 2.0
+			var cy := 16.0 + s * 1.5 - hu
+			var shroud := Color(0.25, 0.32, 0.42, 0.85)
+			poly(b, PackedVector2Array([Vector2(cx - 6, cy - 6), Vector2(cx + 6, cy - 6), Vector2(cx + 10, cy + 18), Vector2(cx + 4, cy + 14 + s * 2), Vector2(cx, cy + 20), Vector2(cx - 4, cy + 14 - s * 2), Vector2(cx - 10, cy + 18)]), shroud)
+			ellipse(b, cx, cy - 7, 6.0, 6.5, shroud.lightened(0.1))
+			ellipse(b, cx + 1, cy - 6, 3.8, 4.5, Color(0.04, 0.03, 0.08))
+			for i in 6:
+				var gx := int(cx - 2 + (i * 37 + f * 11) % 5)
+				var gy := int(cy - 9 + (i * 23 + f * 7) % 6)
+				px(e, gx, gy, Color(1.0, 0.2, 0.3) if i % 2 == 0 else Color(0.4, 0.9, 1.0))
+			for d in [-1.0, 1.0]:
+				var hand := Vector2(cx + d * 9 + a * 4, cy + 2 - a * 3)
+				line(b, int(cx + d * 4), int(cy - 2), int(hand.x), int(hand.y), shroud)
+				for i in 4:
+					px(e, int(hand.x - d * i), int(hand.y + 3 + i * 2), Color(0.5, 0.9, 1.0, 0.8 - i * 0.15))
+		"brute":
+			# Огр-механоид: гидравлические плечи, руки-поршни, череп-маска, шланги
+			var cx := 27.0 + a * 3.0 - hu * 2.0
+			var by := 30.0 + absf(s) * 1.0
+			_leg2(b, Vector2(cx - 6, by + 10), Vector2(cx - 8 - s * 3, 55), 2.0, 6, METAL_D)
+			_leg2(b, Vector2(cx + 6, by + 10), Vector2(cx + 8 + s * 3, 55), 2.0, 6, METAL_D.lightened(0.1))
+			rect(b, int(cx - 11 - s * 3), 52, 7, 3, METAL)
+			rect(b, int(cx + 5 + s * 3), 52, 7, 3, METAL)
+			ellipse(b, cx, by, 15.0, 14.0, FLESH.lightened(0.05))
+			ellipse(b, cx + 1, by + 3, 10.0, 8.0, FLESH.darkened(0.1))
+			rect(b, int(cx - 6), int(by - 4), 12, 9, METAL)
+			for i in 3:
+				rect(b, int(cx - 5 + i * 4), int(by - 3), 2, 7, METAL_D)
+			_optic(e, cx, by + 1, 2.0, Color(1.0, 0.55, 0.15))
+			for d in [-1.0, 1.0]:
+				ellipse(b, cx + d * 14, by - 10, 6.0, 5.0, METAL)
+				px(b, int(cx + d * 14), int(by - 13), METAL.lightened(0.4))
+				var arm := Vector2(cx + d * 18 + (a * 6.0 if d > 0 else 0.0), by + 10 - (a * 10.0 if d > 0 else 0.0))
+				_limb(b, Vector2(cx + d * 15, by - 7), arm, 6, FLESH)
+				_limb(b, arm, arm + Vector2(d * 2, 6), 7, METAL)
+				line(e, int(cx + d * 12), int(by - 12), int(arm.x), int(arm.y), Color(1.0, 0.55, 0.15, 0.6))
+			ellipse(b, cx + 2, by - 17, 7.0, 6.0, Color(0.85, 0.82, 0.75))
+			rect(b, int(cx - 3), int(by - 14), 10, 3, METAL_D)
+			_optic(e, cx + 1, by - 18, 1.3, RED_EYE)
+			_optic(e, cx + 5, by - 18, 1.3, RED_EYE)
+			if att and a > 0.5:
+				for i in 7:
+					px(e, int(cx + 18 + i), 54 - (i % 2), Color(1.0, 0.6, 0.2, 0.9))
+		"goblin":
+			# Гоблин-падальщик: очки-оптика, пила вместо ножа, рюкзак с антенной
+			var cx := 11.0 + a * 2.0 - hu * 2.0
+			var by := 14.0 + absf(s) * 1.0
+			_leg2(b, Vector2(cx - 2, by + 4), Vector2(cx - 3 - s * 3, 23), 1.0, 2, Color(0.25, 0.3, 0.2))
+			_leg2(b, Vector2(cx + 2, by + 4), Vector2(cx + 3 + s * 3, 23), 1.0, 2, Color(0.3, 0.36, 0.24))
+			rect(b, int(cx - 8), int(by - 6), 5, 8, Color(0.4, 0.3, 0.2))
+			line(b, int(cx - 7), int(by - 6), int(cx - 9), int(by - 13), METAL)
+			px(e, int(cx - 9), int(by - 13), Color(1.0, 0.3, 0.3))
+			ellipse(b, cx, by, 5.0, 5.5, Color(0.36, 0.45, 0.26))
+			ellipse(b, cx + 2, by - 7, 5.5, 4.5, Color(0.4, 0.5, 0.28))
+			poly(b, PackedVector2Array([Vector2(cx - 3, by - 8), Vector2(cx - 9, by - 11), Vector2(cx - 3, by - 6)]), Color(0.4, 0.5, 0.28))
+			rect(b, int(cx + 1), int(by - 9), 6, 2, METAL_D)
+			_optic(e, cx + 3, by - 8, 1.0, Color(1.0, 0.7, 0.2))
+			_optic(e, cx + 6, by - 8, 1.0, Color(1.0, 0.7, 0.2))
+			var hand := Vector2(cx + 6 + a * 3, by - 1 - a * 2)
+			_limb(b, Vector2(cx + 3, by - 2), hand, 2, Color(0.36, 0.45, 0.26))
+			ellipse(b, hand.x + 3, hand.y, 3.0, 3.0, METAL)
+			for i in 4:
+				var ang := TAU * i / 4.0 + f * 0.8
+				px(b, int(hand.x + 3 + cos(ang) * 3.5), int(hand.y + sin(ang) * 3.5), Color(0.85, 0.85, 0.9))
+		"slime", "slimelet":
+			# Нано-слизень: прозрачная масса с плавающими деталями и глазами на стебельках
+			var big := key == "slime"
+			var k := 1.0 if big else 0.6
+			var cx := (15.0 if big else 9.0)
+			var hgt := 1.0 + s * 0.12 - hu * 0.15 + a * 0.15
+			var w := (12.0 + a * 2.0) * k
+			var hh := 9.0 * k * hgt
+			var base := float(b.get_height() - 1)
+			ellipse(b, cx, base - hh, w, hh, Color(0.2, 0.55, 0.45, 0.9))
+			ellipse(b, cx - w * 0.3, base - hh * 1.4, w * 0.35, hh * 0.3, Color(0.6, 1.0, 0.85, 0.7))
+			for i in (4 if big else 2):
+				var gx := cx - w * 0.5 + i * w * 0.33
+				var gy := base - hh + sin(f * 1.1 + i) * 2.0
+				rect(b, int(gx), int(gy), 2, 2, METAL if i % 2 == 0 else Color(0.7, 0.55, 0.3))
+				px(e, int(gx), int(gy), Color(0.4, 1.0, 0.6, 0.8))
+			for d in [-1.0, 1.0]:
+				var stalk := Vector2(cx + d * 3 * k, base - hh * 2.0 - 3 * k - s)
+				line(b, int(cx + d * 2 * k), int(base - hh * 1.6), int(stalk.x), int(stalk.y), Color(0.2, 0.55, 0.45))
+				_optic(e, stalk.x, stalk.y, 1.2 * k + 0.3, Color(1.0, 0.85, 0.2))
+		"spider", "spiderling":
+			# Паук-резак: металлические лапы-лезвия, гроздь лазерных глаз, реактор в брюхе
+			var big := key == "spider"
+			var k := 1.0 if big else 0.58
+			var cx := 18.0 * k + a * 2.0 - hu * 2.0
+			var cy := 13.0 * k + (1.0 if big else 0.6)
+			for i in 4:
+				for d in [-1.0, 1.0]:
+					var ph := s * (1.0 if (i + int(d)) % 2 == 0 else -1.0)
+					var hip := Vector2(cx + d * 3 * k, cy)
+					var foot := Vector2(cx + d * (8 + i * 3) * k + ph * 2, b.get_height() - 1)
+					var knee := Vector2(cx + d * (6 + i * 2.5) * k, cy - (6 - i) * k)
+					line(b, int(hip.x), int(hip.y), int(knee.x), int(knee.y), METAL_D)
+					line(b, int(knee.x), int(knee.y), int(foot.x), int(foot.y), METAL)
+			ellipse(b, cx - 6 * k, cy - 1, 7.0 * k, 5.5 * k, FLESH.darkened(0.2))
+			ellipse(e, cx - 6 * k, cy - 1, 2.5 * k, 2.0 * k, Color(0.4, 1.0, 0.5, 0.85))
+			ellipse(b, cx + 3 * k, cy - 1, 4.5 * k, 4.0 * k, METAL_D)
+			for i in 4:
+				px(e, int(cx + (3 + (i % 2) * 2) * k), int(cy - 2 - (i / 2) * 2 * k), RED_EYE)
+			if att and a > 0.5:
+				line(e, int(cx + 6 * k), int(cy - 2), int(cx + 16 * k), int(cy + 1), Color(1.0, 0.3, 0.3, 0.9))
+		"caster":
+			# Культист сети: балахон, механические руки, глаз-дрон над плечом
+			var cx := 13.0 - hu * 2.0
+			var by := 20.0 + s * 0.6
+			poly(b, PackedVector2Array([Vector2(cx - 5, by - 8), Vector2(cx + 5, by - 8), Vector2(cx + 9, 35), Vector2(cx - 9, 35)]), Color(0.22, 0.12, 0.3))
+			line(e, int(cx - 9), 35, int(cx + 9), 35, Color(0.8, 0.3, 1.0, 0.8))
+			line(e, int(cx), int(by - 6), int(cx), 33, Color(0.8, 0.3, 1.0, 0.5))
+			ellipse(b, cx, by - 12, 5.5, 5.5, Color(0.25, 0.14, 0.34))
+			ellipse(b, cx + 1, by - 11, 3.2, 3.5, Color(0.04, 0.03, 0.06))
+			_optic(e, cx + 2, by - 11, 1.0, Color(0.85, 0.4, 1.0))
+			for d in [-1.0, 1.0]:
+				var hand := Vector2(cx + d * 8, by - 3 - a * 6)
+				_limb(b, Vector2(cx + d * 4, by - 6), hand, 2, METAL)
+				for i in 2:
+					line(b, int(hand.x), int(hand.y), int(hand.x + d * 2), int(hand.y - 2 + i * 3), METAL.lightened(0.2))
+			var dy := sin(f * 1.05) * 2.0
+			ellipse(b, cx - 9, by - 18 + dy, 3.0, 3.0, METAL_D)
+			_optic(e, cx - 9, by - 18 + dy, 1.4, Color(0.85, 0.4, 1.0))
+			if att:
+				ellipse(e, cx + 9, by - 4 - a * 6, 2.0 + a * 2.0, 2.0 + a * 2.0, Color(0.85, 0.4, 1.0, 0.85))
+		"bomber":
+			# Дрон-камикадзе: насекомое с бомбой-брюшком и мигалкой
+			var cx := 12.0
+			var cy := 10.0 - hu
+			var wf := s * 3.0
+			for d in [-1.0, 1.0]:
+				ellipse(b, cx + d * 7, cy - 5 - wf * 0.3, 5.0, 2.0 + absf(wf) * 0.3, Color(0.6, 0.8, 0.9, 0.5))
+			ellipse(b, cx, cy + 5, 6.0, 6.0, Color(0.25, 0.25, 0.28))
+			for i in 3:
+				line(b, int(cx - 5), int(cy + 3 + i * 2), int(cx + 5), int(cy + 3 + i * 2), Color(0.85, 0.7, 0.15))
+			ellipse(b, cx, cy - 2, 4.0, 3.5, METAL)
+			_optic(e, cx + 2, cy - 2, 1.2, RED_EYE)
+			if f % 2 == 0 or att:
+				ellipse(e, cx, cy + 5, 2.0 + a * 2.0, 2.0 + a * 2.0, Color(1.0, 0.3, 0.1, 0.9))
+			for d in [-1.0, 1.0]:
+				line(b, int(cx + d * 3), int(cy + 9), int(cx + d * 5), int(cy + 13), METAL_D)
+		"knight":
+			# Мёртвый рыцарь-экзо: латы с сервоприводами, щель визора, меч с энергокромкой
+			var cx := 14.0 + a * 2.0 - hu * 2.0
+			var by := 21.0 + absf(s) * 0.8
+			_leg2(b, Vector2(cx - 3, by + 7), Vector2(cx - 4 - s * 3, 39), 1.5, 3, METAL_D)
+			_leg2(b, Vector2(cx + 3, by + 7), Vector2(cx + 4 + s * 3, 39), 1.5, 3, METAL)
+			px(e, int(cx - 3), int(by + 13), Color(0.4, 0.9, 1.0))
+			rect(b, int(cx - 6), int(by - 6), 12, 13, METAL)
+			rect(b, int(cx - 6), int(by - 6), 12, 2, METAL.lightened(0.25))
+			rect(b, int(cx - 1), int(by - 4), 2, 10, METAL_D)
+			poly(b, PackedVector2Array([Vector2(cx - 7, by + 6), Vector2(cx + 7, by + 6), Vector2(cx + 8, by + 11), Vector2(cx - 8, by + 11)]), Color(0.3, 0.15, 0.2))
+			rect(b, int(cx - 4), int(by - 15), 9, 9, METAL.lightened(0.1))
+			rect(b, int(cx - 1), int(by - 12), 7, 1, Color(0.05, 0.05, 0.08))
+			line(e, int(cx), int(by - 12), int(cx + 5), int(by - 12), Color(0.4, 0.9, 1.0))
+			poly(b, PackedVector2Array([Vector2(cx - 2, by - 15), Vector2(cx + 1, by - 20), Vector2(cx + 3, by - 15)]), Color(0.6, 0.15, 0.2))
+			ellipse(b, cx - 7, by - 4, 3.0, 2.5, METAL.lightened(0.15))
+			var swing := -1.6 + a * 2.8 + s * 0.2
+			var hand := Vector2(cx + 6, by - 2) + Vector2(sin(swing + 1.6), -cos(swing + 1.6)) * 4.0
+			_limb(b, Vector2(cx + 5, by - 4), hand, 2, METAL_D)
+			var tip := hand + Vector2(cos(swing), sin(swing)) * 13.0
+			line(b, int(hand.x), int(hand.y), int(tip.x), int(tip.y), Color(0.75, 0.78, 0.85))
+			line(e, int(hand.x + cos(swing) * 3), int(hand.y + sin(swing) * 3), int(tip.x), int(tip.y), Color(0.4, 0.9, 1.0, 0.85))
+			rect(b, int(hand.x) - 1, int(hand.y) - 1, 3, 2, Color(0.6, 0.5, 0.3))
+
+
+static func sline_tail(b: Image, e: Image, root: Vector2, s: float) -> void:
+	var p := root
+	for i in 5:
+		var q := p + Vector2(-2.0, 1.0 + sin(s * 2.0 + i) * 1.2)
+		line(b, int(p.x), int(p.y), int(q.x), int(q.y), Color(0.2, 0.2, 0.25))
+		p = q
+	px(e, int(p.x), int(p.y), Color(1.0, 0.3, 0.3))

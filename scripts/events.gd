@@ -145,7 +145,7 @@ func _start(k: String) -> void:
 			_goblin.max_hp *= 14.0
 			_goblin.hp = _goblin.max_hp
 			_goblin.speed *= 1.25
-			_goblin.size_mult = 1.4
+			_goblin.size_mult *= 1.4
 			_goblin._base_tint = Color(1.6, 1.3, 0.4)
 			_goblin.set_meta("golden", true)
 		"ambush":
