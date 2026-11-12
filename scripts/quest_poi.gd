@@ -15,7 +15,14 @@ const INFO := {
 	"cache": {"name": "Тайник", "color": Color(1.0, 0.75, 0.35)},
 	"puzzle": {"name": "Рунная загадка", "color": Color(0.55, 0.65, 1.0)},
 	"beacons": {"name": "Сигнальные маяки", "color": Color(0.4, 1.0, 0.85)},
+	"captive": {"name": "Пленник", "color": Color(1.0, 0.85, 0.5)},
+	"part": {"name": "Часть оружия", "color": Color(1.0, 0.6, 0.25)},
 }
+const Meta := preload("res://scripts/meta.gd")
+const Data := preload("res://scripts/data.gd")
+const FREE_T := 3.0
+var hid := ""              # чей герой (пленник / часть оружия)
+var _hero_spr: Sprite3D
 const RUNE_COLORS := [Color(1.0, 0.35, 0.35), Color(0.35, 1.0, 0.45), Color(0.4, 0.6, 1.0), Color(1.0, 0.85, 0.3), Color(0.85, 0.7, 1.0)]
 const RUNE_NAMES := ["огонь", "лист", "вода", "солнце", "звезда"]
 ## Имена рун для загадок: [именительный, родительный]
@@ -68,6 +75,10 @@ func color() -> Color:
 
 
 func title() -> String:
+	if kind == "captive":
+		return "Пленник: " + str(Data.CHARACTERS[hid]["name"])
+	if kind == "part":
+		return "Часть: " + str(Data.WEAPONS[Data.CHARACTERS[hid]["weapon"]]["name"])
 	return INFO[kind]["name"]
 
 
@@ -83,6 +94,12 @@ func arrow_visible() -> bool:
 func _ready() -> void:
 	z_index = -10
 	match kind:
+		"captive":
+			life = 200.0
+			_build_cage()
+		"part":
+			life = 90.0
+			_build_part()
 		"cache":
 			# Тайник выглядит как обычный ящик среди декора — без вспышек и стрелок
 			_add_model("crate%d" % (randi() % 2), Vector2.ZERO, 1.0)
@@ -193,6 +210,10 @@ func _process(delta: float) -> void:
 		queue_free()
 		return
 	match kind:
+		"captive":
+			_tick_captive(delta)
+		"part":
+			_tick_part(delta)
 		"cache":
 			_tick_cache(delta)
 		"puzzle":
@@ -218,6 +239,9 @@ func _tick_cache(delta: float) -> void:
 			main.drop_material(position + Vector2(-24, 0), "cores", 1)
 		for i in 6:
 			main.drop_gem_at(position + Vector2.RIGHT.rotated(TAU * i / 6.0) * 60.0, 4)
+		# Изредка в тайнике — часть оружия спасённого героя
+		if randf() < 0.05:
+			main.spawn_part(position + Vector2(0, 50))
 		main.combo_pop(position + Vector2(0, -90), "ТАЙНИК ОТКРЫТ", Pixel.hdr(color(), 1.4))
 		Fx.ring(main, position, 10.0, 160.0, Pixel.hdr(color(), 2.0), 0.4, 5.0)
 		_done()
@@ -508,6 +532,8 @@ func _done() -> void:
 func quest_text() -> String:
 	if state == "done":
 		return ""
+	if kind == "captive" and _hold > 0.0:
+		return "Освобождение: %d%%  •  стойте у клетки" % int(_hold / FREE_T * 100.0)
 	if kind == "puzzle" and _found.count(true) > 0:
 		return "Рунная загадка: подсказки %d / %d — ищите духа и скрижаль в округе  •  руны %d / 4" % [_found.count(true), _found.size(), _step]
 	if kind == "beacons" and _timer > 0.0:
@@ -535,6 +561,12 @@ func _draw() -> void:
 	var c := color()
 	var a := 0.3 if state == "done" else 0.85
 	match kind:
+		"captive", "part":
+			if state != "done":
+				var rr := 90.0 if kind == "captive" else 50.0
+				draw_arc(Vector2.ZERO, rr, _t, _t + TAU * 0.85, 32, Color(c, a * (0.55 + 0.3 * sin(_t * 3.0))), 3.0)
+				if _hold > 0.0:
+					draw_arc(Vector2.ZERO, rr + 12.0, -PI / 2.0, -PI / 2.0 + TAU * _hold / FREE_T, 32, Pixel.hdr(Color.WHITE, 1.5), 5.0)
 		"cache":
 			if state != "done" and found:
 				draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -570,3 +602,91 @@ func _draw() -> void:
 					if _bhold[i] > 0.0:
 						draw_arc(p, 90.0, -PI / 2.0, -PI / 2.0 + TAU * _bhold[i] / 2.0, 32, Pixel.hdr(Color.WHITE, 1.5), 5.0)
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+# ---------- Пленник-герой ----------
+# Клетка с закованным героем. Встаньте рядом на 3 секунды (враги мешают) — герой спасён
+# и ждёт в таверне. После этого в бою начинают попадаться части его оружия.
+
+func _build_cage() -> void:
+	var cage := Node3D.new()
+	var bar := Props3D.emat(color(), 1.8)
+	var dark := Props3D.mat(Color(0.2, 0.19, 0.26), "panel", 2.0)
+	Props3D._add(cage, Props3D._cyl(0.62, 0.66, 0.14, 12), dark, Vector3(0, 0.07, 0))
+	Props3D._add(cage, Props3D._cyl(0.6, 0.6, 0.1, 12), dark, Vector3(0, 1.62, 0))
+	for k in 10:
+		var a := TAU * k / 10.0
+		Props3D._add(cage, Props3D._cyl(0.025, 0.025, 1.5, 4), bar, Vector3(cos(a) * 0.56, 0.85, sin(a) * 0.56), Vector3.ZERO, false)
+	Props3D._add(cage, Props3D._cyl(0.0, 0.62, 0.3, 12), dark, Vector3(0, 1.82, 0))
+	main.place3d(cage, position)
+	_models.append(cage)
+	var fr := Pixel.frames(str(Data.CHARACTERS[hid]["sprite"]))
+	_hero_spr = Sprite3D.new()
+	_hero_spr.texture = fr["base"][0]
+	_hero_spr.pixel_size = 0.03 * float(fr.get("k", 1.0))
+	_hero_spr.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	_hero_spr.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	_hero_spr.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+	_hero_spr.modulate = Color(0.55, 0.52, 0.65)
+	main.place3d(_hero_spr, position)
+	_hero_spr.position.y += fr["size"].y * _hero_spr.pixel_size / 2.0 + 0.1
+	_models.append(_hero_spr)
+	_labels.append(_add_label("ПОМОГИТЕ!", Vector2.ZERO, 2.4, color(), 48))
+	Fx.portal(main, position, color(), 1.0)
+
+
+func _tick_captive(delta: float) -> void:
+	if is_instance_valid(_hero_spr):
+		# Пленник мечется в клетке
+		var fr := Pixel.frames(str(Data.CHARACTERS[hid]["sprite"]))
+		var f := Pixel.hero_frame(fr, "hurt" if fmod(_t, 3.0) < 0.6 else "idle", _t) if fr["base"].size() >= Pixel.HERO_FRAMES else 0
+		_hero_spr.texture = fr["base"][f]
+		_hero_spr.flip_h = fmod(_t, 4.0) < 2.0
+	var inside := _near(Vector2.ZERO, 100.0)
+	_hold = minf(FREE_T, _hold + delta) if inside else maxf(0.0, _hold - delta)
+	if _hold >= FREE_T:
+		Meta.rescue(hid)
+		var c: Dictionary = Data.CHARACTERS[hid]
+		Sound.play("levelup", 0.0)
+		main.combo_pop(position + Vector2(0, -150), "СПАСЁН: %s!" % str(c["name"]).to_upper(), Pixel.hdr(c["color"], 1.5))
+		Fx.text_pop(main, position + Vector2(0, -110), "Ждёт в таверне. Ищите части оружия «%s»" % Data.WEAPONS[c["weapon"]]["name"], Pixel.hdr(Color(1.0, 0.85, 0.5), 1.3), 18)
+		Fx.ring(main, position, 10.0, 220.0, Pixel.hdr(c["color"], 2.0), 0.5, 6.0)
+		if is_instance_valid(_hero_spr):
+			_hero_spr.modulate = Color(1, 1, 1)
+		_done()
+
+
+# ---------- Часть оружия ----------
+
+func _build_part() -> void:
+	var w: String = Data.CHARACTERS[hid]["weapon"]
+	var sp := Sprite3D.new()
+	sp.texture = Pixel.icon(w)
+	sp.pixel_size = 0.022
+	sp.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	sp.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	sp.shaded = false
+	sp.modulate = Pixel.hdr(Color(1.0, 0.85, 0.6), 1.4)
+	main.place3d(sp, position)
+	sp.position.y += 0.55
+	_models.append(sp)
+	_hero_spr = sp
+	_labels.append(_add_label("ЧАСТЬ ОРУЖИЯ", Vector2.ZERO, 1.25, color(), 34))
+	Fx.ring(main, position, 10.0, 120.0, Pixel.hdr(color(), 2.0), 0.4, 4.0)
+	Sound.play("chest", -2.0, 1.3)
+
+
+func _tick_part(_delta: float) -> void:
+	if is_instance_valid(_hero_spr):
+		_hero_spr.position.y = 0.55 + sin(_t * 3.0) * 0.08
+	if _near(Vector2.ZERO, 60.0):
+		var n := Meta.add_part(hid)
+		var w: String = Data.CHARACTERS[hid]["weapon"]
+		Sound.play("evolve", -2.0)
+		var txt := "Часть оружия «%s»: %d / %d" % [Data.WEAPONS[w]["name"], n, Meta.PARTS_NEED]
+		if n >= Meta.PARTS_NEED:
+			txt = "Оружие «%s» собрано! Оно доступно в бою, а %s — для найма в таверне" % [Data.WEAPONS[w]["name"], Data.CHARACTERS[hid]["name"]]
+		main.combo_pop(position + Vector2(0, -120), txt, Pixel.hdr(color(), 1.4))
+		Fx.ring(main, position, 10.0, 160.0, Pixel.hdr(color(), 2.0), 0.4, 5.0)
+		_done()
+		life = 0.5

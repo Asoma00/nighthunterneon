@@ -56,6 +56,17 @@ func _portrait() -> bool:
 	return vs.y > vs.x
 
 
+## Доступная ширина содержимого окна (экран минус поля окна).
+func _avail() -> float:
+	var vs := get_viewport().get_visible_rect().size
+	return vs.x - (52.0 + 28.0 + 16.0 if _portrait() else 110.0 + 56.0 + 20.0)
+
+
+## Сколько колонок шириной cell помещается в окно.
+func _cols(cell: float) -> int:
+	return maxi(1, int((_avail() + 10.0) / (cell + 10.0)))
+
+
 ## Окно никогда не выходит за экран: размер — по содержимому, но не больше экрана.
 func _fit_panel() -> void:
 	if _panel_scroll == null:
@@ -64,8 +75,9 @@ func _fit_panel() -> void:
 	var vs := get_viewport().get_visible_rect().size
 	var want := _panel_box.get_combined_minimum_size()
 	var lim := vs - (Vector2(52, 120) if _portrait() else Vector2(110, 100))
-	_panel_scroll.custom_minimum_size = Vector2(minf(want.x, lim.x), minf(want.y, lim.y))
-	_panel_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO if want.x > lim.x else ScrollContainer.SCROLL_MODE_DISABLED
+	_panel_scroll.custom_minimum_size = Vector2(minf(minf(want.x, lim.x), _avail()), minf(want.y, lim.y))
+	# Прокрутка — только вертикальная: ширина содержимого всегда подогнана под экран
+	_panel_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 var _toast: Label
 var _near := ""
 var _panel_id := ""
@@ -1197,7 +1209,7 @@ func _sbox(border: Color, bg := PANEL_BG, width := 2, glow := 8) -> StyleBoxFlat
 func _button(text: String, accent: Color, enabled := true) -> Button:
 	var b := Button.new()
 	b.text = text
-	b.custom_minimum_size = Vector2(380, 48)
+	b.custom_minimum_size = Vector2(minf(380, _avail()), 48)
 	b.add_theme_font_size_override("font_size", 19)
 	b.add_theme_stylebox_override("normal", _sbox(accent.darkened(0.35), PANEL_BG, 2, 4))
 	b.add_theme_stylebox_override("hover", _sbox(accent, Color(0.1, 0.05, 0.18, 0.95), 3, 14))
@@ -1229,7 +1241,7 @@ func _build_hud() -> void:
 	top.add_child(h)
 	var gem := TextureRect.new()
 	gem.texture = Pixel.frames("gem5")["base"][0]
-	gem.custom_minimum_size = Vector2(30, 34)
+	gem.custom_minimum_size = Vector2(minf(30, _avail()), 34)
 	gem.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	gem.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	h.add_child(gem)
@@ -1242,7 +1254,7 @@ func _build_hud() -> void:
 	# Значок профиля: аватар героя и ник; по клику — страница профиля
 	var badge := Button.new()
 	badge.position = Vector2(16, 76)
-	badge.custom_minimum_size = Vector2(240, 60)
+	badge.custom_minimum_size = Vector2(minf(240, _avail()), 60)
 	badge.focus_mode = Control.FOCUS_NONE
 	badge.add_theme_stylebox_override("normal", _sbox(GOLD.darkened(0.3), PANEL_BG, 2, 6))
 	badge.add_theme_stylebox_override("hover", _sbox(GOLD, PANEL_BG, 2, 12))
@@ -1263,7 +1275,7 @@ func _build_hud() -> void:
 	bh.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.add_child(bh)
 	_badge_pic = _pic(Pixel.portrait(Data.CHARACTERS[Data.selected_character]["sprite"]), 2.0)
-	_badge_pic.custom_minimum_size = Vector2(50, 50)
+	_badge_pic.custom_minimum_size = Vector2(minf(50, _avail()), 50)
 	_badge_pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	bh.add_child(_badge_pic)
 	var bv := VBoxContainer.new()
@@ -1308,19 +1320,23 @@ func _build_hud() -> void:
 	_layout_top()
 
 	_prompt = _label("", 22, Color.WHITE, Color(CYAN, 0.7))
-	_prompt.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	_prompt.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	_prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_prompt.offset_left = -400
-	_prompt.offset_right = 400
-	_prompt.offset_top = -90
+	_prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_prompt.offset_left = 16
+	_prompt.offset_right = -16
+	_prompt.offset_top = -110
+	_prompt.offset_bottom = -40
 	root.add_child(_prompt)
 
 	_toast = _label("", 20, GOLD, Color(GOLD, 0.6))
-	_toast.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_toast.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_toast.offset_left = -500
-	_toast.offset_right = 500
-	_toast.offset_top = 64
+	_toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_toast.offset_left = 16
+	_toast.offset_right = -16
+	_toast.offset_top = 255 if _portrait() else 64
+	_toast.offset_bottom = 311 if _portrait() else 120
 	root.add_child(_toast)
 
 	_panel_root = Control.new()
@@ -1459,7 +1475,7 @@ func _fill_panel() -> void:
 	_panel_box.add_child(_centered(_label("◆".repeat(lvl) + "◇".repeat(int(info["max"]) - lvl), 22, col)))
 	var desc := _label(info["desc"], 17, Color(0.85, 0.85, 1.0))
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc.custom_minimum_size = Vector2(460, 0)
+	desc.custom_minimum_size = Vector2(minf(460, _avail()), 0)
 	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_panel_box.add_child(desc)
 	if Meta.building_busy(id):
@@ -1484,11 +1500,11 @@ func _fill_panel() -> void:
 		_panel_box.add_child(_centered(_label("ГЕРОИ", 22, GOLD)))
 		var hint := _label("Вега доступна сразу. Остальных героев откройте: выполните условие и заплатите осколками.", 14, Color(0.75, 0.75, 0.9))
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		hint.custom_minimum_size = Vector2(600 if _portrait() else 900, 0)
+		hint.custom_minimum_size = Vector2(minf(600 if _portrait() else 900, _avail()), 0)
 		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_panel_box.add_child(_centered(hint))
 		var row := GridContainer.new()
-		row.columns = 3 if _portrait() else 5
+		row.columns = _cols(206 if _portrait() else 180)
 		row.add_theme_constant_override("h_separation", 10)
 		row.add_theme_constant_override("v_separation", 10)
 		for hid in Meta.HERO_ORDER:
@@ -1506,7 +1522,7 @@ func _hero_card(hid: String) -> Control:
 	var col: Color = hc["color"]
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", _sbox(col if st == "owned" else col.darkened(0.55), PANEL_BG, 2, 6 if hid == Data.selected_character else 0))
-	card.custom_minimum_size = Vector2(196 if _portrait() else 170, 0)
+	card.custom_minimum_size = Vector2(minf(196 if _portrait() else 170, _avail()), 0)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
 	card.add_child(v)
@@ -1522,10 +1538,17 @@ func _hero_card(hid: String) -> Control:
 	card.tooltip_text = Data.HERO_LORE.get(hid, "")
 	var u: Dictionary = Meta.HERO_UNLOCK.get(hid, {"cost": 0, "conds": []})
 	if st != "owned":
+		var w_name: String = Data.WEAPONS[hc["weapon"]]["name"]
+		var rl := _label(("✓ " if Meta.hero_rescued(hid) else "✗ ") + "Спасён в бою", 11, Color(0.5, 1.0, 0.6) if Meta.hero_rescued(hid) else Color(1.0, 0.6, 0.6))
+		v.add_child(rl)
+		var pl := _label(("✓ " if Meta.parts_have(hid) >= Meta.PARTS_NEED else "✗ ") + "Оружие «%s»: %d / %d" % [w_name, Meta.parts_have(hid), Meta.PARTS_NEED], 11, Color(0.5, 1.0, 0.6) if Meta.parts_have(hid) >= Meta.PARTS_NEED else Color(1.0, 0.6, 0.6))
+		pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		pl.custom_minimum_size = Vector2(minf(150, _avail()), 0)
+		v.add_child(pl)
 		for c in u["conds"]:
 			var cl := _label(("✓ " if Meta.cond_met(c) else "✗ ") + Meta.cond_text(c), 11, Color(0.5, 1.0, 0.6) if Meta.cond_met(c) else Color(1.0, 0.6, 0.6))
 			cl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			cl.custom_minimum_size = Vector2(150, 0)
+			cl.custom_minimum_size = Vector2(minf(150, _avail()), 0)
 			v.add_child(cl)
 	var b: Button
 	match st:
@@ -1553,9 +1576,13 @@ func _hero_card(hid: String) -> Control:
 				_fill_panel())
 		"expensive":
 			b = _button("%d ◆ — мало" % int(u["cost"]), GOLD.darkened(0.4), false)
+		"lost":
+			b = _button("⊘ не найден", Color(0.5, 0.5, 0.6), false)
+		"parts":
+			b = _button("⊘ оружие %d/%d" % [Meta.parts_have(hid), Meta.PARTS_NEED], Color(0.5, 0.5, 0.6), false)
 		_:
 			b = _button("⊘ %d ◆" % int(u["cost"]), Color(0.5, 0.5, 0.6), false)
-	b.custom_minimum_size = Vector2(150, 40)
+	b.custom_minimum_size = Vector2(minf(150, _avail()), 40)
 	b.add_theme_font_size_override("font_size", 14)
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(b)
@@ -1615,12 +1642,12 @@ func _build_cost_row(id: String) -> Control:
 		info += "   •   нужно пройти уровней главы: %d (%d)" % [req, Meta.levels_cleared]
 	var il := _label(info, 14, Color(0.75, 0.75, 0.9))
 	il.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	il.custom_minimum_size = Vector2(440 if _portrait() else 640, 0)
+	il.custom_minimum_size = Vector2(minf(440 if _portrait() else 640, _avail()), 0)
 	il.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(_centered(il))
 	var hint := _label("Материалы (⚙ лом, ▣ микросхемы, ✶ ядра) добываются только в бою: элита, боссы, тайники, загадки, события и задания.", 13, Color(0.65, 0.65, 0.8))
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hint.custom_minimum_size = Vector2(440 if _portrait() else 640, 0)
+	hint.custom_minimum_size = Vector2(minf(440 if _portrait() else 640, _avail()), 0)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(_centered(hint))
 	return v
@@ -1668,7 +1695,7 @@ func _fill_portal() -> void:
 		var t := ("Сетевая вылазка вдвоём  •  Игрок 2: %s — %s" % [hc["name"], hc["title"]]) if ok else "Ждём второго игрока — он должен подключиться к вашей игре"
 		_panel_box.add_child(_centered(_label(t, 17, Color(1.0, 0.45, 0.8) if ok else Color(0.7, 0.7, 0.85))))
 	var grid := GridContainer.new()
-	grid.columns = 2 if _portrait() else 5   # вертикальный экран: уровни в две колонки, ничего не вылезает
+	grid.columns = _cols(220)   # вертикальный экран: уровни в две колонки, ничего не вылезает
 	grid.add_theme_constant_override("h_separation", 10)
 	grid.add_theme_constant_override("v_separation", 10)
 	for i in Data.LEVELS.size():
@@ -1683,7 +1710,7 @@ func _fill_portal() -> void:
 			status_txt = "%d:%02d" % [int(lv["time"]) / 60, int(lv["time"]) % 60]
 		var accent := GOLD if cleared else (MAGENTA if unlocked else Color(0.35, 0.35, 0.4))
 		var b := _button("%d. %s%s\n%s" % [i + 1, lv["name"], boss_mark, status_txt], accent, unlocked and (Net.mode != "host" or Net.lobby.get("client", false)))
-		b.custom_minimum_size = Vector2(210, 64)
+		b.custom_minimum_size = Vector2(minf(210, _avail()), 64)
 		b.add_theme_font_size_override("font_size", 14)
 		b.tooltip_text = lv["desc"]
 		var idx := i
@@ -1722,19 +1749,25 @@ func _fill_tree_panel(id: String) -> void:
 	var row: BoxContainer = VBoxContainer.new() if narrow else HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12 if narrow else 16)
 	_panel_box.add_child(row)
-	var scroll := ScrollContainer.new()
-	var list: BoxContainer
+	var list: Container
 	if narrow:
-		scroll.custom_minimum_size = Vector2(590, 64)
-		scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		list = HBoxContainer.new()
+		# Вертикальный экран: кнопки переносятся по строкам — без горизонтальной прокрутки
+		var flow := HFlowContainer.new()
+		flow.alignment = FlowContainer.ALIGNMENT_CENTER
+		flow.add_theme_constant_override("h_separation", 4)
+		flow.add_theme_constant_override("v_separation", 4)
+		flow.custom_minimum_size = Vector2(_avail(), 0)
+		row.add_child(flow)
+		list = flow
 	else:
-		scroll.custom_minimum_size = Vector2(240, 470)
+		var scroll := ScrollContainer.new()
+		scroll.custom_minimum_size = Vector2(minf(240, _avail()), 470)
 		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		list = VBoxContainer.new()
-	list.add_theme_constant_override("separation", 4)
-	row.add_child(scroll)
-	scroll.add_child(list)
+		var vb := VBoxContainer.new()
+		vb.add_theme_constant_override("separation", 4)
+		row.add_child(scroll)
+		scroll.add_child(vb)
+		list = vb
 	for key in source:
 		var tk: String = prefix + str(key)
 		var name_txt: String = source[key]["name"]
@@ -1742,7 +1775,7 @@ func _fill_tree_panel(id: String) -> void:
 		var total: int = Meta.tree_nodes(tk).size()
 		var locked: bool = id == "shrine" and not Meta.hero_unlocked(key)
 		var b := _button("%s %d/%d" % [name_txt, owned, total] if not locked else "%s ⊘" % name_txt, col if tk == _tree_tab else col.darkened(0.5), not locked)
-		b.custom_minimum_size = Vector2(150 if narrow else 222, 52 if narrow else (50 if id == "shrine" else 36))
+		b.custom_minimum_size = Vector2(minf(150 if narrow else 222, _avail()), 52 if narrow else (50 if id == "shrine" else 36))
 		b.add_theme_font_size_override("font_size", 13 if narrow else 14)
 		b.clip_text = true
 		if id == "shrine":
@@ -1781,16 +1814,16 @@ func _fill_tree_panel(id: String) -> void:
 		desc = "%s  •  «%s»: %s" % [src["trait"], src["active"], src["active_desc"]]
 	var dl := _label(desc, 13, Color(0.8, 0.8, 0.95))
 	dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	dl.custom_minimum_size = Vector2(500 if narrow else 720, 0)
+	dl.custom_minimum_size = Vector2(minf(500 if narrow else 720, _avail() - (90.0 if narrow else 350.0)), 0)
 	hv.add_child(dl)
 	var tv = preload("res://scripts/tree_view.gd").new()
 	right.add_child(tv)
-	tv.setup(_tree_tab, col, narrow)
+	tv.setup(_tree_tab, col, narrow, _avail() if narrow else _avail() - 260.0)
 	tv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	# Подробности узла (наведение / касание): эффект, цена, условия
 	var info_l := _label("Наведите на узел или коснитесь его — здесь появятся эффект и условия открытия.", 13, Color(0.9, 0.85, 1.0))
 	info_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info_l.custom_minimum_size = Vector2(tv.custom_minimum_size.x, 36)
+	info_l.custom_minimum_size = Vector2(minf(tv.custom_minimum_size.x, _avail()), 36)
 	right.add_child(info_l)
 	tv.info.connect(func(t: String): info_l.text = t)
 	tv.bought.connect(func():
@@ -1929,7 +1962,7 @@ func _fill_client_panel(id: String) -> void:
 		_panel_box.add_child(_centered(_label("◆".repeat(lvl) + "◇".repeat(int(info["max"]) - lvl), 22, info["color"])))
 		var d := _label("Это убежище хоста — улучшать его здания может только он.\nВаши улучшения из своего убежища действуют в сетевой вылазке.", 16, Color(0.85, 0.85, 1.0))
 		d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		d.custom_minimum_size = Vector2(520, 0)
+		d.custom_minimum_size = Vector2(minf(520, _avail()), 0)
 		d.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_panel_box.add_child(d)
 	_add_close()
@@ -1940,7 +1973,7 @@ func _fill_client_hall() -> void:
 	_panel_box.add_child(_centered(_label("ВАШИ ГЕРОИ", 30, GOLD, Color(GOLD, 0.6))))
 	_panel_box.add_child(_centered(_label("Открыты по вашему сохранению", 15, Color(0.75, 0.75, 0.9))))
 	var row := GridContainer.new()
-	row.columns = 3 if _portrait() else 5
+	row.columns = _cols(206 if _portrait() else 180)
 	row.add_theme_constant_override("h_separation", 10)
 	row.add_theme_constant_override("v_separation", 10)
 	for hid in Data.CHARACTERS:
@@ -1950,7 +1983,7 @@ func _fill_client_hall() -> void:
 		if hid == Data.selected_character:
 			txt = "✓ " + txt
 		var hb := _button(txt, hc["color"], unlocked)
-		hb.custom_minimum_size = Vector2(150, 58)
+		hb.custom_minimum_size = Vector2(minf(150, _avail()), 58)
 		hb.add_theme_font_size_override("font_size", 14)
 		hb.pressed.connect(func():
 			Data.selected_character = hid
@@ -2352,13 +2385,13 @@ func _fill_board() -> void:
 	_panel_box.add_child(_centered(_label("ДОСКА ЗАДАНИЙ", 34, Color.WHITE, Color(GOLD, 0.8))))
 	var info := _label("Задания выполняются за ОДНУ вылазку. Награда — осколки и материалы для базы. Выполненное задание сменяется новым, с каждым разом сложнее и щедрее.", 15, Color(0.8, 0.8, 0.95))
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info.custom_minimum_size = Vector2(460 if _portrait() else 760, 0)
+	info.custom_minimum_size = Vector2(minf(460 if _portrait() else 760, _avail()), 0)
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_panel_box.add_child(_centered(info))
 	if Net.mode != "":
 		_panel_box.add_child(_centered(_label("В сетевой игре задания не засчитываются", 15, Color(1.0, 0.6, 0.6))))
 	var grid := GridContainer.new()
-	grid.columns = 1 if _portrait() else 3
+	grid.columns = mini(3, _cols(450 if _portrait() else 262))
 	grid.add_theme_constant_override("h_separation", 12)
 	grid.add_theme_constant_override("v_separation", 12)
 	var b := Quests.board()
@@ -2381,7 +2414,7 @@ func _fill_board() -> void:
 		v.add_child(t)
 		var lore := _label(hq["lore"], 15, Color(0.85, 0.8, 0.95))
 		lore.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		lore.custom_minimum_size = Vector2(440 if _portrait() else 720, 0)
+		lore.custom_minimum_size = Vector2(minf(440 if _portrait() else 720, _avail()), 0)
 		v.add_child(lore)
 		v.add_child(_label("Цель: " + Quests.desc(hq) + "  (только этим героем)", 16, GOLD))
 		v.add_child(_label("Награда: " + Quests.reward_text(Quests.reward(hq)) + "  •  открывает узлы дерева героя", 14, Color(0.7, 1.0, 0.75)))
@@ -2392,19 +2425,19 @@ func _fill_board() -> void:
 func _quest_card(q: Dictionary, i: int) -> Control:
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", _sbox(GOLD.darkened(0.2), PANEL_BG, 2, 4))
-	card.custom_minimum_size = Vector2(440 if _portrait() else 250, 0)
+	card.custom_minimum_size = Vector2(minf(440 if _portrait() else 250, _avail()), 0)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
 	card.add_child(v)
 	v.add_child(_label(Quests.title(q), 19, GOLD))
 	var d := _label(Quests.desc(q), 15, Color(0.92, 0.92, 1.0))
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	d.custom_minimum_size = Vector2(220, 0)
+	d.custom_minimum_size = Vector2(minf(220, _avail()), 0)
 	v.add_child(d)
 	v.add_child(_label("Сложность: " + "★".repeat(int(q.get("tier", 0)) + 1), 13, Color(0.75, 0.75, 0.9)))
 	v.add_child(_label("Награда: " + Quests.reward_text(Quests.reward(q)), 14, Color(0.6, 1.0, 0.7)))
 	var swap := _button("Заменить — 15 ◆", Color(0.6, 0.6, 0.75), Meta.shards >= 15)
-	swap.custom_minimum_size = Vector2(200, 38)
+	swap.custom_minimum_size = Vector2(minf(200, _avail()), 38)
 	swap.add_theme_font_size_override("font_size", 14)
 	swap.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	swap.pressed.connect(func():
@@ -2481,7 +2514,7 @@ func _fill_library() -> void:
 	tabs.add_theme_constant_override("h_separation", 5)
 	tabs.add_theme_constant_override("v_separation", 5)
 	tabs.alignment = FlowContainer.ALIGNMENT_CENTER
-	tabs.custom_minimum_size = Vector2(600 if _portrait() else 940, 0)
+	tabs.custom_minimum_size = Vector2(minf(600 if _portrait() else 940, _avail()), 0)
 	for t in LIB_TABS:
 		var entries := _lib_entries(t[0])
 		var known := entries.filter(func(e): return e[3]).size()
@@ -2508,7 +2541,7 @@ func _fill_library() -> void:
 	_panel_box.add_child(row)
 	# Список слева
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(600, 220) if _portrait() else Vector2(250, 430)
+	scroll.custom_minimum_size = Vector2(minf(600, _avail()), 220) if _portrait() else Vector2(250, 430)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	row.add_child(scroll)
 	var list := VBoxContainer.new()
@@ -2518,7 +2551,7 @@ func _fill_library() -> void:
 	for e in entries:
 		var known: bool = e[3]
 		var b := _button(e[1] if known else "???", accent if e[0] == _lib_sel else accent.darkened(0.6))
-		b.custom_minimum_size = Vector2(232, 42)
+		b.custom_minimum_size = Vector2(minf(232, _avail()), 42)
 		b.add_theme_font_size_override("font_size", 15)
 		b.icon = e[2]
 		b.expand_icon = true
@@ -2538,12 +2571,12 @@ func _fill_library() -> void:
 			b.call_deferred("grab_focus")
 	# Статья справа
 	var art_scroll := ScrollContainer.new()
-	art_scroll.custom_minimum_size = Vector2(600, 620) if _portrait() else Vector2(680, 430)
+	art_scroll.custom_minimum_size = Vector2(minf(600, _avail()), 620) if _portrait() else Vector2(minf(680, _avail() - 270.0), 430)
 	art_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	row.add_child(art_scroll)
 	var art := VBoxContainer.new()
 	art.add_theme_constant_override("separation", 10)
-	art.custom_minimum_size = Vector2(580 if _portrait() else 660, 0)
+	art.custom_minimum_size = Vector2(minf(580 if _portrait() else 660, _avail() - (20.0 if _portrait() else 290.0)), 0)
 	art_scroll.add_child(art)
 	if sel_entry[3]:
 		_lib_article(art, _lib_tab, sel_entry[0])
@@ -2555,7 +2588,7 @@ func _fill_library() -> void:
 		head.add_child(pic)
 		head.add_child(_label("Ещё не открыто", 26, Color(0.7, 0.7, 0.8)))
 		art.add_child(head)
-		var hint := ("Наймите героя в таверне. Условия: " + ";  ".join(Meta.HERO_UNLOCK.get(sel_entry[0], {"conds": []})["conds"].map(func(c): return Meta.cond_text(c)))) if _lib_tab in ["heroes", "abilities"] else "Встретьте это в бою — запись появится здесь."
+		var hint := ("Спасите героя в бою (пленник встречается редко), соберите 3 части его оружия и наймите в таверне. Условия: " + ";  ".join(Meta.HERO_UNLOCK.get(sel_entry[0], {"conds": []})["conds"].map(func(c): return Meta.cond_text(c)))) if _lib_tab in ["heroes", "abilities"] else "Встретьте это в бою — запись появится здесь."
 		art.add_child(_para(hint))
 	_add_close()
 
@@ -2563,7 +2596,7 @@ func _fill_library() -> void:
 func _para(text: String, color := Color(0.86, 0.86, 1.0), size := 16) -> Label:
 	var l := _label(text, size, color)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(570 if _portrait() else 640, 0)
+	l.custom_minimum_size = Vector2(minf(570 if _portrait() else 640, _avail()), 0)
 	return l
 
 
@@ -2578,7 +2611,7 @@ func _icon_line(art: VBoxContainer, tex: Texture2D, text: String, color := Color
 	h.add_child(_pic(tex, 1.6))
 	var l := _label(text, 16, color)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(520 if _portrait() else 600, 0)
+	l.custom_minimum_size = Vector2(minf(520 if _portrait() else 600, _avail()), 0)
 	h.add_child(l)
 	art.add_child(h)
 
@@ -2596,7 +2629,7 @@ func _lib_head(art: VBoxContainer, tex: Texture2D, k: float, title: String, sub:
 	if sub != "":
 		var sl := _label(sub, 17, col.lightened(0.3))
 		sl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		sl.custom_minimum_size = Vector2(460, 0)
+		sl.custom_minimum_size = Vector2(minf(460, _avail()), 0)
 		v.add_child(sl)
 	head.add_child(v)
 	art.add_child(head)
@@ -3002,7 +3035,7 @@ func _furnish_lab(root: Node3D, o: Vector3, w: float, d: float, dark: Material) 
 # ---- Герои и наёмники в таверне ----
 
 const TAV_SEATS := [Vector3(5.66, 0, 1.05), Vector3(4.15, 0, 1.66), Vector3(3.54, 0, 0.15), Vector3(5.05, 0, -0.46),
-	Vector3(-1.2, 0, -2.0), Vector3(-2.4, 0, -2.0), Vector3(-3.6, 0, -2.0), Vector3(-4.8, 0, -2.0), Vector3(1.2, 0, 3.4)]
+	Vector3(1.86, 0, 2.66), Vector3(0.35, 0, 3.27), Vector3(-0.26, 0, 1.76), Vector3(1.25, 0, 1.15), Vector3(6.6, 0, 2.6), Vector3(6.6, 0, -1.6)]
 
 
 func _rebuild_tavern_heroes(prev_pos := Vector3.INF) -> void:
@@ -3013,8 +3046,8 @@ func _rebuild_tavern_heroes(prev_pos := Vector3.INF) -> void:
 	var seat := 0
 	var walk_i := 0
 	for hid in Meta.HERO_ORDER:
-		if not Data.CHARACTERS.has(hid) or hid == Data.selected_character:
-			continue
+		if not Data.CHARACTERS.has(hid) or hid == Data.selected_character or not Meta.hero_rescued(hid):
+			continue   # не спасённых героев в таверне нет
 		var c: Dictionary = Data.CHARACTERS[hid]
 		var owned := Meta.hero_unlocked(hid)
 		var pos: Vector3
@@ -3029,7 +3062,7 @@ func _rebuild_tavern_heroes(prev_pos := Vector3.INF) -> void:
 		_world.add_child(node)
 		var fr := Pixel.frames(c["sprite"])
 		var pair := _sprite_pair(node, fr)
-		var lbl_text: String = c["name"] if owned else "Наёмник %s — %d оск." % [c["name"], int(Meta.HERO_UNLOCK.get(hid, {"cost": 0})["cost"])]
+		var lbl_text: String = c["name"] if owned else ("Наёмник %s — %d оск." % [c["name"], int(Meta.HERO_UNLOCK.get(hid, {"cost": 0})["cost"])] if Meta.parts_have(hid) >= Meta.PARTS_NEED else "%s — без оружия %d/%d" % [c["name"], Meta.parts_have(hid), Meta.PARTS_NEED])
 		var lbl := _label3d(node, lbl_text, Vector3(0, 2.2, 0), (c["color"] as Color).lightened(0.25) if owned else Color(1.0, 0.75, 0.6), 26)
 		lbl.visible = false
 		if not owned:
@@ -3205,9 +3238,14 @@ func _fill_hire(hid: String) -> void:
 	_panel_box.add_child(_centered(_label("НАЁМНИК", 30, Color.WHITE, Color(hc["color"], 0.8))))
 	var lore := _label(Data.HERO_LORE.get(hid, ""), 15, Color(0.85, 0.82, 0.95))
 	lore.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	lore.custom_minimum_size = Vector2(440 if _portrait() else 640, 0)
+	lore.custom_minimum_size = Vector2(minf(440 if _portrait() else 640, _avail()), 0)
 	lore.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_panel_box.add_child(_centered(lore))
+	var how := _label("Чтобы нанять: герой спасён в бою ✓  •  собрать 3 части его оружия (выпадают с врагов — 1 из 1000, иногда в тайниках)  •  выполнить условия и заплатить осколками.", 13, Color(1.0, 0.85, 0.6))
+	how.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	how.custom_minimum_size = Vector2(minf(440 if _portrait() else 640, _avail()), 0)
+	how.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_panel_box.add_child(_centered(how))
 	_panel_box.add_child(_centered(_hero_card(hid)))
 	_add_close()
 
@@ -3218,11 +3256,11 @@ func _fill_contracts() -> void:
 	var slots := Quests.contract_slots()
 	var info := _label("Трудные заказы для одной вылазки — цель больше, награда почти вдвое щедрее. Действуют, пока не выполните. Мест: %d / %d%s" % [Meta.contracts.size(), slots, "" if slots > 1 else " (2 — с 3-го уровня таверны)"], 14, Color(0.8, 0.8, 0.95))
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info.custom_minimum_size = Vector2(440 if _portrait() else 760, 0)
+	info.custom_minimum_size = Vector2(minf(440 if _portrait() else 760, _avail()), 0)
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_panel_box.add_child(_centered(info))
 	var grid := GridContainer.new()
-	grid.columns = 1 if _portrait() else 3
+	grid.columns = mini(3, _cols(450 if _portrait() else 262))
 	grid.add_theme_constant_override("h_separation", 12)
 	grid.add_theme_constant_override("v_separation", 12)
 	for i in Meta.contracts.size():
@@ -3237,14 +3275,14 @@ func _contract_card(q: Dictionary, i: int, taken: bool) -> Control:
 	var col := Color(0.5, 1.0, 0.6) if taken else GOLD
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", _sbox(col.darkened(0.15), PANEL_BG, 2, 6 if taken else 2))
-	card.custom_minimum_size = Vector2(440 if _portrait() else 250, 0)
+	card.custom_minimum_size = Vector2(minf(440 if _portrait() else 250, _avail()), 0)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
 	card.add_child(v)
 	v.add_child(_label(("✓ ВЗЯТ  " if taken else "") + Quests.title(q), 17, col))
 	var d := _label(Quests.desc(q), 15, Color(0.92, 0.92, 1.0))
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	d.custom_minimum_size = Vector2(220, 0)
+	d.custom_minimum_size = Vector2(minf(220, _avail()), 0)
 	v.add_child(d)
 	v.add_child(_label("Сложность: " + "★".repeat(int(q.get("tier", 0)) + 1), 13, Color(0.75, 0.75, 0.9)))
 	v.add_child(_label("Награда: " + Quests.reward_text(Quests.reward(q)), 14, Color(0.6, 1.0, 0.7)))
@@ -3263,7 +3301,7 @@ func _contract_card(q: Dictionary, i: int, taken: bool) -> Control:
 				Sound.play("levelup", -6.0)
 				_toast_text("Контракт взят: " + Quests.title(q))
 			_fill_panel())
-	b.custom_minimum_size = Vector2(200, 38)
+	b.custom_minimum_size = Vector2(minf(200, _avail()), 38)
 	b.add_theme_font_size_override("font_size", 14)
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(b)

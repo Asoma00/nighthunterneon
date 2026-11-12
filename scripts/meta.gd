@@ -62,6 +62,12 @@ const HERO_UNLOCK := {
 	"kai": {"cost": 1700, "conds": [["endless", 20], ["level", 5]]},
 }
 static var heroes_owned: Array = ["vega"]
+# Поиск героев: сначала героя нужно СПАСТИ в бою (пленник, шанс 1 из 100 на каждый
+# бросок места задания), потом собрать его оружие из 3 частей (шанс 1 из 1000 с врага,
+# иногда в тайнике). Только тогда его можно нанять в таверне (старые условия тоже нужны).
+static var rescued: Array = []
+static var parts := {}
+const PARTS_NEED := 3
 
 # ---------- Деревья прокачки ----------
 # Дерево растёт сверху вниз: pos = (колонка, ряд), ряд = ярус - 1.
@@ -218,6 +224,8 @@ static func reset() -> void:
 	quests = []
 	contracts = []
 	offers = []
+	rescued = []
+	parts = {}
 	construct = {}
 	just_built = ""
 
@@ -244,6 +252,8 @@ static func ensure_loaded() -> void:
 	trees = cfg.get_value("meta", "trees", {})
 	if cfg.has_section_key("meta", "heroes_owned"):
 		heroes_owned = cfg.get_value("meta", "heroes_owned", ["vega"])
+		rescued = cfg.get_value("meta", "rescued", [])
+		parts = cfg.get_value("meta", "parts", {})
 	else:
 		# Старое сохранение: герои открывались уровнем зала — оставляем уже открытых
 		heroes_owned = []
@@ -288,6 +298,8 @@ static func save() -> void:
 	cfg.set_value("meta", "materials", materials)
 	cfg.set_value("meta", "quests", quests)
 	cfg.set_value("meta", "contracts", contracts)
+	cfg.set_value("meta", "rescued", rescued)
+	cfg.set_value("meta", "parts", parts)
 	cfg.set_value("meta", "offers", offers)
 	cfg.set_value("meta", "construct", construct)
 	cfg.set_value("meta", "saved_at", Time.get_datetime_string_from_system(false, true))
@@ -556,9 +568,61 @@ static func first_unmet(conds: Array, hero := "") -> Array:
 
 
 ## Состояние героя в Зале: owned / open (можно открыть) / expensive / cond (условие не выполнено)
+static func hero_rescued(id: String) -> bool:
+	ensure_loaded()
+	return id == "vega" or id in heroes_owned or id in rescued
+
+
+static func parts_have(id: String) -> int:
+	if hero_unlocked(id):
+		return PARTS_NEED
+	return mini(PARTS_NEED, int(parts.get(id, 0)))
+
+
+## Кого ещё можно встретить пленником в бою.
+static func rescue_candidates() -> Array:
+	var out: Array = []
+	for h in HERO_ORDER:
+		if not hero_rescued(h):
+			out.append(h)
+	return out
+
+
+## Чьё оружие сейчас ищем: спасённые, но с несобранным оружием.
+static func parts_hunt() -> Array:
+	var out: Array = []
+	for h in HERO_ORDER:
+		if hero_rescued(h) and parts_have(h) < PARTS_NEED:
+			out.append(h)
+	return out
+
+
+static func add_part(id: String) -> int:
+	parts[id] = mini(PARTS_NEED, int(parts.get(id, 0)) + 1)
+	return int(parts[id])
+
+
+static func rescue(id: String) -> void:
+	if not (id in rescued):
+		rescued.append(id)
+
+
+## Оружие героя недоступно в бою, пока его не соберут (у открытых героев — всегда доступно).
+static func weapon_available(w: String) -> bool:
+	var D = preload("res://scripts/data.gd")
+	for h in D.CHARACTERS:
+		if h != "vega" and str(D.CHARACTERS[h].get("weapon", "")) == w:
+			return parts_have(h) >= PARTS_NEED
+	return true
+
+
 static func hero_state(id: String) -> String:
 	if hero_unlocked(id):
 		return "owned"
+	if not hero_rescued(id):
+		return "lost"
+	if parts_have(id) < PARTS_NEED:
+		return "parts"
 	var u: Dictionary = HERO_UNLOCK.get(id, {"cost": 99999, "conds": [["level", 99]]})
 	if not conds_met(u["conds"]):
 		return "cond"
@@ -702,14 +766,19 @@ static func _settle_run(run: Dictionary, victory: bool) -> Dictionary:
 # ---------- Деревья ----------
 
 static func tree_nodes(tree_key: String) -> Array:
+	var extra: Array = preload("res://scripts/tree_extra.gd").nodes(tree_key)
 	match tree_key.left(2):
 		"w:":
-			return WEAPON_TREE
+			return WEAPON_TREE + extra
 		"c:":
-			return HERO_TREE
+			return HERO_TREE + extra
 		"m:":
-			return MODULE_TREE
+			return MODULE_TREE + extra
 	return []
+
+
+static func _fx(tree_key: String) -> Dictionary:
+	return preload("res://scripts/tree_extra.gd").fx_sum(tree_key, trees.get(tree_key, []))
 
 
 static func tree_building(tree_key: String) -> String:
@@ -729,6 +798,16 @@ static func node_state(tree_key: String, n: Dictionary) -> String:
 	for r in n["req"]:
 		if not has_node(tree_key, r):
 			return "locked"
+	if n.has("req_any"):
+		var any := false
+		for r in n["req_any"]:
+			any = any or has_node(tree_key, r)
+		if not any:
+			return "locked"
+	if n.has("excl"):
+		for m in tree_nodes(tree_key):
+			if m.get("excl", "") == n["excl"] and m["id"] != n["id"] and has_node(tree_key, m["id"]):
+				return "excl"
 	if not conds_met(n.get("conds", []), tree_hero(tree_key)):
 		return "cond"
 	return "open" if shards >= node_cost(n) else "expensive"
@@ -764,14 +843,16 @@ static func weapon_mods(id: String) -> Dictionary:
 	if has_node(k, "mythic"):
 		cd *= 0.85
 	var res := has_node(k, "resonance")
-	return {"damage": dmg, "cooldown": cd,
-		"count": int(has_node(k, "count")) + int(has_node(k, "overcharge")) + int(has_node(k, "mythic")),
-		"area": 1.0 + (0.10 if has_node(k, "area1") else 0.0) + (0.15 if has_node(k, "count") else 0.0),
-		"status": (1.3 if has_node(k, "status") else 1.0) + (0.15 if res else 0.0), "master": has_node(k, "master"),
-		"duration": (1.25 if has_node(k, "dur") else 1.0) + (0.2 if res else 0.0), "speed": 1.15 if has_node(k, "speed1") else 1.0,
-		"crit": 0.05 if has_node(k, "crit1") else 0.0, "critdmg": 0.5 if has_node(k, "critdmg") else 0.0,
-		"elite": 1.3 if has_node(k, "elite") else 1.0, "execute": 1.5 if has_node(k, "execute") else 1.0,
-		"leech": 0.3 if has_node(k, "leech") else 0.0, "salvage": 1.0 if has_node(k, "salvage") else 0.0,
+	var fx := _fx(k)
+	return {"damage": maxf(0.3, dmg + float(fx.get("damage", 0.0))), "cooldown": cd * float(fx.get("cooldown", 1.0)),
+		"count": int(has_node(k, "count")) + int(has_node(k, "overcharge")) + int(has_node(k, "mythic")) + int(fx.get("count", 0.0)),
+		"area": maxf(0.5, 1.0 + (0.10 if has_node(k, "area1") else 0.0) + (0.15 if has_node(k, "count") else 0.0) + float(fx.get("area", 0.0))),
+		"status": (1.3 if has_node(k, "status") else 1.0) + (0.15 if res else 0.0) + float(fx.get("status", 0.0)), "master": has_node(k, "master"),
+		"duration": (1.25 if has_node(k, "dur") else 1.0) + (0.2 if res else 0.0) + float(fx.get("duration", 0.0)),
+		"speed": (1.15 if has_node(k, "speed1") else 1.0) * (1.0 + float(fx.get("speed", 0.0))),
+		"crit": (0.05 if has_node(k, "crit1") else 0.0) + float(fx.get("crit", 0.0)), "critdmg": (0.5 if has_node(k, "critdmg") else 0.0) + float(fx.get("critdmg", 0.0)),
+		"elite": (1.3 if has_node(k, "elite") else 1.0) * float(fx.get("elite", 1.0)), "execute": (1.5 if has_node(k, "execute") else 1.0) * float(fx.get("execute", 1.0)),
+		"leech": (0.3 if has_node(k, "leech") else 0.0) + float(fx.get("leech", 0.0)), "salvage": 1.0 if has_node(k, "salvage") else 0.0,
 		"fusion": 1.2 if has_node(k, "fusion") else 1.0}
 
 
@@ -780,9 +861,10 @@ static func hero_mods(id: String) -> Dictionary:
 	var k := "c:" + id
 	var asc := has_node(k, "ascend")
 	var myth := has_node(k, "myth")
+	var fx := _fx(k)
 	var dmg := 1.0 + (0.06 if has_node(k, "legacy") else 0.0) + (0.08 if has_node(k, "legend_tale") else 0.0) \
-		+ (0.12 if has_node(k, "hunter") else 0.0) + (0.2 if myth else 0.0)
-	return {"hp": (15.0 if has_node(k, "hp1") else 0.0) + (20.0 if has_node(k, "hp2") else 0.0) + (30.0 if asc else 0.0)
+		+ (0.12 if has_node(k, "hunter") else 0.0) + (0.2 if myth else 0.0) + float(fx.get("damage", 0.0))
+	var out := {"hp": (15.0 if has_node(k, "hp1") else 0.0) + (20.0 if has_node(k, "hp2") else 0.0) + (30.0 if asc else 0.0)
 			+ (10.0 if has_node(k, "legacy") else 0.0) + (20.0 if myth else 0.0),
 		"damage": dmg, "laststand": has_node(k, "laststand"),
 		"speed": (1.06 if has_node(k, "spd1") else 1.0) * (1.1 if asc else 1.0),
@@ -792,6 +874,17 @@ static func hero_mods(id: String) -> Dictionary:
 		"armor": 1.0 if has_node(k, "armor") else 0.0, "awaken": has_node(k, "awaken"),
 		"regen": 0.4 if has_node(k, "regen1") else 0.0, "magnet": 1.25 if has_node(k, "magnet1") else 1.0,
 		"xp": 1.1 if has_node(k, "xp1") else 1.0, "dodge": 0.05 if has_node(k, "dodge1") else 0.0}
+	# Личная ветвь героя
+	out["hp"] = float(out["hp"]) + float(fx.get("hp", 0.0))
+	out["speed"] = float(out["speed"]) * float(fx.get("speed", 1.0))
+	out["ability_cd"] = float(out["ability_cd"]) * float(fx.get("ability_cd", 1.0))
+	out["power"] = float(out["power"]) + float(fx.get("power", 0.0))
+	out["armor"] = float(out["armor"]) + float(fx.get("armor", 0.0))
+	out["regen"] = float(out["regen"]) + float(fx.get("regen", 0.0))
+	out["magnet"] = float(out["magnet"]) * float(fx.get("magnet", 1.0))
+	out["xp"] = float(out["xp"]) * float(fx.get("xp", 1.0))
+	out["dodge"] = float(out["dodge"]) + float(fx.get("dodge", 0.0))
+	return out
 
 
 ## Усиление модуля из Лаборатории (множитель эффекта) и предустановка.
@@ -801,7 +894,7 @@ static func module_boost(id: String) -> float:
 	for pair in [["boost1", 0.25], ["boost2", 0.25], ["tune", 0.15], ["boost3", 0.25], ["boost4", 0.25], ["boost5", 0.5]]:
 		if has_node(k, pair[0]):
 			b += pair[1]
-	return b
+	return b + float(_fx(k).get("boost", 0.0))
 
 
 static func module_preinstalled(id: String) -> bool:

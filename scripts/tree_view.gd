@@ -18,13 +18,21 @@ var cell := Vector2(206, 82)
 var btn := Vector2(190, 62)
 
 
-func setup(key: String, color: Color, narrow := false) -> void:
+func setup(key: String, color: Color, narrow := false, max_w := 0.0) -> void:
 	tree_key = key
 	accent = color
 	compact = narrow
 	if narrow:
 		cell = Vector2(150, 82)
 		btn = Vector2(142, 62)
+	# Дерево всегда помещается по ширине: клетки сужаются под экран
+	if max_w > 0.0:
+		var cols := 4.0
+		for n in Meta.tree_nodes(key):
+			cols = maxf(cols, float(n["pos"].x) + 1.0)
+		var gap := cell.x - btn.x
+		cell.x = minf(cell.x, (max_w + gap) / cols)
+		btn.x = cell.x - gap
 	for c in get_children():
 		c.queue_free()
 	_buttons.clear()
@@ -159,6 +167,9 @@ func refresh() -> void:
 				line2 = "нужны верхние"
 			"tier":
 				line2 = "здание ур. %d" % int(n["tier"])
+			"excl":
+				border = Color(0.3, 0.25, 0.35)
+				line2 = "✗ выбран другой путь"
 			"cond":
 				border = Color(0.75, 0.4, 0.9)
 				line2 = "⊘ " + Meta.cond_short(Meta.first_unmet(n.get("conds", []), hero), hero)
@@ -173,10 +184,26 @@ func refresh() -> void:
 
 
 func _draw() -> void:
+	# Разделитель личной ветви (ряд 7 и ниже)
+	var has_path := false
+	var row := 0.0
+	for n in _nodes:
+		if n.has("excl"):
+			has_path = true
+			row = n["pos"].y
+	if has_path:
+		var y := row * cell.y - (cell.y - btn.y) / 2.0 - 1.0
+		draw_line(Vector2(0, y), Vector2(size.x, y), Color(accent, 0.45), 2.0)
+		var font := get_theme_default_font()
+		var t := "ЛИЧНЫЙ ПУТЬ — выберите один из двух"
+		var fs := 13
+		var w := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		draw_rect(Rect2(Vector2(size.x / 2.0 - w / 2.0 - 8, y - 10), Vector2(w + 16, 20)), Color(0.05, 0.03, 0.1, 1.0))
+		draw_string(font, Vector2(size.x / 2.0 - w / 2.0, y + 5), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(accent, 0.95))
 	# Связи: от нижнего края «родителя» к верхнему краю узла, ступенькой
 	for n in _nodes:
 		var to: Vector2 = _npos(n) + Vector2(btn.x / 2.0, 0)
-		for r in n["req"]:
+		for r in n["req"] + n.get("req_any", []):
 			for m in _nodes:
 				if m["id"] == r:
 					var from: Vector2 = _npos(m) + Vector2(btn.x / 2.0, btn.y)

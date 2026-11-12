@@ -18,9 +18,9 @@ const KINDS := ["house0", "house1", "house2", "tower0", "wall0", "gate0", "stall
 	"lantern0", "lamp0", "lamp1", "sign0", "sign1", "banner0", "banner1", "pillar0", "pillar1",
 	"obelisk0", "obelisk1", "obelisk2", "manor0", "keep0", "crate0", "crate1", "barrel0", "barrel1", "cart0", "fence0",
 	"wreck0", "wreck1", "rock0", "rock1", "crystal0", "crystal1", "crystal_big0", "crystal_big1",
-	"pine0", "pine1", "tree0", "tree1", "tree2", "bush0", "bush1", "mushroom0", "mushroom1"]
+	"pine0", "pine1", "pine2", "tree0", "tree1", "tree2", "tree3", "bush0", "bush1", "mushroom0", "mushroom1"]
 ## Деревья, кусты и грибы рисуются пиксель-артом (спрайты), а не 3D-моделями.
-const PIXEL_KINDS := ["pine0", "pine1", "pine2", "tree0", "tree1", "tree2", "tree3", "bush0", "bush1", "mushroom0", "mushroom1"]
+const PIXEL_KINDS: Array = []
 
 
 static func supports(kind: String) -> bool:
@@ -116,6 +116,8 @@ static func _add(root: Node3D, mesh: Mesh, m: Material, pos: Vector3, rot := Vec
 
 ## Построить модель. Возвращает узел, основание в (0,0,0), фасад смотрит на камеру (+Z).
 static func build(kind: String, rng: RandomNumberGenerator) -> Node3D:
+	if kind in VOXEL_KINDS:
+		return _vox_build(kind, rng)
 	var root := Node3D.new()
 	var stone := mat(Color(0.34, 0.31, 0.4), "brick", 2.2)
 	var dark := mat(Color(0.2, 0.19, 0.26), "panel", 2.0)
@@ -333,8 +335,10 @@ static func shapes(kind: String) -> Array:
 			return [["c", 0.0, 0.0, 0.32]]
 		"pine1":
 			return [["c", 0.0, 0.0, 0.26]]
-		"tree0", "tree1", "tree2":
+		"tree0", "tree1", "tree2", "tree3":
 			return [["c", 0.0, 0.0, 0.18]]
+		"pine2":
+			return [["c", 0.0, 0.0, 0.26]]
 	return []
 
 
@@ -478,3 +482,179 @@ static func _keep3d(root: Node3D, rng: RandomNumberGenerator) -> void:
 
 static func Props3D_dark_wood() -> StandardMaterial3D:
 	return mat(Color(0.26, 0.18, 0.13), "wood", 3.0)
+
+
+# ---------- Объёмные пиксельные деревья (воксели) ----------
+# Деревья, кусты и грибы собраны из кубиков-вокселей: объём и тени настоящие,
+# а вид — пиксельный. Видимые грани каждого варианта сливаются в один меш (кэш),
+# поэтому лес из сотни деревьев — это сотня копий нескольких мешей.
+
+const VOXEL_KINDS := ["pine0", "pine1", "pine2", "tree0", "tree1", "tree2", "tree3", "bush0", "bush1", "mushroom0", "mushroom1"]
+const VOX := 0.09
+static var _vox_cache := {}
+static var _vox_mat: StandardMaterial3D
+static var _vox_glow: StandardMaterial3D
+
+
+static func _vox_build(kind: String, rng: RandomNumberGenerator) -> Node3D:
+	var variant := rng.randi_range(0, 2)
+	var key := "%s_%d" % [kind, variant]
+	if not _vox_cache.has(key):
+		var vr := RandomNumberGenerator.new()
+		vr.seed = hash(key)
+		_vox_cache[key] = _vox_mesh(kind, vr)
+	var root := Node3D.new()
+	var mi := MeshInstance3D.new()
+	mi.mesh = _vox_cache[key]
+	root.add_child(mi)
+	var sc := rng.randf_range(0.9, 1.12) * (1.3 if kind.begins_with("tree") else (1.2 if kind.begins_with("pine") else 1.0))
+	root.scale = Vector3(sc, sc, sc)
+	root.rotation.y = rng.randf_range(-0.5, 0.5)
+	return root
+
+
+static func _vox_mesh(kind: String, rng: RandomNumberGenerator) -> ArrayMesh:
+	var g := {}      # Vector3i -> Color
+	var glow := {}   # Vector3i -> Color
+	var leaf := Color(0.16, 0.36, 0.26)
+	var bark := Color(0.32, 0.22, 0.17)
+	match kind:
+		"pine0", "pine1", "pine2":
+			var big := kind == "pine0"
+			var h_tr := 4 if big else 3
+			for y in h_tr:
+				for x in [0, 1]:
+					for z in [0, 1]:
+						g[Vector3i(x, y, z)] = bark.darkened(rng.randf() * 0.2)
+			var layers := 5 if big else 4
+			var base_r := 6.5 if big else 5.0
+			if kind == "pine2":
+				leaf = Color(0.22, 0.2, 0.42)
+			for l in layers:
+				var r := base_r - l * (base_r - 1.5) / float(layers)
+				var y0 := h_tr - 1 + l * 3
+				for dy in 3:
+					var rr := r * (1.0 - dy * 0.28)
+					for x in range(-7, 9):
+						for z in range(-7, 9):
+							var d := Vector2(x - 0.5, z - 0.5).length()
+							if d <= rr and rng.randf() > 0.06:
+								var c := leaf.lightened(0.12 * dy + rng.randf() * 0.08).darkened(0.25 if d > rr - 1.0 and dy == 0 else 0.0)
+								g[Vector3i(x, y0 + dy, z)] = c
+				# Неоновые огоньки на ветках
+				if kind != "pine0":
+					for k in 2:
+						var a := rng.randf() * TAU
+						var p := Vector3i(int(round(cos(a) * r * 0.8 + 0.5)), y0, int(round(sin(a) * r * 0.8 + 0.5)))
+						glow[p] = Color(0.3, 0.95, 1.0) if kind == "pine1" else Color(0.75, 0.55, 1.0)
+			var top := h_tr - 1 + layers * 3
+			for y in 3:
+				g[Vector3i(0, top + y, 0)] = leaf.lightened(0.2)
+			if kind != "pine0":
+				glow[Vector3i(0, top + 3, 0)] = Color(0.3, 0.95, 1.0) if kind == "pine1" else Color(0.75, 0.55, 1.0)
+		"tree0", "tree1", "tree2", "tree3":
+			var col: Color = {"tree0": Color(0.2, 0.42, 0.24), "tree1": Color(0.42, 0.16, 0.36), "tree2": Color(0.14, 0.34, 0.4), "tree3": Color(0.16, 0.3, 0.42)}[kind]
+			var neon: Color = {"tree0": Color(0.45, 1.0, 0.55), "tree1": Color(1.0, 0.35, 0.8), "tree2": Color(0.3, 0.95, 1.0), "tree3": Color(0.3, 0.95, 1.0)}[kind]
+			var big := kind == "tree3"
+			var th := 8 if big else 7
+			for y in th:
+				for x in [0, 1]:
+					for z in [0, 1]:
+						g[Vector3i(x, y, z)] = bark.darkened(rng.randf() * 0.25)
+			# Корни и ветви
+			for d in [Vector3i(-1, 0, 0), Vector3i(2, 0, 1), Vector3i(0, 0, 2), Vector3i(1, 0, -1)]:
+				g[d] = bark.darkened(0.15)
+			for k in 3:
+				var a := rng.randf() * TAU
+				for s in 3:
+					g[Vector3i(int(round(cos(a) * s)), th - 2 + s, int(round(sin(a) * s)))] = bark
+			# Крона: несколько шаров
+			var blobs := [[Vector3(0.5, th + 2.5, 0.5), 4.3 if big else 3.7]]
+			for k in (4 if big else 3):
+				var a := rng.randf() * TAU
+				blobs.append([Vector3(0.5 + cos(a) * 2.6, th + 1.5 + rng.randf() * 2.0, 0.5 + sin(a) * 2.6), rng.randf_range(2.2, 3.0)])
+			for b in blobs:
+				var c0: Vector3 = b[0]
+				var r: float = b[1]
+				for x in range(int(c0.x - r) - 1, int(c0.x + r) + 2):
+					for y in range(int(c0.y - r * 0.8) - 1, int(c0.y + r * 0.8) + 2):
+						for z in range(int(c0.z - r) - 1, int(c0.z + r) + 2):
+							var dv := Vector3(x, (y - c0.y) / 0.8 + c0.y, z) - c0
+							if dv.length() <= r and rng.randf() > 0.05:
+								var shade := clampf((y - (c0.y - r)) / (2.0 * r), 0.0, 1.0)
+								g[Vector3i(x, y, z)] = col.darkened(0.3 * (1.0 - shade)).lightened(rng.randf() * 0.07)
+								if kind != "tree0" and dv.length() > r - 1.0 and rng.randf() < 0.07:
+									glow[Vector3i(x, y, z)] = neon
+								elif kind == "tree0" and dv.length() > r - 1.0 and rng.randf() < 0.012:
+									glow[Vector3i(x, y, z)] = Color(1.0, 0.85, 0.4)
+		"bush0", "bush1":
+			var c0 := Vector3(0.5, 1.6, 0.5)
+			var r := 2.6 if kind == "bush0" else 2.1
+			for x in range(-3, 5):
+				for y in range(0, 4):
+					for z in range(-3, 5):
+						var dv := Vector3(x, (y - c0.y) / 0.7 + c0.y, z) - c0
+						if dv.length() <= r and rng.randf() > 0.08:
+							g[Vector3i(x, y, z)] = leaf.lightened(0.05 * y + rng.randf() * 0.06)
+							if kind == "bush1" and dv.length() > r - 1.0 and rng.randf() < 0.12:
+								glow[Vector3i(x, y, z)] = Color(1.0, 0.35, 0.8)
+		"mushroom0", "mushroom1":
+			var cap := Color(0.8, 0.74, 0.6) if kind == "mushroom0" else Color(0.55, 0.16, 0.45)
+			for y in 3:
+				g[Vector3i(0, y, 0)] = Color(0.86, 0.82, 0.74)
+			for x in range(-2, 3):
+				for z in range(-2, 3):
+					if absi(x) + absi(z) <= 3:
+						g[Vector3i(x, 3, z)] = cap
+						if absi(x) + absi(z) <= 1:
+							g[Vector3i(x, 4, z)] = cap.lightened(0.1)
+						if kind == "mushroom1" and (x + z) % 2 == 0:
+							glow[Vector3i(x, 3, z)] = Color(1.0, 0.4, 0.85)
+	for p in glow:
+		g.erase(p)
+	var mesh := ArrayMesh.new()
+	_vox_surface(mesh, g, glow)
+	if _vox_mat == null:
+		_vox_mat = StandardMaterial3D.new()
+		_vox_mat.vertex_color_use_as_albedo = true
+		_vox_mat.roughness = 0.9
+		_vox_glow = StandardMaterial3D.new()
+		_vox_glow.vertex_color_use_as_albedo = true
+		_vox_glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_vox_glow.albedo_color = Color(2.2, 2.2, 2.2)
+	mesh.surface_set_material(0, _vox_mat)
+	if mesh.get_surface_count() > 1:
+		mesh.surface_set_material(1, _vox_glow)
+	return mesh
+
+
+const _FACES := [
+	[Vector3i(1, 0, 0), [Vector3(1, 0, 0), Vector3(1, 1, 0), Vector3(1, 1, 1), Vector3(1, 0, 1)], 0.82],
+	[Vector3i(-1, 0, 0), [Vector3(0, 0, 1), Vector3(0, 1, 1), Vector3(0, 1, 0), Vector3(0, 0, 0)], 0.82],
+	[Vector3i(0, 1, 0), [Vector3(0, 1, 0), Vector3(0, 1, 1), Vector3(1, 1, 1), Vector3(1, 1, 0)], 1.0],
+	[Vector3i(0, -1, 0), [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 1), Vector3(0, 0, 1)], 0.6],
+	[Vector3i(0, 0, 1), [Vector3(1, 0, 1), Vector3(1, 1, 1), Vector3(0, 1, 1), Vector3(0, 0, 1)], 0.92],
+	[Vector3i(0, 0, -1), [Vector3(0, 0, 0), Vector3(0, 1, 0), Vector3(1, 1, 0), Vector3(1, 0, 0)], 0.92],
+]
+
+
+static func _vox_surface(mesh: ArrayMesh, g: Dictionary, glow: Dictionary) -> void:
+	for pass_i in 2:
+		var src: Dictionary = g if pass_i == 0 else glow
+		if src.is_empty():
+			continue
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		for p in src:
+			var c: Color = src[p]
+			for f in _FACES:
+				var nb: Vector3i = p + f[0]
+				if g.has(nb) or glow.has(nb):
+					continue
+				var q: Array = f[1]
+				var base := Vector3(p.x - 0.5, p.y, p.z - 0.5) * VOX
+				st.set_normal(Vector3(f[0]))
+				st.set_color(c * float(f[2]) if pass_i == 0 else c)
+				for idx in [0, 1, 2, 0, 2, 3]:
+					st.add_vertex(base + (q[idx] as Vector3) * VOX)
+		st.commit(mesh)

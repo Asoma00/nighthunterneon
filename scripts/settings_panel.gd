@@ -102,9 +102,10 @@ func _build() -> void:
 	var title := _label("НАСТРОЙКИ", 44, Color.WHITE, Color(MAGENTA, 0.8))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
-	var tabs := HBoxContainer.new()
-	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
-	tabs.add_theme_constant_override("separation", 12)
+	var tabs := HFlowContainer.new()
+	tabs.alignment = FlowContainer.ALIGNMENT_CENTER
+	tabs.add_theme_constant_override("h_separation", 12)
+	tabs.add_theme_constant_override("v_separation", 8)
 	for t in TABS:
 		var on: bool = t[0] == tab
 		var tb := _button(t[1], CYAN if on else Color(0.55, 0.55, 0.7), 190)
@@ -125,7 +126,7 @@ func _build() -> void:
 	panel.add_theme_stylebox_override("panel", pb)
 	v.add_child(panel)
 	var grid := GridContainer.new()
-	grid.columns = 2 if Settings.is_portrait() else 4   # «название — значение», на вертикальном экране — одна пара в ряд
+	grid.columns = 2 if (Settings.is_portrait() or get_viewport().get_visible_rect().size.x < 1180.0) else 4   # «название — значение», на вертикальном экране — одна пара в ряд
 	grid.add_theme_constant_override("h_separation", 18)
 	grid.add_theme_constant_override("v_separation", 12)
 	panel.add_child(grid)

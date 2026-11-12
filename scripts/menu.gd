@@ -48,11 +48,12 @@ func _ready() -> void:
 	Sound.set_track("menu")
 	# Номер сборки — в левом нижнем углу; рядом — состояние автообновления
 	var ver := _label("", 14, Color(0.6, 0.6, 0.75))
-	ver.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	ver.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	ver.offset_left = 12
 	ver.offset_top = -30
-	ver.offset_right = 900
+	ver.offset_right = -12
 	ver.offset_bottom = -8
+	ver.clip_text = true
 	ver.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	add_child(ver)
 	_ver_label = ver

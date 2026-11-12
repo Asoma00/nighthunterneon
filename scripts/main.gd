@@ -1459,6 +1459,9 @@ func _separate_enemies() -> void:
 
 func on_enemy_killed(enemy: Node2D) -> void:
 	kills += 1
+	# Часть оружия спасённого героя: 1 из 1000
+	if net_mode != "client" and rng.randf() < 0.001:
+		spawn_part(enemy.position)
 	# Задания и мастерство: кем и чем убит враг, серия убийств, добыча материалов
 	var src: String = str(enemy.get("last_src")) if enemy.get("last_src") != null else ""
 	var wm: Dictionary = {}
@@ -1668,7 +1671,7 @@ func _drop_gem(pos: Vector2, value: int, heal: bool) -> void:
 # ---------- Точки интереса: алтари ----------
 
 var pois: Array = []          # алтари на поле (и алтари мобов — они враги)
-var _poi_t := 35.0
+var _poi_t := 60.0
 
 
 func pick_enemy_kind() -> String:
@@ -1798,11 +1801,19 @@ func _handle_quest_pois(delta: float) -> void:
 	var have := {"cache": 0, "puzzle": 0, "beacons": 0}
 	for p in pois:
 		if is_instance_valid(p) and p.get_script() == QuestPoiScript:
-			have[p.kind] += 1
+			have[p.kind] = int(have.get(p.kind, 0)) + 1
+	# Пленник-герой: очень редко (1 из 100 на каждый бросок)
+	if int(have.get("captive", 0)) == 0 and rng.randf() < 0.01:
+		var cand := Meta.rescue_candidates()
+		if not cand.is_empty():
+			_qpoi_t = rng.randf_range(80.0, 130.0)
+			_spawn_qpoi("captive", view_center() + Vector2.RIGHT.rotated(rng.randf() * TAU) * rng.randf_range(800.0, 1100.0), str(cand[rng.randi() % cand.size()]))
+			Fx.text_pop(self, player.position + Vector2(0, -140), "Где-то рядом зовут на помощь…", Pixel.hdr(Color(1.0, 0.85, 0.5), 1.4), 22)
+			return
 	# Тайники — редкость: даже по заданию появляются нечасто и без всякого шума
 	# Загадки и маяки — редкость: без задания почти не встречаются
-	var weights := {"cache": 0.7 if quest_wants("caches") else 0.15, "puzzle": 1.0 if quest_wants("puzzles") else 0.12,
-		"beacons": 1.0 if quest_wants("beacons") else 0.12}
+	var weights := {"cache": 0.7 if quest_wants("caches") else 0.15, "puzzle": 0.6 if quest_wants("puzzles") else 0.05,
+		"beacons": 0.6 if quest_wants("beacons") else 0.06}
 	var cap := {"cache": 1, "puzzle": 1, "beacons": 1}
 	var sum := 0.0
 	for k in weights:
@@ -1834,6 +1845,29 @@ func _handle_quest_pois(delta: float) -> void:
 	pois.append(q)
 
 
+## Место задания особого вида (пленник, часть оружия) — hid: чей герой.
+func _spawn_qpoi(kind: String, pos: Vector2, hid: String) -> void:
+	if net_mode == "client":
+		return
+	if ground_node != null:
+		pos = ground_node.push_out(pos, 60.0, 4)
+	var q := QuestPoiScript.new()
+	q.main = self
+	q.kind = kind
+	q.hid = hid
+	q.position = pos
+	enemies_node.get_parent().add_child(q)
+	pois.append(q)
+
+
+## Часть оружия спасённого героя (шанс задаёт вызывающий).
+func spawn_part(pos: Vector2) -> void:
+	var hunt := Meta.parts_hunt()
+	if hunt.is_empty():
+		return
+	_spawn_qpoi("part", pos, str(hunt[rng.randi() % hunt.size()]))
+
+
 func _handle_pois(delta: float) -> void:
 	pois = pois.filter(func(x): return is_instance_valid(x) and not (x.get("dead") == true))
 	if net_mode != "client":
@@ -1841,7 +1875,7 @@ func _handle_pois(delta: float) -> void:
 	_poi_t -= delta
 	if _poi_t > 0.0 or pois.size() >= 2 or boss != null:
 		return
-	_poi_t = rng.randf_range(40.0, 65.0)
+	_poi_t = rng.randf_range(80.0, 130.0)
 	# Место: в стороне от героя, но недалеко, и не внутри построек
 	var c := view_center()
 	var pos := c
@@ -2230,6 +2264,8 @@ func _build_choices(player: Node2D) -> Array:
 		if lvl < Data.MAX_WEAPON_LEVEL:
 			var w: Dictionary = Data.WEAPONS[id]
 			var evo_p: String = Data.PASSIVES[w["evo_with"]]["name"]
+			if lvl == 0 and not Meta.weapon_available(id):
+				continue   # оружие ещё не собрано из частей
 			if lvl == 0:
 				# Первое появление: что это за оружие, его характеристики и эффекты
 				pool.append({"type": "weapon", "id": id, "new": true, "level": 1,
