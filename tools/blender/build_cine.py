@@ -134,9 +134,9 @@ def sphere(name, r, mat, seg=24, rings=16, loc=(0, 0, 0), scl=(1, 1, 1), rot=(0,
     return obj_from_bm(name, bm, mat)
 
 
-def cyl(name, r1, r2, h, mat, seg=20, loc=(0, 0, 0), rot=(0, 0, 0), scl=(1, 1, 1)):
+def cyl(name, r1, r2, h, mat, seg=20, loc=(0, 0, 0), rot=(0, 0, 0), scl=(1, 1, 1), caps=True):
     bm = bmesh.new()
-    bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=seg, radius1=r1, radius2=r2, depth=h)
+    bmesh.ops.create_cone(bm, cap_ends=caps, cap_tris=False, segments=seg, radius1=r1, radius2=r2, depth=h)
     mt = Matrix.Translation(loc) @ Euler(rot).to_matrix().to_4x4() @ Matrix.Diagonal((scl[0], scl[1], scl[2], 1))
     bmesh.ops.transform(bm, matrix=mt, verts=bm.verts)
     return obj_from_bm(name, bm, mat)
@@ -298,10 +298,10 @@ def build_body():
         return len(V) - 1
 
     belly = 1.25 if S.get("belly") else 1.0
-    p0 = v((0, 0, 0.92), tw * 1.0, td * 1.15)
-    p1 = v((0, 0, 1.05), tw * 0.84 * belly, td * 0.98 * belly)
-    p2 = v((0, 0, 1.24), tw * 1.02, td * 1.12)
-    p3 = v((0, 0, 1.40), tw * 0.98, td * 0.98)
+    p0 = v((0, 0, 0.92), tw * 0.95, td * 1.1)
+    p1 = v((0, 0, 1.06), tw * 0.76 * belly, td * 0.88 * belly)
+    p2 = v((0, 0, 1.27), tw * 1.06, td * 1.12)
+    p3 = v((0, 0, 1.41), tw * 0.96, td * 0.92)
     p4 = v((0, 0, 1.50), 0.058, 0.06)
     p5 = v((0, 0, 1.60), 0.052, 0.055)
     E += [(p0, p1), (p1, p2), (p2, p3), (p3, p4), (p4, p5)]
@@ -373,7 +373,7 @@ def build_body():
 
 # ---------- Голова ----------
 
-HC = Vector((0, 0, 1.72))   # центр головы
+HC = Vector((0, 0, 1.735))   # центр головы
 
 
 def head_mesh(hr, mob=False):
@@ -783,7 +783,7 @@ def build_clothes():
     if back in ("robe", "coat"):
         # Полы одежды: юбка-конус, у плаща — разрезанная спереди
         ln = 0.82 if back == "robe" else 0.5
-        sk = cyl("skirt", tw * 1.02, tw * (1.6 if back == "robe" else 1.35), ln, "back" if back == "robe" else "main", 32, (0, 0, 0.98 - ln * 0.5))
+        sk = cyl("skirt", tw * 1.0, tw * (1.55 if back == "robe" else 1.25), ln, "back" if back == "robe" else "main", 32, (0, 0, 0.98 - ln * 0.5), caps=False)
         if back == "coat":
             bm = bmesh.new()
             bm.from_mesh(sk.data)
@@ -795,7 +795,8 @@ def build_clothes():
         apply_mods(sk)
         subsurf(sk, 1)
         to_bone(sk, "hips")
-        to_bone(torus("hem", tw * (1.6 if back == "robe" else 1.35), 0.012, "neon2", (0, 0, 0.98 - ln + 0.01), (0, 0, 0)), "hips")
+        if back == "robe":
+            to_bone(torus("hem", tw * 1.55, 0.012, "neon2", (0, 0, 0.98 - ln + 0.01), (0, 0, 0)), "hips")
     if back in ("cloak", "cape", "cape_short", "robe"):
         ln = {"cloak": 1.15, "cape": 1.2, "cape_short": 0.6, "robe": 1.0}[back]
         bm = bmesh.new()
@@ -919,7 +920,7 @@ def build(key):
     S.setdefault("hunch", 0.0)
     build_armature()
     build_body()
-    hr = 0.118 if not S.get("mob") else 0.13
+    hr = 0.132 if not S.get("mob") else 0.14
     face = S.get("face", "human")
     head = S.get("head", "plain")
     if head == "hood":
@@ -974,6 +975,15 @@ def render_preview(key):
         d = Vector((0, 0, 1.1)) - Vector(loc)
         L.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
     sc.render.filepath = os.path.join(OUT, "preview", key + ".png")
+    bpy.ops.render.render(write_still=True)
+    # Крупный план лица в три четверти
+    cam.location = (0.32, -0.62, 1.76)
+    d = Vector((0, 0, 1.735)) - cam.location
+    cam.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
+    cam.data.lens = 60
+    sc.render.resolution_x = 360
+    sc.render.resolution_y = 360
+    sc.render.filepath = os.path.join(OUT, "preview", key + "_face.png")
     bpy.ops.render.render(write_still=True)
 
 
