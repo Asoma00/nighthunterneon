@@ -516,6 +516,17 @@ func _process_body(delta: float) -> void:
 		if main.coop and not main.game_over:
 			_anim_t += delta
 			_downed_tick(delta)
+		elif _death_t >= 0.0:
+			# Анимация гибели: оседает, падает и тает
+			_death_t += delta
+			if _death_t < 1.2 and _frames["base"].size() >= Pixel.HERO_FRAMES:
+				var f := Pixel.hero_frame_k("death", _death_t / 1.0)
+				_body.texture = _frames["base"][f]
+				_emit.texture = _frames["emit"][f]
+			else:
+				_body.visible = false
+				_emit.visible = false
+				_death_t = -1.0
 		return
 	if input != null:
 		input.poll()
@@ -1101,7 +1112,7 @@ func combo(weapon: String, pos: Vector2) -> void:
 # ================= Активные способности =================
 
 func _use_ability() -> void:
-	_attack_t = ATTACK_T
+	_cast_t = CAST_T
 	ability_left = ability_cd * cooldown_mult
 	Sound.play("ability", -4.0, 1.0 + randf_range(-0.05, 0.05))
 	main.screen_flash(0.12)
@@ -1223,11 +1234,17 @@ func _animate(delta: float) -> void:
 	_anim_t += delta
 	var f: int
 	_attack_t = maxf(0.0, _attack_t - delta)
+	_cast_t = maxf(0.0, _cast_t - delta)
 	_hurt_t = maxf(0.0, _hurt_t - delta)
-	if _hurt_t > 0.0 and _frames["base"].size() >= 16:
-		f = 14 + int((0.3 - _hurt_t) * 10.0) % 2
-	elif _attack_t > 0.0 and _frames["base"].size() >= 16:
-		f = 10 + clampi(int((1.0 - _attack_t / ATTACK_T) * 4.0), 0, 3)
+	var rich: bool = _frames["base"].size() >= Pixel.HERO_FRAMES
+	if rich and _hurt_t > 0.0:
+		f = Pixel.hero_frame_k("hurt", 1.0 - _hurt_t / 0.3)
+	elif rich and _cast_t > 0.0:
+		f = Pixel.hero_frame_k("cast", 1.0 - _cast_t / CAST_T)
+	elif rich and _attack_t > 0.0:
+		f = Pixel.hero_frame_k("attack", 1.0 - _attack_t / ATTACK_T)
+	elif rich and _dash_t > 0.0:
+		f = Pixel.hero_frame(_frames, "dash", _anim_t)
 	elif moving:
 		f = Pixel.hero_frame(_frames, "run", _anim_t)
 		_dust_t -= delta
@@ -1427,7 +1444,8 @@ func take_damage(amount: float) -> void:
 			_go_down()
 			return
 		_dead = true
-		for n in [_body, _emit, _blades, _aura_ring, _aura_glow, _overlay]:
+		_death_t = 0.0
+		for n in [_blades, _aura_ring, _aura_glow, _overlay]:
 			n.visible = false
 		for d in _drones:
 			d.visible = false
@@ -1646,9 +1664,12 @@ func _update_weapons(delta: float) -> void:
 
 
 ## Анимация атаки: замах — удар — доводка — возврат.
-const ATTACK_T := 0.26
+const ATTACK_T := 0.28
+const CAST_T := 0.36
 var _attack_t := 0.0
+var _cast_t := 0.0
 var _hurt_t := 0.0
+var _death_t := -1.0
 
 
 func _fire_once(id: String, s: Dictionary) -> void:

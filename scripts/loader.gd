@@ -242,6 +242,9 @@ func _jobs_for(path: String) -> Array:
 	var keys: Array = []
 	if path == "res://main.tscn":
 		for k in Pixel.SPECS:
+			# Героев рисуем только тех, кто идёт в бой (каждый — 35 кадров 48×60)
+			if k in Pixel.HERO_KEYS and k != str(Data.CHARACTERS.get(Data.selected_character, {}).get("sprite", "")):
+				continue
 			keys.append(k)
 		for id in Data.WEAPONS:
 			jobs.append(Pixel.icon.bind(id))
