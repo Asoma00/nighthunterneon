@@ -10,6 +10,7 @@ const STAND := 1.45
 const OUT := Color(0.04, 0.02, 0.08)
 
 static var _cache := {}
+const Icons := preload("res://scripts/icons.gd")
 
 
 # ============ Примитивы ============
@@ -249,9 +250,11 @@ const SPECS := {
 
 
 ## Возвращает {"base": [ImageTexture], "emit": [...], "flash": [...], "size": Vector2}
-static func frames(key: String) -> Dictionary:
-	if _cache.has(key):
-		return _cache[key]
+static func frames(key: String, cache_key := "") -> Dictionary:
+	if cache_key == "":
+		cache_key = key
+	if _cache.has(cache_key):
+		return _cache[cache_key]
 	var spec: Array = SPECS[key] if SPECS.has(key) else [18, 24, 8, true]
 	var w: int = spec[0]
 	var h: int = spec[1]
@@ -276,8 +279,178 @@ static func frames(key: String) -> Dictionary:
 		result["base"].append(tex(base))
 		result["emit"].append(tex(emit))
 		result["flash"].append(tex(silhouette(base)))
-	_cache[key] = result
+	_cache[cache_key] = result
 	return result
+
+
+# ---------- Модули на герое ----------
+# Модули не кружат вокруг, а становятся частью персонажа: кибер-сердце светится
+# в груди, неоновые сапоги — на ногах, прицел и охладитель крепятся к оружию.
+# Спрайт героя перерисовывается под набор модулей (кэш по набору и «ступени»).
+
+static var _mods := {}
+static var _anc := {}
+
+
+## Кадры героя с модулями: mods = {id: ступень 1..2}.
+static func hero_frames(key: String, mods: Dictionary) -> Dictionary:
+	if mods.is_empty():
+		return frames(key)
+	var ids: Array = mods.keys()
+	ids.sort()
+	var sig := ""
+	for id in ids:
+		sig += "%s%d," % [id, int(mods[id])]
+	var ck := key + "|m:" + sig
+	if _cache.has(ck):
+		return _cache[ck]
+	_mods = mods
+	var r := frames(key, ck)
+	_mods = {}
+	return r
+
+
+## Конец оружия в кадре (логические координаты рига).
+static func _weapon_tip(weapon: String, h: Vector2, dir: Vector2, st: String) -> Vector2:
+	var at := st == "attack"
+	match weapon:
+		"staff", "orbstaff":
+			return h + dir * 12.0 if at else Vector2(h.x + 1, h.y - 13)
+		"scythe":
+			return h + dir * 12.0 if at else Vector2(h.x + 1, h.y - 14)
+		"katana":
+			return h + dir * 13.0 if at else Vector2(h.x + 3, h.y - 10)
+		"blade":
+			return h + dir * 9.0 if at else Vector2(h.x + 3, h.y - 10)
+		"hammer":
+			return h + (dir if at else Vector2(0.35, -1).normalized()) * 10.0
+		"mace":
+			return h + (dir if at else Vector2(0.2, -1).normalized()) * 9.0
+		"wand":
+			return h + (dir if at else Vector2(0.4, -1).normalized()) * 6.0
+		"bow":
+			return h + Vector2(2, -8)
+		"flask":
+			return h + (dir if at else Vector2(0.3, 1).normalized()) * 3.0
+	return h + dir * 6.0
+
+
+static func _paint_mods(b: Image, e: Image, L: Dictionary, f: int) -> void:
+	if _anc.is_empty():
+		return
+	var cx: float = _anc["cx"]
+	var sh: float = _anc["sh"]
+	var hip: float = _anc["hip"]
+	var tw: float = _anc["tw"]
+	var hand: Vector2 = _anc["hand"]
+	var tip: Vector2 = _anc["tip"]
+	var hx: float = _anc["hx"]
+	var hy: float = _anc["hy"]
+	var ff: Vector2 = _anc["ff"]
+	var fb: Vector2 = _anc["fb"]
+	var sway: float = _anc["sway"]
+	var st: String = _anc["st"]
+	var wd := (tip - hand).normalized() if tip.distance_to(hand) > 0.5 else Vector2.UP
+	var side := Vector2(-wd.y, wd.x)
+	var pulse := f % 4 < 2
+	for id in _mods:
+		var t2: bool = int(_mods[id]) >= 2
+		match id:
+			"hp":
+				# Кибер-сердце в груди
+				sell(b, cx + 0.5, sh + 4.5, 2.2, 2.0, Color(0.3, 0.32, 0.4))
+				sell(e, cx + 0.5, sh + 4.5, 1.3 if pulse else 1.0, 1.2 if pulse else 0.9, Color(1.0, 0.2, 0.35))
+				if t2:
+					sline(e, int(cx - tw + 1), int(sh + 4), int(cx - 1), int(sh + 4), Color(0.4, 1.0, 1.0, 0.8))
+			"speed":
+				# Неоновые подошвы и крылышко у щиколотки
+				for ft in [ff, fb]:
+					sline(e, int(ft.x) - 1, int(ft.y) + 1, int(ft.x) + 2, int(ft.y) + 1, Color(1.0, 0.3, 0.8))
+				spoly(b, PackedVector2Array([ff + Vector2(-1, -3), ff + Vector2(-4, -5), ff + Vector2(-3, -2)]), Color(0.85, 0.92, 1.0))
+				if st == "run" or t2:
+					spx(e, int(fb.x) - 3, int(fb.y), Color(0.4, 0.95, 1.0, 0.7))
+					spx(e, int(fb.x) - 5, int(fb.y), Color(0.4, 0.95, 1.0, 0.45))
+			"magnet":
+				# Гравимагнит-ранец за спиной
+				var bx := cx - tw - 1.5
+				srect(b, int(bx - 1), int(sh + 1), 3, 5, Color(0.85, 0.16, 0.24))
+				srect(b, int(bx - 1), int(sh + 5), 1, 2, Color(0.85, 0.88, 0.95))
+				srect(b, int(bx + 1), int(sh + 5), 1, 2, Color(0.85, 0.88, 0.95))
+				var ph := f * 0.7
+				for i in (3 if t2 else 2):
+					spx(e, int(bx - 2 - i + sin(ph + i) * 0.6), int(sh + 8 + i), Color(0.75, 0.45, 1.0, 0.85 - i * 0.2))
+			"regen":
+				# Перевязь с капсулами нано-лечения
+				sline(b, int(cx - tw + 1), int(sh + 1), int(cx + tw - 1), int(hip - 3), Color(0.25, 0.3, 0.28))
+				for i in (3 if t2 else 2):
+					var p := Vector2(cx - tw + 1, sh + 1).lerp(Vector2(cx + tw - 1, hip - 3), 0.25 + i * 0.3)
+					spx(e, int(p.x), int(p.y), Color(0.35, 1.0, 0.5))
+			"armor":
+				# Рунные наплечники
+				sell(b, cx + tw - 1.0, sh - 0.2, 3.4, 2.2, Color(0.58, 0.64, 0.76))
+				srect(b, int(cx + tw - 4), int(sh - 2), 6, 1, Color(0.96, 0.72, 0.28))
+				spx(e, int(cx + tw - 1), int(sh), Color(0.45, 0.85, 1.0))
+				sell(b, cx - tw + 0.5, sh + 0.5, 2.4, 1.8, Color(0.46, 0.5, 0.62))
+				if t2:
+					srect(b, int(cx - tw + 1), int(sh + 6), int(tw * 2 - 2), 2, Color(0.5, 0.55, 0.66))
+					spx(e, int(cx), int(sh + 6), Color(0.45, 0.85, 1.0))
+			"vamp":
+				# Вампирский чип на виске и алая метка
+				srect(b, int(hx - 3), int(hy - 1), 2, 2, Color(0.16, 0.14, 0.2))
+				spx(e, int(hx - 3), int(hy - 1), Color(1.0, 0.12, 0.3))
+				if t2:
+					sline(e, int(hx - 3), int(hy + 1), int(hx - 2), int(hy + 3), Color(1.0, 0.15, 0.3, 0.8))
+			"luck":
+				# Кубик-талисман на поясе
+				var d := Vector2(cx - tw + 1.5 - sway * 0.3, hip + 1)
+				sline(b, int(cx - tw + 2), int(hip - 1), int(d.x), int(d.y), Color(0.96, 0.72, 0.28))
+				srect(b, int(d.x) - 1, int(d.y), 2, 2, Color(0.95, 0.92, 0.85))
+				spx(e, int(d.x), int(d.y) + (1 if pulse else 0), Color(1.0, 0.82, 0.25))
+			"damage":
+				# Руна ярости: оружие тлеет у острия
+				spx(e, int(tip.x), int(tip.y), Color(1.0, 0.4, 0.1))
+				spx(e, int(tip.x + side.x * 1.5), int(tip.y + side.y * 1.5 - (1 if pulse else 0)), Color(1.0, 0.65, 0.2, 0.9))
+				spx(e, int(tip.x - side.x * 1.5), int(tip.y - side.y * 1.5 - (0 if pulse else 1)), Color(1.0, 0.3, 0.1, 0.8))
+				if t2:
+					var m := hand.lerp(tip, 0.6)
+					spx(e, int(m.x), int(m.y), Color(1.0, 0.35, 0.15))
+			"cooldown":
+				# Охладитель ядра на древке над кистью
+				var p := hand.lerp(tip, 0.35) + side * 1.2
+				srect(b, int(p.x) - 1, int(p.y) - 1, 2, 3, Color(0.5, 0.55, 0.66))
+				spx(e, int(p.x), int(p.y), Color(0.3, 0.9, 1.0))
+				if t2:
+					spx(e, int(p.x), int(p.y) + 1, Color(0.3, 0.9, 1.0, 0.8))
+			"area":
+				# Кольцо-излучатель вокруг острия
+				for i in 6:
+					var a := TAU * i / 6.0 + f * 0.4
+					var r := 2.6 if not t2 else 3.2
+					spx(e, int(tip.x + cos(a) * r), int(tip.y + sin(a) * r * 0.7), Color(0.85, 0.5, 1.0, 0.8))
+			"crit":
+				# Прицел-имплант на оружии и лазерная точка
+				var p := hand.lerp(tip, 0.6) - side * 1.5
+				srect(b, int(p.x) - 1, int(p.y) - 1, 3, 2, Color(0.2, 0.2, 0.26))
+				spx(e, int(p.x) + 1, int(p.y), Color(1.0, 0.25, 0.3))
+				if st == "attack" or t2:
+					for i in 4:
+						spx(e, int(p.x + wd.x * (3 + i * 2)), int(p.y + wd.y * (3 + i * 2)), Color(1.0, 0.2, 0.3, 0.75 - i * 0.15))
+			"multi":
+				# Второй ствол/лезвие вдоль оружия
+				var a0 := hand.lerp(tip, 0.45) + side * 1.6
+				var a1 := tip + side * 1.6 - wd * 1.0
+				sline(b, int(a0.x), int(a0.y), int(a1.x), int(a1.y), Color(0.55, 0.58, 0.7))
+				spx(e, int(a1.x), int(a1.y), Color(0.9, 0.5, 1.0))
+				if t2:
+					var b0 := hand.lerp(tip, 0.5) - side * 1.6
+					var b1 := tip - side * 1.6 - wd * 1.5
+					sline(b, int(b0.x), int(b0.y), int(b1.x), int(b1.y), Color(0.55, 0.58, 0.7))
+					spx(e, int(b1.x), int(b1.y), Color(0.9, 0.5, 1.0))
+			"duration":
+				# Колба-катализатор на навершии
+				var p := hand - wd * 2.0
+				srect(b, int(p.x) - 1, int(p.y) - 1, 2, 2, Color(0.6, 0.75, 0.85))
+				spx(e, int(p.x), int(p.y), Color(0.5, 0.95, 1.0))
 
 
 static func _paint(key: String, b: Image, e: Image, f: int) -> void:
@@ -1060,53 +1233,47 @@ static func _icon_color(im: Image) -> Color:
 ## неоновый ромб в цветах обоих, основа крупно в центре, второе — малой печатью
 ## в углу, золотые звёзды. «Голо-искры» и «Плазмо-клинки» выглядят по-разному.
 static func fusion_icon(base: String, other: String) -> ImageTexture:
-	var key := "ficon2_" + base + "+" + other
+	var key := "ficon3_" + base + "+" + other
 	if _cache.has(key):
 		return _cache[key]
 	var ib: Image = icon(base).get_image()
 	var io: Image = icon(other).get_image()
 	var cb := _icon_color(ib)
 	var co := _icon_color(io)
-	var n := 28
+	var n := 56
 	var im := blank(n, n)
-	var c0 := Vector2(13.5, 13.5)
+	var c0 := Vector2(27.5, 27.5)
 	# Ромб: заливка — тёмная смесь, рамка — переход от цвета второго к цвету основы
 	for y in n:
 		for x in n:
 			var d := absf(x - c0.x) + absf(y - c0.y)
-			if d <= 13.0:
+			if d <= 27.0:
 				var t := float(x + y) / float(2 * n)
-				if d >= 11.5:
-					im.set_pixel(x, y, co.lerp(cb, t))
-				elif d >= 10.5:
+				if d >= 24.0:
+					im.set_pixel(x, y, co.lerp(cb, t).lightened(0.25 if d < 25.5 else 0.0))
+				elif d >= 22.5:
 					im.set_pixel(x, y, Color(0.05, 0.02, 0.1))
 				else:
 					im.set_pixel(x, y, Color(0.1, 0.05, 0.18).lerp(co.darkened(0.6), 0.35 * (1.0 - t)))
 	# Основа — в центре
-	for y in 18:
-		for x in 18:
-			var c := ib.get_pixel(x, y)
-			if c.a > 0.05:
-				im.set_pixel(x + 5, y + 4, c)
-	# Второе оружие — печать 10×10 в правом нижнем углу на кружке
+	im.blend_rect(ib, Rect2i(0, 0, 36, 36), Vector2i(10, 8))
+	# Второе оружие — печать 18×18 в правом нижнем углу на кружке
 	var small: Image = io.duplicate()
-	small.resize(10, 10, Image.INTERPOLATE_NEAREST)
-	for y in range(-1, 11):
-		for x in range(-1, 11):
-			var px_ := Vector2i(x + 17, y + 17)
-			if px_.x < n and px_.y < n and Vector2(x - 4.5, y - 4.5).length() <= 6.2:
-				im.set_pixel(px_.x, px_.y, Color(0.04, 0.02, 0.08) if Vector2(x - 4.5, y - 4.5).length() < 5.6 else co)
-	for y in 10:
-		for x in 10:
-			var c := small.get_pixel(x, y)
-			if c.a > 0.05 and x + 17 < n and y + 17 < n:
-				im.set_pixel(x + 17, y + 17, c)
+	small.resize(18, 18, Image.INTERPOLATE_NEAREST)
+	for y in range(30, 56):
+		for x in range(30, 56):
+			var dd := Vector2(x + 0.5 - 43, y + 0.5 - 43).length()
+			if dd <= 11.5:
+				im.set_pixel(x, y, Color(0.04, 0.02, 0.08) if dd < 10.2 else co)
+	im.blend_rect(small, Rect2i(0, 0, 18, 18), Vector2i(34, 34))
 	# Золотые звёзды слияния
 	var gold := Color(1.0, 0.85, 0.35)
-	for p in [Vector2i(3, 3), Vector2i(2, 3), Vector2i(4, 3), Vector2i(3, 2), Vector2i(3, 4),
-			Vector2i(24, 3), Vector2i(23, 3), Vector2i(25, 3), Vector2i(24, 2), Vector2i(24, 4)]:
-		im.set_pixel(p.x, p.y, gold)
+	for c in [Vector2i(8, 8), Vector2i(47, 8)]:
+		for i in range(-2, 3):
+			im.set_pixel(c.x + i, c.y, gold)
+			im.set_pixel(c.x, c.y + i, gold)
 	var t2 := tex(im)
+	t2.set_meta("icon2x", true)
 	_cache[key] = t2
 	return t2
 
@@ -1115,6 +1282,11 @@ static func icon(id: String) -> ImageTexture:
 	var key := "icon_" + id
 	if _cache.has(key):
 		return _cache[key]
+	if Icons.has(id):
+		var ti := tex(Icons.draw(id))
+		ti.set_meta("icon2x", true)
+		_cache[key] = ti
+		return ti
 	var im := blank(18, 18)
 	var clear := Color(0, 0, 0, 0)
 	match id:
@@ -1359,9 +1531,8 @@ static func icon(id: String) -> ImageTexture:
 			line(im, 9, 4, 9, 14, Color(0.6, 0.5, 0.45))
 			rect(im, 6, 6, 2, 1, Color(0.3, 0.9, 1.0))
 			rect(im, 11, 8, 2, 1, Color(1.0, 0.3, 0.75))
-	shade(im, 0.2, 0.25)
-	outline(im)
-	var t := tex(im)
+	var t := tex(Icons.upgrade(im))
+	t.set_meta("icon2x", true)
 	_cache[key] = t
 	return t
 
@@ -2501,6 +2672,8 @@ static func _paint_hero48(key: String, b: Image, e: Image, f: int) -> void:
 		var te := blank(48, 60)
 		_paint_hero_rig(key, tb, te, 100 + mini(k, 2))   # 100+ — позы оседания
 		_hero_detail(tb, te, L)
+		if not _mods.is_empty():
+			_paint_mods(tb, te, L, f)
 		var ang: float = [0.0, 0.0, -0.25, -0.65, -0.95, -1.05][k]
 		var fade: float = [1.0, 1.0, 1.0, 0.95, 0.7, 0.35][k]
 		_rot_into(tb, b, ang, Vector2(30, 58), fade)
@@ -2508,6 +2681,8 @@ static func _paint_hero48(key: String, b: Image, e: Image, f: int) -> void:
 		return
 	_paint_hero_rig(key, b, e, f)
 	_hero_detail(b, e, L)
+	if not _mods.is_empty():
+		_paint_mods(b, e, L, f)
 	var st := _rig_state(f)
 	if st[0] == "dash":
 		# Полосы скорости за спиной
@@ -2881,6 +3056,8 @@ static func _paint_hero_rig(key: String, b: Image, e: Image, f: int) -> void:
 	slimb(b, sf, hand, 2 if build != 2 else 3, main_c.lightened(0.05))
 	srect(b, int(hand.x), int(hand.y), 2, 2, skin if key not in ["kai", "orm"] else main_c.lightened(0.3))
 	_hero_weapon(weapon, L, b, e, hand, dir, st, k, f, hand_b)
+	_anc = {"cx": cx, "sh": sh_y, "hip": hip_y, "tw": tw, "hand": hand, "tip": _weapon_tip(weapon, hand, dir, st),
+		"hx": hx, "hy": hy, "ff": ff, "fb": fb, "sway": sway, "st": st}
 
 
 static func _hero_weapon(weapon: String, L: Dictionary, b: Image, e: Image, h: Vector2, dir: Vector2, st: String, k: int, f: int, hb := Vector2.ZERO) -> void:

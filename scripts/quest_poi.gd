@@ -659,7 +659,7 @@ func _build_part() -> void:
 	var w: String = Data.CHARACTERS[hid]["weapon"]
 	var sp := Sprite3D.new()
 	sp.texture = Pixel.icon(w)
-	sp.pixel_size = 0.022
+	sp.pixel_size = 0.011
 	sp.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	sp.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	sp.shaded = false

@@ -2179,8 +2179,8 @@ func _shurikens(count: int, dmg: float, speed: float, spiral: bool, radial := fa
 
 # ---------- Снаряжение на герое ----------
 # Каждое оружие видно на персонаже: дополнительные стволы и клинки закреплены
-# за спиной и на поясе (выглядывают из-за силуэта), модули — светящиеся
-# импланты-спутники, кружащие вокруг пояса и уходящие то вперёд, то за спину.
+# за спиной и на поясе (выглядывают из-за силуэта). Модули встроены в сам
+# спрайт героя (Pixel.hero_frames): сердце в груди, сапоги, прицел на оружии.
 
 const GEAR_SLOTS := [Vector3(-0.24, 0.62, -0.07), Vector3(0.25, 0.66, -0.07), Vector3(-0.27, 0.36, -0.05),
 	Vector3(0.28, 0.4, -0.05), Vector3(0.0, 0.86, -0.09), Vector3(-0.12, 0.2, 0.05)]
@@ -2209,14 +2209,26 @@ func _rebuild_gear() -> void:
 	for i in range(1, ws.size()):
 		if i - 1 >= GEAR_SLOTS.size():
 			break
-		var s := _gear_sprite(Pixel.icon(str(ws[i])), 0.0165, true)
+		var s := _gear_sprite(Pixel.icon(str(ws[i])), 0.00825, true)
 		s.modulate = Color(0.92, 0.92, 1.0)
 		_gear_w.append([s, GEAR_SLOTS[i - 1]])
-	var ps: Array = passives.keys()
-	for i in ps.size():
-		var s := _gear_sprite(Pixel.icon(str(ps[i])), 0.011, true)
-		s.modulate = Pixel.hdr(Color.WHITE, 1.25)
-		_gear_m.append([s, TAU * float(i) / maxf(1.0, float(ps.size()))])
+	# Модули больше не кружат вокруг: они нарисованы прямо на герое и оружии
+	_refresh_mod_frames()
+
+
+## Ступени модулей для внешности: с 5-го уровня модуль выглядит мощнее.
+func _mod_tiers() -> Dictionary:
+	var m := {}
+	for id in passives:
+		m[id] = 2 if int(passives[id]) >= 5 else 1
+	return m
+
+
+func _refresh_mod_frames() -> void:
+	var spr: String = char_data["sprite"]
+	if not (spr in Pixel.HERO_KEYS):
+		return
+	_frames = Pixel.hero_frames(spr, _mod_tiers())
 
 
 func _update_gear(vis: bool) -> void:
@@ -2226,7 +2238,7 @@ func _update_gear(vis: bool) -> void:
 		_gear = Node3D.new()
 		main._mirror_root.add_child(_gear)
 		_gear_key = ""
-	var key := str(weapons.keys()) + "|" + str(passives.keys())
+	var key := str(weapons.keys()) + "|" + str(_mod_tiers())
 	if key != _gear_key:
 		_gear_key = key
 		_rebuild_gear()
@@ -2241,6 +2253,3 @@ func _update_gear(vis: bool) -> void:
 		var p: Vector3 = g[1]
 		(g[0] as Sprite3D).position = Vector3(p.x * flip, p.y + bob, p.z)
 		(g[0] as Sprite3D).flip_h = _body.flip_h
-	for m in _gear_m:
-		var a: float = float(m[1]) + _anim_t * 1.6
-		(m[0] as Sprite3D).position = Vector3(cos(a) * 0.42, 0.38 + sin(a * 2.0) * 0.04, sin(a) * 0.26)

@@ -111,9 +111,14 @@ func _ready() -> void:
 	_build_hud()
 	Sound.set_track("hub")
 	if not Meta.intro_seen and not _net_client:
-		get_tree().create_timer(1.2).timeout.connect(func():
-			if _panel_id == "":
-				_open_panel("prologue"))
+		# Первый вход: мультфильм-пролог, затем летопись и командир Ворон
+		get_tree().create_timer(0.6).timeout.connect(func():
+			Meta.mark_cine("prologue")
+			var c := Cutscene.play(self, "prologue")
+			c.finished.connect(func():
+				Sound.set_track("hub")
+				if _panel_id == "":
+					_open_panel("prologue")))
 	if not Meta.last_reward.is_empty():
 		_show_reward(Meta.last_reward)
 		Meta.last_reward = {}
@@ -1678,7 +1683,7 @@ func _pic(t: Texture2D, k: float) -> TextureRect:
 	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	r.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	r.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	r.custom_minimum_size = t.get_size() * k
+	r.custom_minimum_size = t.get_size() * k * (0.5 if t.has_meta("icon2x") else 1.0)
 	r.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return r
@@ -3573,6 +3578,8 @@ func _contract_card(q: Dictionary, i: int, taken: bool) -> Control:
 
 const Props3D := preload("res://scripts/props3d.gd")
 const Story := preload("res://scripts/story.gd")
+const CineScenes := preload("res://scripts/cine_scenes.gd")
+const Cutscene := preload("res://scripts/cutscene.gd")
 const COMMANDER_POS := Vector3(-5.6, 0, 0.4)
 var _role_n := {}
 var _chat_t := 6.0
@@ -3847,6 +3854,15 @@ func _fill_story() -> void:
 
 func _fill_prologue() -> void:
 	_panel_box.add_child(_centered(_label("ЛЕТОПИСЬ СЛИЯНИЯ", 30, Color.WHITE, Color(Color(0.75, 0.6, 1.0), 0.8))))
+	# Пересмотр увиденных кат-сцен
+	for cid in CineScenes.ORDER:
+		if not Meta.cine_seen(cid):
+			continue
+		var cb := _button("▶  " + str(CineScenes.TITLES[cid]), Color(1.0, 0.6, 0.2))
+		var id2: String = cid
+		cb.pressed.connect(func():
+			Cutscene.play(self, id2))
+		_panel_box.add_child(_centered(cb))
 	for para in Story.PROLOGUE:
 		var l := _label(para, 16, Color(0.9, 0.88, 1.0))
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
