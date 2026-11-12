@@ -122,6 +122,8 @@ func _update_tracker() -> void:
 		_tracker.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_poi_layer.add_child(_tracker)
 	var lines: Array = []
+	if main.challenge != "":
+		lines.append("⚠ %s  •  угроза %d" % [main.Meta.CHALLENGES[main.challenge]["name"], main.threat])
 	var Q = main.QuestsScript
 	for q in main.active_quests:
 		var pr := mini(Q.progress(q, main.run), int(q["g"]))
@@ -1053,6 +1055,8 @@ func show_game_over(victory: bool, time_alive: float, kills: int, level: int, re
 			_over_stats.text += "\nПервое прохождение:  +%d ◆" % main.reward["first"]
 		if main.endless_min > 0:
 			_over_stats.text += "\nБесконечный режим: %d мин  (+%d ◆)" % [main.endless_min, main.reward.get("endless", 0)]
+		if int(main.reward.get("bonus", 0)) > 0:
+			_over_stats.text += "\nУгроза %d и испытание: +%d ◆" % [main.threat, int(main.reward["bonus"])]
 		var mats: Dictionary = main.reward.get("materials", {})
 		if not mats.is_empty():
 			var parts: Array = []

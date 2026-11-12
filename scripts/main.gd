@@ -115,6 +115,8 @@ const QuestPoiScript := preload("res://scripts/quest_poi.gd")
 const EventsScript := preload("res://scripts/events.gd")
 var events: Node
 var active_quests: Array = []
+var threat := 0          # угроза (растёт с прогрессом)
+var challenge := ""      # испытание вылазки
 var _combo_seen := {}
 
 var _spawn_timer := 0.0
@@ -145,6 +147,11 @@ func _ready() -> void:
 		"mat_chips": 0, "mat_cores": 0, "scrap": 0, "nodmg": 0, "minutes": 0, "level": 1, "combo": 0, "fusions": 0}
 	if not Data.coop and Net.mode == "":
 		active_quests = QuestsScript.active(Data.selected_character)
+	if Net.mode == "":
+		threat = Meta.threat()
+		challenge = Meta.CHALLENGES.keys()[randi() % Meta.CHALLENGES.size()]
+	run["threat"] = threat
+	run["challenge"] = challenge
 	_vk = Settings.view_k()
 	rng.randomize()
 	level_index = clampi(Data.selected_level, 0, Data.LEVELS.size() - 1)
@@ -251,6 +258,7 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_frame_camera)
 
 	_setup_weather()
+	_apply_challenge()
 	_setup_post()
 
 	hud = HudScript.new()
@@ -453,7 +461,9 @@ func _setup_view3d() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	_view3d.add_child(we)
+	_env = env
 	var moon := DirectionalLight3D.new()
+	_moon = moon
 	moon.rotation_degrees = Vector3(-40, 30, 0)
 	moon.light_color = Color(0.55, 0.6, 1.0)
 	moon.light_energy = 0.35
@@ -938,9 +948,99 @@ func _particles3d(pos: Vector3, colors: Array, amount: int, extents: Vector3, gr
 ## каждая клетка — свой источник дождя; при движении клетки «переползают» вперёд.
 const WEATHER_CELL := 900.0
 var _weather_tiles: Array = []
+var _env: Environment
+var _moon: DirectionalLight3D
+## Погода вылазки: ясно, неоновый дождь, гроза, снег, туман, пепел — каждый раз своя.
+var weather := "clear"
+const WEATHERS := {
+	"clear": {"name": "Ясная ночь", "w": 3.0},
+	"rain": {"name": "Неоновый дождь", "w": 2.0},
+	"storm": {"name": "Гроза", "w": 1.0},
+	"snow": {"name": "Снегопад", "w": 1.5},
+	"fog": {"name": "Туман", "w": 1.5},
+	"ash": {"name": "Пепел и искры", "w": 1.0},
+}
+var _thunder_t := 8.0
+
+
+func _apply_challenge() -> void:
+	for p in players:
+		if challenge == "starved":
+			p.heal_mult *= 0.5
+		elif challenge == "glass":
+			p.damage_mult *= 1.15
+			p.dmg_taken_k = 1.3
+	get_tree().create_timer(2.2, false).timeout.connect(_announce_weather)
+	if challenge != "":
+		get_tree().create_timer(3.6, false).timeout.connect(_announce_challenge)
+
+
+func _announce_weather() -> void:
+	if is_instance_valid(player):
+		var wn: String = WEATHERS.get(weather, {}).get("name", "")
+		Fx.text_pop(self, player.position + Vector2(0, -150), "Погода: " + wn, Color(0.75, 0.85, 1.0), 18)
+
+
+func _announce_challenge() -> void:
+	if is_instance_valid(player) and challenge != "":
+		var c: Dictionary = Meta.CHALLENGES[challenge]
+		Fx.text_pop(self, player.position + Vector2(0, -150), "ИСПЫТАНИЕ: %s — %s  (+%d%% награды)" % [str(c["name"]).to_upper(), c["desc"], int(float(c["bonus"]) * 100)], Pixel.hdr(Color(1.0, 0.5, 0.35), 1.4), 20)
+
+
+func _pick_weather() -> void:
+	var sum := 0.0
+	for k in WEATHERS:
+		sum += float(WEATHERS[k]["w"])
+	var r := rng.randf() * sum
+	for k in WEATHERS:
+		r -= float(WEATHERS[k]["w"])
+		if r <= 0.0:
+			weather = k
+			break
+	# Свет и воздух под погоду
+	if _env == null or _moon == null:
+		return
+	match weather:
+		"clear":
+			_moon.light_energy = 0.5
+			_moon.light_color = Color(0.65, 0.7, 1.0)
+		"storm":
+			_env.ambient_light_energy = 0.7
+			_moon.light_energy = 0.2
+		"snow":
+			_env.ambient_light_color = Color(0.6, 0.65, 0.85)
+			_moon.light_color = Color(0.8, 0.85, 1.0)
+			_moon.light_energy = 0.45
+		"fog":
+			_env.ambient_light_color = Color(0.45, 0.45, 0.6)
+			_env.ambient_light_energy = 0.75
+			_moon.light_energy = 0.2
+			if _plane and _plane.material_override:
+				(_plane.material_override as ShaderMaterial).set_shader_parameter("fog_start", 0.62)
+				(_plane.material_override as ShaderMaterial).set_shader_parameter("fog_color", Color(0.16, 0.14, 0.22))
+		"ash":
+			_env.ambient_light_color = Color(0.7, 0.45, 0.4)
+			_moon.light_color = Color(1.0, 0.6, 0.4)
+			_moon.light_energy = 0.3
+
+
+## Гроза: время от времени вспышка молнии на всё небо и гром.
+func _weather_tick(delta: float) -> void:
+	if weather != "storm" or not Settings.weather_enabled():
+		return
+	_thunder_t -= delta
+	if _thunder_t <= 0.0:
+		_thunder_t = rng.randf_range(7.0, 16.0)
+		screen_flash(0.35)
+		if _moon:
+			var tw := create_tween()
+			_moon.light_energy = 2.5
+			tw.tween_property(_moon, "light_energy", 0.2, 0.5)
+		get_tree().create_timer(rng.randf_range(0.3, 1.2)).timeout.connect(func(): Sound.play("thunder", -6.0, 0.8))
 
 
 func _setup_weather() -> void:
+	_pick_weather()
 	if not Settings.weather_enabled():
 		return   # телефон: погода выключена в настройках
 	var half := WEATHER_CELL * PLANE_TEXEL * 0.5
@@ -948,12 +1048,27 @@ func _setup_weather() -> void:
 		for iy in 4:
 			var root := Node3D.new()
 			_view3d.add_child(root)
-			# Неоновый дождь
-			_particles3d(Vector3(0, 9, 0), [Color(0.4, 0.8, 1.0, 0.0), Color(0.5, 0.85, 1.0, 0.45), Color(0.9, 0.5, 1.0, 0.3)],
-				60, Vector3(half, 0.5, half), Vector3(1.5, -40, 0), 0.6, Vector2(0.02, 0.35), Vector2.ZERO, root, true)
-			# Брызги на земле
-			_particles3d(Vector3(0, 0.05, 0), [Color(0.6, 0.85, 1.0, 0.0), Color(0.6, 0.85, 1.0, 0.4), Color(0.6, 0.85, 1.0, 0.0)],
-				16, Vector3(half, 0.02, half), Vector3.ZERO, 0.25, Vector2(0.06, 0.03), Vector2.ZERO, root)
+			match weather:
+				"rain", "storm":
+					var heavy := weather == "storm"
+					_particles3d(Vector3(0, 9, 0), [Color(0.4, 0.8, 1.0, 0.0), Color(0.5, 0.85, 1.0, 0.45), Color(0.9, 0.5, 1.0, 0.3)],
+						110 if heavy else 60, Vector3(half, 0.5, half), Vector3(6.0 if heavy else 1.5, -40, 0), 0.6, Vector2(0.02, 0.35), Vector2.ZERO, root, true)
+					_particles3d(Vector3(0, 0.05, 0), [Color(0.6, 0.85, 1.0, 0.0), Color(0.6, 0.85, 1.0, 0.4), Color(0.6, 0.85, 1.0, 0.0)],
+						24 if heavy else 16, Vector3(half, 0.02, half), Vector3.ZERO, 0.25, Vector2(0.06, 0.03), Vector2.ZERO, root)
+				"snow":
+					# Хлопья медленно кружат и падают
+					_particles3d(Vector3(0, 7, 0), [Color(1, 1, 1, 0.0), Color(0.95, 0.97, 1.0, 0.9), Color(0.9, 0.95, 1.0, 0.0)],
+						70, Vector3(half, 0.5, half), Vector3(0.6, -1.4, 0.3), 5.0, Vector2(0.07, 0.07), Vector2(0.1, 0.5), root)
+				"fog":
+					# Низкие клубы тумана
+					_particles3d(Vector3(0, 0.6, 0), [Color(0.5, 0.5, 0.65, 0.0), Color(0.55, 0.55, 0.7, 0.12), Color(0.5, 0.5, 0.65, 0.0)],
+						14, Vector3(half, 0.4, half), Vector3(0.15, 0.0, 0.05), 9.0, Vector2(2.6, 1.2), Vector2(0.05, 0.2), root)
+				"ash":
+					# Пепел и тлеющие искры
+					_particles3d(Vector3(0, 7, 0), [Color(0.5, 0.45, 0.45, 0.0), Color(0.55, 0.5, 0.5, 0.6), Color(0.4, 0.35, 0.35, 0.0)],
+						40, Vector3(half, 0.5, half), Vector3(0.4, -1.0, 0.2), 6.0, Vector2(0.05, 0.05), Vector2(0.1, 0.4), root)
+					_particles3d(Vector3(0, 0.3, 0), [Color(1.0, 0.5, 0.1, 0.0), Color(1.8, 0.8, 0.2, 0.9), Color(1.0, 0.3, 0.1, 0.0)],
+						8, Vector3(half, 0.2, half), Vector3(0, 0.5, 0), 3.0, Vector2(0.04, 0.04), Vector2(0.2, 0.8), root)
 			# Светлячки-данные
 			_particles3d(Vector3(0, 1.5, 0), [Color(1.0, 0.3, 0.8, 0.0), Color(1.4, 0.5, 1.6, 0.9), Color(0.4, 1.2, 1.6, 0.8), Color(0.3, 0.9, 1.0, 0.0)],
 				6, Vector3(half, 1.5, half), Vector3(0, 0.15, 0), 5.0, Vector2(0.05, 0.05), Vector2(0.05, 0.3), root)
@@ -1025,6 +1140,7 @@ func _process(delta: float) -> void:
 		return
 	time_alive += delta
 	_run_tick(delta)
+	_weather_tick(delta)
 	_handle_bosses()
 	_handle_pois(delta)
 	_handle_spawning(delta)
@@ -1114,6 +1230,8 @@ func _handle_spawning(delta: float) -> void:
 		_spawn_timer = maxf(0.16, 1.0 - time_alive / 160.0) * (2.0 if boss != null else 1.0) / float(level["rate"]) / (1.0 + 0.3 * endless_min)
 		if events != null:
 			_spawn_timer /= events.spawn_k
+		if challenge == "swarm":
+			_spawn_timer /= 1.3
 		var count := 1 + int(time_alive / 55.0) + endless_min
 		if endless:
 			# Адских меньше, но каждый опасен; с минутами их становится больше
@@ -1165,9 +1283,11 @@ func spawn_enemy(kind: String, at := Vector2.INF) -> void:
 	# Со временем враги заметно крепнут: здоровье растёт быстрее чем линейно, урон — тоже
 	var tm := time_alive
 	var scale_hp := float(level["hp"]) * (1.0 + tm / 100.0 + pow(tm / 220.0, 2.0)) * (1.0 + 0.35 * endless_min)
+	# Угроза и испытание вылазки
+	scale_hp *= (1.0 + 0.06 * threat) * (1.35 if challenge == "armored" else 1.0)
 	e.max_hp = info["hp"] * scale_hp
-	e.speed = info["speed"] * rng.randf_range(0.9, 1.1) * (1.0 + minf(tm / 1200.0, 0.3))
-	e.damage = info["damage"] * (1.0 + tm / 240.0) * (1.0 + 0.12 * endless_min)
+	e.speed = info["speed"] * rng.randf_range(0.9, 1.1) * (1.0 + minf(tm / 1200.0, 0.3)) * (1.2 if challenge == "swift" else 1.0)
+	e.damage = info["damage"] * (1.0 + tm / 240.0) * (1.0 + 0.12 * endless_min) * (1.0 + 0.04 * threat)
 	if info.get("hell", false):
 		# Адские мобы крепнут с каждой минутой: здоровье, урон и скорость
 		# Бесконечный режим: рост непрерывный (по долям минуты) и намного круче —
@@ -1191,7 +1311,11 @@ func spawn_enemy(kind: String, at := Vector2.INF) -> void:
 	e.is_elite = kind in ["brute", "hell_brute", "mob_altar"]
 	# Усиления: чем дольше бой, тем чаще враги приходят с особыми свойствами
 	if kind != "mob_altar" and kind != "slimelet" and kind != "spiderling":
-		var chance := clampf((time_alive - 60.0) / 420.0, 0.0, 0.6) + 0.15 * endless_min
+		var chance := clampf((time_alive - 60.0) / 420.0, 0.0, 0.6) + 0.15 * endless_min + 0.008 * threat
+		if challenge == "elite":
+			chance = chance * 2.0 + 0.1
+		if challenge == "cursed" and time_alive > 120.0:
+			chance = 1.0
 		if rng.randf() < chance:
 			e.affixes.append(Data.AFFIXES.keys()[rng.randi() % Data.AFFIXES.size()])
 			if time_alive > 300.0 and rng.randf() < 0.3:
@@ -1344,6 +1468,14 @@ func on_enemy_killed(enemy: Node2D) -> void:
 		wm = kpw.wmods_for(src)
 		if float(wm.get("leech", 0.0)) > 0.0 and not kpw._dead:
 			kpw.heal(float(wm["leech"]), false)
+	# Задания на стихии и риск
+	for el in ["burn", "chill", "shock", "poison"]:
+		if enemy.statuses.has(el):
+			run["k_" + el] = int(run.get("k_" + el, 0)) + 1
+	if player.hp < player.max_hp * 0.4:
+		run["lowhp"] = int(run.get("lowhp", 0)) + 1
+	if enemy.is_boss and enemy.has_meta("spawn_t") and time_alive - float(enemy.get_meta("spawn_t")) < 75.0:
+		run["bossfast"] = int(run.get("bossfast", 0)) + 1
 	_streak = _streak + 1 if _streak_t > 0.0 else 1
 	_streak_t = 2.0
 	run["combo"] = maxi(int(run["combo"]), _streak)
@@ -1655,7 +1787,7 @@ func apply_buff(p: Node2D, kind: String, t: float) -> void:
 	p.add_buff(kind, t)
 
 
-var _qpoi_t := 22.0
+var _qpoi_t := 60.0
 
 
 ## Места для заданий: тайники, рунные загадки, маяки. Нужные заданиям появляются чаще.
@@ -1668,15 +1800,16 @@ func _handle_quest_pois(delta: float) -> void:
 		if is_instance_valid(p) and p.get_script() == QuestPoiScript:
 			have[p.kind] += 1
 	# Тайники — редкость: даже по заданию появляются нечасто и без всякого шума
-	var weights := {"cache": 0.7 if quest_wants("caches") else 0.15, "puzzle": 3.0 if quest_wants("puzzles") else 0.6,
-		"beacons": 3.0 if quest_wants("beacons") else 0.6}
+	# Загадки и маяки — редкость: без задания почти не встречаются
+	var weights := {"cache": 0.7 if quest_wants("caches") else 0.15, "puzzle": 1.0 if quest_wants("puzzles") else 0.12,
+		"beacons": 1.0 if quest_wants("beacons") else 0.12}
 	var cap := {"cache": 1, "puzzle": 1, "beacons": 1}
 	var sum := 0.0
 	for k in weights:
 		if have[k] >= cap[k]:
 			weights[k] = 0.0
 		sum += weights[k]
-	_qpoi_t = rng.randf_range(30.0, 50.0) * (0.7 if (quest_wants("caches") or quest_wants("puzzles") or quest_wants("beacons")) else 1.0)
+	_qpoi_t = rng.randf_range(80.0, 130.0) * (0.75 if (quest_wants("caches") or quest_wants("puzzles") or quest_wants("beacons")) else 1.0)
 	if sum <= 0.0:
 		return
 	var r := rng.randf() * sum
@@ -1771,6 +1904,7 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	b.position = center() + Vector2.RIGHT.rotated(rng.randf() * TAU) * 380.0
 	enemies_node.add_child(b)
 	boss = b
+	b.set_meta("spawn_t", time_alive)
 	Sound.play("siren", 0.0)
 	Sound.set_track("boss")
 	shake(10.0)
@@ -1921,6 +2055,7 @@ func _fusion_choices(player: Node2D) -> Array:
 
 
 func open_chest(opener: Node2D = null) -> void:
+	run["chests"] = int(run.get("chests", 0)) + 1
 	var player: Node2D = opener if opener != null else self.player
 	Sound.play("chest", 0.0)
 	var rewards: Array = []

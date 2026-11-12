@@ -71,7 +71,7 @@ func _npos(n: Dictionary) -> Vector2:
 ## Полное описание узла: эффект, цена, ярус и условия.
 func _info_text(n: Dictionary) -> String:
 	var hero := Meta.tree_hero(tree_key)
-	var t := "%s — %s.  Цена %d ◆, ярус %d." % [n["name"], n["desc"], int(n["cost"]), int(n["tier"])]
+	var t := "%s — %s.  Цена %d ◆, ярус %d." % [n["name"], n["desc"], Meta.node_cost(n), int(n["tier"])]
 	var conds: Array = n.get("conds", [])
 	if not conds.is_empty():
 		var parts: Array = []
@@ -144,7 +144,7 @@ func refresh() -> void:
 		var st := Meta.node_state(tree_key, n)
 		var bg := Color(0.05, 0.03, 0.1, 0.95)
 		var border := Color(0.35, 0.35, 0.45)
-		var line2 := "%d ◆" % int(n["cost"])
+		var line2 := "%d ◆" % Meta.node_cost(n)
 		match st:
 			"owned":
 				border = Color(1.0, 0.8, 0.3)
@@ -154,7 +154,7 @@ func refresh() -> void:
 				border = accent
 			"expensive":
 				border = accent.darkened(0.5)
-				line2 = "%d ◆ мало" % int(n["cost"])
+				line2 = "%d ◆ мало" % Meta.node_cost(n)
 			"locked":
 				line2 = "нужны верхние"
 			"tier":

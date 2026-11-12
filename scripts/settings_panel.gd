@@ -59,11 +59,65 @@ func _update_memory() -> void:
 	_mem_label.text = "ОЗУ %d МБ (пик %d) • видео %d МБ • %.1f%% от %.1f ГБ" % [int(used), int(peak), int(vram), pct, total / 1024.0]
 
 
+## Вкладки: Видео (экран, кадры), Графика (качество картинки), Звук.
+static var tab := "video"
+const TABS := [["video", "ВИДЕО"], ["graphics", "ГРАФИКА"], ["sound", "ЗВУК"]]
+const TAB_OF := {
+	"Режим экрана": "video", "Формат": "video", "Разрешение 3D": "video", "Чёткость 3D": "video",
+	"Пиксельный 3D": "video", "Кадры в секунду": "video", "Вертикальная синхр.": "video",
+	"Держать кадры": "video", "Кнопки": "video", "Взгляд героя": "video", "Память": "video", "Графика": "video",
+	"Профиль": "graphics", "Свечение": "graphics", "Погода": "graphics", "Декор пола": "graphics",
+	"Дальность": "graphics", "Врагов на экране": "graphics", "Объёмные эффекты": "graphics",
+	"Эффекты": "graphics", "Тени": "graphics", "Текстуры": "graphics",
+	"Музыка": "sound", "Звуки": "sound",
+}
+
+
+## Оставить в сетке только пары «название — значение» текущей вкладки.
+func _filter_tab(grid: GridContainer) -> void:
+	var kids := grid.get_children()
+	var i := 0
+	while i + 1 < kids.size():
+		var l: Node = kids[i]
+		var ctl: Node = kids[i + 1]
+		var name := str(l.get("text")) if l is Label else ""
+		if TAB_OF.get(name, "video") != tab:
+			for n in [l, ctl]:
+				grid.remove_child(n)
+				n.queue_free()
+			if name == "Память":
+				_mem_label = null
+				_mem_bar = null
+			elif name == "Режим экрана":
+				_mode_opt = null
+			elif name == "Формат":
+				_aspect_opt = null
+			elif name == "Разрешение 3D":
+				_res_opt = null
+		i += 2
+
+
 func _build() -> void:
 	var v := self
 	var title := _label("НАСТРОЙКИ", 44, Color.WHITE, Color(MAGENTA, 0.8))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
+	var tabs := HBoxContainer.new()
+	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
+	tabs.add_theme_constant_override("separation", 12)
+	for t in TABS:
+		var on: bool = t[0] == tab
+		var tb := _button(t[1], CYAN if on else Color(0.55, 0.55, 0.7), 190)
+		if on:
+			tb.add_theme_stylebox_override("normal", _box(CYAN, Color(0.1, 0.25, 0.32, 0.95), 3, 14))
+		var key: String = t[0]
+		tb.pressed.connect(func():
+			Sound.play("click")
+			Settings.save_settings()
+			tab = key
+			_rebuild.call_deferred())
+		tabs.add_child(tb)
+	v.add_child(tabs)
 
 	var panel := PanelContainer.new()
 	var pb := _box(CYAN.darkened(0.3), PANEL_BG, 2, 10)
@@ -246,6 +300,9 @@ func _build_common_rows(grid: GridContainer) -> void:
 			Sound.apply_volumes())
 		grid.add_child(slider)
 
+	_filter_tab(grid)
+	if tab == "sound":
+		grid.columns = 2
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	buttons.add_theme_constant_override("separation", 20)
@@ -256,9 +313,10 @@ func _build_common_rows(grid: GridContainer) -> void:
 		if on_back.is_valid():
 			on_back.call())
 	buttons.add_child(back)
-	var apply := _button("ПРИМЕНИТЬ", CYAN, 260)
-	apply.pressed.connect(_apply_display)
-	buttons.add_child(apply)
+	if tab == "video":
+		var apply := _button("ПРИМЕНИТЬ", CYAN, 260)
+		apply.pressed.connect(_apply_display)
+		buttons.add_child(apply)
 	v.add_child(buttons)
 
 
@@ -334,7 +392,7 @@ func _rebuild() -> void:
 
 func _apply_display() -> void:
 	Sound.play("click")
-	if _mode_opt == null:
+	if _mode_opt == null or not is_instance_valid(_mode_opt) or _res_opt == null:
 		Settings.apply_display()
 		Settings.save_settings()
 		return

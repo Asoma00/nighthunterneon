@@ -304,7 +304,30 @@ static func level(id: String) -> int:
 
 static func upgrade_cost(id: String) -> int:
 	var b: Dictionary = BUILDINGS[id]
-	return int(b["base"] * pow(level(id) + 1, 1.6))
+	return int(b["base"] * 1.3 * pow(level(id) + 1, 1.7))
+
+
+## Цена узла дерева (прокачка стала дороже — каждый узел надо заработать).
+static func node_cost(n: Dictionary) -> int:
+	return int(round(float(n["cost"]) * 1.35))
+
+
+## Угроза: растёт с пройденными уровнями и вылазками. Враги крепче и злее,
+## награда — выше. Так каждая вылазка остаётся испытанием.
+static func threat() -> int:
+	return clampi(levels_cleared * 2 + total_runs / 4, 0, 40)
+
+
+## Испытания вылазки — одно случайное на каждый бой, с бонусом к награде.
+const CHALLENGES := {
+	"swift": {"name": "Стремительные", "desc": "враги на 20% быстрее", "bonus": 0.2},
+	"armored": {"name": "Бронированные", "desc": "враги на 35% крепче", "bonus": 0.25},
+	"elite": {"name": "Ночь элиты", "desc": "элита и усиленные враги вдвое чаще", "bonus": 0.3},
+	"starved": {"name": "Голод", "desc": "лечение вдвое слабее", "bonus": 0.25},
+	"glass": {"name": "Стеклянная пушка", "desc": "вы наносите +15% урона, но получаете +30%", "bonus": 0.2},
+	"swarm": {"name": "Рой", "desc": "врагов на 30% больше", "bonus": 0.25},
+	"cursed": {"name": "Проклятие", "desc": "после 2 минут у каждого врага есть усиление", "bonus": 0.35},
+}
 
 
 ## База растёт по шагам: каждый уровень здания — это осколки + материалы из боя,
@@ -593,8 +616,8 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 		level_best[level] = maxf(float(level_best.get(level, 0.0)), time_alive)
 	var r := {
 		"first": first,
-		"kills": kills / 8,
-		"time": int(time_alive / 10.0),
+		"kills": kills / 10,
+		"time": int(time_alive / 12.0),
 		"bosses": bosses * 40,
 		"victory": 100 if victory else 0,
 		"followers": 0,
@@ -603,6 +626,10 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 	var total := 0
 	for k in r:
 		total += r[k]
+	# Угроза и испытание вылазки повышают награду
+	var bonus_k := 1.0 + 0.03 * float(run.get("threat", 0)) + float(CHALLENGES.get(run.get("challenge", ""), {}).get("bonus", 0.0))
+	r["bonus"] = int(round(float(total) * (bonus_k - 1.0)))
+	total += r["bonus"]
 	r["total"] = total
 	shards += total
 	total_runs += 1
@@ -696,7 +723,7 @@ static func node_state(tree_key: String, n: Dictionary) -> String:
 			return "locked"
 	if not conds_met(n.get("conds", []), tree_hero(tree_key)):
 		return "cond"
-	return "open" if shards >= int(n["cost"]) else "expensive"
+	return "open" if shards >= node_cost(n) else "expensive"
 
 
 ## Для дерева героя «c:rin» — id героя (для условий «вылазок этим героем»).
@@ -707,7 +734,7 @@ static func tree_hero(tree_key: String) -> String:
 static func buy_node(tree_key: String, n: Dictionary) -> bool:
 	if node_state(tree_key, n) != "open":
 		return false
-	shards -= int(n["cost"])
+	shards -= node_cost(n)
 	if not trees.has(tree_key):
 		trees[tree_key] = []
 	trees[tree_key].append(n["id"])

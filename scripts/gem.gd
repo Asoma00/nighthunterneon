@@ -157,6 +157,7 @@ func _process(delta: float) -> void:
 		elif kind in ["scrap", "chips", "cores"]:
 			main.add_material(kind, value, position)
 		else:
+			main.run["gems"] = int(main.run.get("gems", 0)) + 1
 			player.add_xp(value)  # опыт у каждого героя свой
 		Fx.burst(main, position + Vector2(0, -10), [Pixel.hdr(_color, 2.0), Color(_color, 0.0)], 4, 80.0, 0.3, 2.5)
 		queue_free()

@@ -42,6 +42,7 @@ var crit_chance := 0.0
 var status_mult := 1.0
 var kill_heal := 0.0
 var heal_mult := 1.0
+var dmg_taken_k := 1.0   # испытание «Стеклянная пушка»
 var dodge := 0.0
 var chest_bonus := 0.0
 var power := 1.0
@@ -1428,7 +1429,7 @@ func take_damage(amount: float) -> void:
 		_invuln = 0.3
 		Fx.text_pop(main, position + Vector2(0, -20), "уклон", Color(1.0, 0.6, 0.6), 16)
 		return
-	amount = maxf(1.0, amount - armor - floorf(_bastion))
+	amount = maxf(1.0, amount * dmg_taken_k - armor - floorf(_bastion))
 	hp -= amount
 	_invuln = 0.6
 	_flash = 0.15
