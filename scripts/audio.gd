@@ -5,7 +5,8 @@ extends Node
 ## Подключён как автозагрузка «Sound».
 
 const RATE := 22050
-const Data := preload("res://scripts/data.gd")
+var Data:
+	get: return load("res://scripts/data.gd")
 
 var _samples := {}
 var _music_player: AudioStreamPlayer

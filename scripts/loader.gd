@@ -5,8 +5,11 @@ extends CanvasLayer
 ## (первые кадры, пока грузятся текстуры и шейдеры). Время не фиксировано:
 ## при повторном заходе текстуры уже в кэше, и загрузка проходит быстрее.
 
-const Data := preload("res://scripts/data.gd")
-const Pixel := preload("res://scripts/pixel.gd")
+## Скрипты игры — во время работы (см. settings.gd): так автозагрузка видит новую версию.
+var Data:
+	get: return load("res://scripts/data.gd")
+var Pixel:
+	get: return load("res://scripts/pixel.gd")
 const CYAN := Color(0.3, 0.95, 1.0)
 const MAGENTA := Color(1.0, 0.3, 0.75)
 const GOLD := Color(1.0, 0.8, 0.3)
@@ -240,29 +243,29 @@ func _jobs_for(path: String) -> Array:
 				continue
 			keys.append(k)
 		for id in Data.WEAPONS:
-			jobs.append(Pixel.icon.bind(id))
+			jobs.append(Callable(Pixel, "icon").bind(id))
 		for id in Data.PASSIVES:
-			jobs.append(Pixel.icon.bind(id))
-		jobs.append(Pixel.ground)
-		jobs.append(Pixel.glow)
-		jobs.append(Pixel.shadow)
-		jobs.append(Pixel.rune_ring)
+			jobs.append(Callable(Pixel, "icon").bind(id))
+		jobs.append(Callable(Pixel, "ground"))
+		jobs.append(Callable(Pixel, "glow"))
+		jobs.append(Callable(Pixel, "shadow"))
+		jobs.append(Callable(Pixel, "rune_ring"))
 	elif path == "res://hub.tscn":
 		for id in Data.CHARACTERS:
 			keys.append(str(Data.CHARACTERS[id]["sprite"]))
-			jobs.append(Pixel.portrait.bind(str(Data.CHARACTERS[id]["sprite"])))
+			jobs.append(Callable(Pixel, "portrait").bind(str(Data.CHARACTERS[id]["sprite"])))
 		for k in Pixel.SPECS:
 			if str(k).begins_with("env_") or str(k).begins_with("lamp") or str(k) in ["chest", "drone", "spirit"]:
 				keys.append(k)
 		for id in Data.WEAPONS:
-			jobs.append(Pixel.icon.bind(id))
+			jobs.append(Callable(Pixel, "icon").bind(id))
 		for id in Data.PASSIVES:
-			jobs.append(Pixel.icon.bind(id))
-		jobs.append(Pixel.shadow)
-		jobs.append(Pixel.glow)
+			jobs.append(Callable(Pixel, "icon").bind(id))
+		jobs.append(Callable(Pixel, "shadow"))
+		jobs.append(Callable(Pixel, "glow"))
 	for k in keys:
 		if not Pixel._cache.has(k):
-			jobs.append(Pixel.frames.bind(str(k)))
+			jobs.append(Callable(Pixel, "frames").bind(str(k)))
 	# Уже готовое не считаем — повторная загрузка заметно короче
 	var out: Array = []
 	for j in jobs:

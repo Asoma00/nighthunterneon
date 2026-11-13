@@ -243,7 +243,7 @@ func h_start(state: Dictionary, wseed: int) -> void:
 	lobby["ready1"] = false
 	lobby["ready2"] = false
 	lobby["client"] = true
-	var Data := preload("res://scripts/data.gd")
+	var Data := load("res://scripts/data.gd")
 	if mode == "client":
 		my_hero = Data.selected_character
 		if state.has("nick1"):
@@ -266,7 +266,7 @@ func h_start(state: Dictionary, wseed: int) -> void:
 func back_to_lobby() -> void:
 	in_game = false
 	main = null
-	var Data := preload("res://scripts/data.gd")
+	var Data := load("res://scripts/data.gd")
 	Data.coop = false
 	if mode == "client" and my_hero != "":
 		Data.selected_character = my_hero
@@ -281,8 +281,8 @@ func back_to_lobby() -> void:
 # ================= Убежище хоста =================
 
 func hub_state() -> Dictionary:
-	var Meta := preload("res://scripts/meta.gd")
-	var Data := preload("res://scripts/data.gd")
+	var Meta := load("res://scripts/meta.gd")
+	var Data := load("res://scripts/data.gd")
 	return {"buildings": Meta.buildings.duplicate(), "followers": Meta.followers.duplicate(true),
 		"levels_cleared": Meta.levels_cleared, "hero": Data.selected_character}
 
@@ -291,7 +291,7 @@ func hub_state() -> Dictionary:
 func h_welcome(state: Dictionary) -> void:
 	host_hub = state
 	status.emit("Вы в убежище хоста")
-	var Data := preload("res://scripts/data.gd")
+	var Data := load("res://scripts/data.gd")
 	Data.coop = false
 	Loader.go("res://hub.tscn")
 
@@ -313,7 +313,7 @@ func send_hub_pos(pos: Vector3, left: bool, moving: bool, hero: String) -> void:
 		return
 	if mode == "host" and not lobby["client"]:
 		return
-	rpc("hub_pos", pos, left, moving, hero, preload("res://scripts/meta.gd").nickname)
+	rpc("hub_pos", pos, left, moving, hero, load("res://scripts/meta.gd").nickname)
 
 
 @rpc("any_peer", "unreliable_ordered")
@@ -329,8 +329,8 @@ func hub_pos(pos: Vector3, left: bool, moving: bool, hero: String, nick := "") -
 func send_profile() -> void:
 	if mode != "client":
 		return
-	var Data := preload("res://scripts/data.gd")
-	var Meta := preload("res://scripts/meta.gd")
+	var Data := load("res://scripts/data.gd")
+	var Meta := load("res://scripts/meta.gd")
 	rpc_id(1, "c_profile", Data.selected_character, Meta.profile(Data.selected_character))
 
 
@@ -345,10 +345,10 @@ func c_profile(hero: String, prof: Dictionary) -> void:
 
 ## Хост в портале начинает вылазку для обоих.
 func start_run(level: int) -> void:
-	var Data := preload("res://scripts/data.gd")
+	var Data := load("res://scripts/data.gd")
 	if mode != "host" or not lobby["client"]:
 		return
-	var state := {"hero1": Data.selected_character, "hero2": peer_hero, "level": level, "nick1": preload("res://scripts/meta.gd").nickname}
+	var state := {"hero1": Data.selected_character, "hero2": peer_hero, "level": level, "nick1": load("res://scripts/meta.gd").nickname}
 	rpc("h_start", state, randi() % 2000000000 + 1)
 
 

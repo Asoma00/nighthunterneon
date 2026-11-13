@@ -3,7 +3,10 @@ extends Node
 ## Сохраняются в user://settings.cfg и применяются при каждом запуске.
 ## Подключён как автозагрузка «Settings».
 
-const Data := preload("res://scripts/data.gd")
+## Скрипты игры берём во время работы, а не при компиляции: автозагрузки компилируются
+## раньше, чем подключается пакет обновления, и иначе держали бы старые версии.
+var Data:
+	get: return load("res://scripts/data.gd")
 const PATH := "user://settings.cfg"
 const BASE := Vector2(1280, 720)  # под этот размер свёрстан интерфейс
 
@@ -688,7 +691,7 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and event.relative.length() > 2.0 and event.device != InputEvent.DEVICE_ID_EMULATION:
 		mouse_aim_t = Time.get_ticks_msec() / 1000.0
 	_track_input_mode(event)
-	preload("res://scripts/ui_focus.gd").on_input(event)
+	load("res://scripts/ui_focus.gd").on_input(event)
 
 
 func _setup_input() -> void:
@@ -723,7 +726,7 @@ func _setup_input() -> void:
 		jb.button_index = pair[1]
 		if not InputMap.action_has_event(pair[0], jb):
 			InputMap.action_add_event(pair[0], jb)
-	var UiF := preload("res://scripts/ui_focus.gd")
+	var UiF := load("res://scripts/ui_focus.gd")
 	UiF.pad_mode = not Input.get_connected_joypads().is_empty()
 	Input.joy_connection_changed.connect(func(_d, connected):
 		if connected:

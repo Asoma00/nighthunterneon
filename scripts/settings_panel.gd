@@ -301,6 +301,7 @@ func _build_common_rows(grid: GridContainer) -> void:
 			else:
 				Data.sfx_volume = val
 				Sound.play("gem", 0.0, 1.0, 0.0, 0.08)
+			preload("res://scripts/boot.gd").sync_volume(Data)
 			Sound.apply_volumes())
 		grid.add_child(slider)
 

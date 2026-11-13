@@ -21,6 +21,8 @@ var _stars: Array = []
 
 
 func _ready() -> void:
+	# Старые установки: выбросить из кэша скрипты, загруженные до подключения обновления
+	preload("res://scripts/boot.gd").refresh()
 	shown = true
 	# Тёмный фон и между сценами — никакого серого кадра при переходе в меню
 	RenderingServer.set_default_clear_color(Color(0, 0, 0))
