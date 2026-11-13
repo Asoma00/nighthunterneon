@@ -812,7 +812,9 @@ func _sync_props3d() -> void:
 		if nxt != cur:
 			e[3] = nxt
 			for c in n.get_children():
-				if c is GeometryInstance3D:
+				if c is MeshInstance3D and c.has_meta("vox"):
+					Props3D.set_fade(c, nxt)
+				elif c is GeometryInstance3D:
 					(c as GeometryInstance3D).transparency = nxt
 		i -= 1
 

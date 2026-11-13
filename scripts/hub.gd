@@ -536,7 +536,7 @@ func _rebuild_building(id: String) -> void:
 		_add(root, _box(0.6, 0.6, 0.6), plank, Vector3(1.0, 0.65, 1.0), Vector3(0, 20, 0))
 		_add(root, _cyl(0.12, 0.12, 1.6, 6), plank, Vector3(-0.6, 0.45, 1.1), Vector3(0, 0, 90))
 		_add(root, _cyl(0.12, 0.12, 1.6, 6), plank, Vector3(-0.6, 0.68, 1.1), Vector3(0, 10, 90))
-		_label3d(root, "%s\nПОСТРОИТЬ — %s" % [info["name"], Meta.cost_text(Meta.build_cost(id))] if id != "hall" else "%s\nОТКРЫТА — ИДЁТ РЕМОНТ" % info["name"], Vector3(0, 3.5, 0), Color(col, 0.9), 30)
+		_label3d(root, "%s\nСТРОЙКА — У ТРАКТИРЩИКА" % info["name"] if id != "hall" else "%s\nОТКРЫТА — ИДЁТ РЕМОНТ" % info["name"], Vector3(0, 3.5, 0), Color(col, 0.9), 30)
 		if id == "hall":
 			# Таверна работает и во время стройки: временный вход под навесом
 			_add(root, _box(2.2, 1.6, 1.6), _mat(Color(0.35, 0.25, 0.18), 0.9, 0.0, "wood", 1.4), Vector3(0, 1.1, 0.6))
@@ -561,6 +561,12 @@ func _rebuild_building(id: String) -> void:
 				Vector3(-0.7 + j * 0.7, top + h * 0.5, w / 2.0 + 0.02))
 		if i == 0:
 			_door(root, w / 2.0, col)
+			# Двери со всех сторон: войти можно откуда угодно
+			for a in [PI / 2.0, PI, -PI / 2.0]:
+				var piv := Node3D.new()
+				piv.rotation.y = a
+				root.add_child(piv)
+				_door(piv, w / 2.0, col)
 		top += h
 
 	# Особая верхушка у каждого здания
@@ -1221,7 +1227,9 @@ func _update_interaction() -> void:
 	for id in Meta.BUILDINGS:
 		var bp: Vector3 = Meta.BUILDINGS[id]["pos"]
 		var d := Vector2(p.x - bp.x, p.z - bp.z).length()
-		if d < 3.4 and d < best_d:
+		# Расстояние до стены фундамента (3.6 × 3.6) — подойти можно с любой стороны
+		var edge := Vector2(maxf(absf(p.x - bp.x) - 1.8, 0.0), maxf(absf(p.z - bp.z) - 1.8, 0.0)).length()
+		if edge < 1.5 and d < best_d:
 			best = id
 			best_d = d
 	_near = best
@@ -1241,8 +1249,12 @@ func _update_interaction() -> void:
 		if (lvl > 0 or best == "hall") and not _net_client:
 			_prompt.text = _pk() + "Войти: %s%s" % [Meta.BUILDINGS[best]["name"], "" if lvl == 0 else "  (ур. %d)" % lvl]
 			_near = "enter:" + best
-		else:
+		elif _net_client:
 			_prompt.text = _pk() + "%s  %s" % [Meta.BUILDINGS[best]["name"], ("— построить" if lvl == 0 else "(ур. %d)" % lvl)]
+		else:
+			# Снаружи здания прокачки нет: стройка — у трактирщика в таверне
+			_prompt.text = "%s — ещё не построено  •  стройка у трактирщика в таверне" % Meta.BUILDINGS[best]["name"]
+			_near = "info:" + best
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1253,6 +1265,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_interior_act(_near)
 			elif _near.begins_with("enter:"):
 				_enter_building(_near.substr(6))
+			elif _near.begins_with("info:"):
+				_toast_text("Стройку заказывают у трактирщика Бруно в таверне")
 			else:
 				_open_panel(_near)
 	elif event.is_action_pressed("pause") or (event.is_action_pressed("ui_cancel") and _panel_id != ""):
@@ -1605,6 +1619,7 @@ func _fill_panel() -> void:
 		_panel_box.add_child(_centered(_label("МАКСИМАЛЬНЫЙ УРОВЕНЬ", 18, GOLD)))
 
 	if id == "hall" and _inside == "hall":
+		_fill_build_orders()
 		_fill_contracts()
 	elif id == "hall":
 		_panel_box.add_child(_centered(_label("ГЕРОИ", 22, GOLD)))
@@ -2222,8 +2237,12 @@ func _make_npc(role: String, pos: Vector3, seed: int, nm: String) -> Dictionary:
 	else:
 		frames = Pixel.frames("citizen_%s_%d" % [role, seed])
 	var pair := _sprite_pair(node, frames)
+	if role != "robot":
+		# Жители — чуть крупнее и светлее: не теряются на тёмной площади ночью
+		node.scale = Vector3.ONE * 1.1
+		(pair[0] as Sprite3D).modulate = Color(1.3, 1.27, 1.35)
 	if role == "kid":
-		node.scale = Vector3.ONE * 0.75
+		node.scale = Vector3.ONE * 0.8
 	if role == "robot":
 		node.scale = Vector3.ONE * 0.8
 		_light(node, Vector3(0, 0.6, 0.3), CYAN, 0.5, 2.5)
@@ -3563,14 +3582,6 @@ func _decor_shrine(root: Node3D, o: Vector3, w: float, d: float, wood: Material,
 		_add(root, _sphere(0.08), _emat(Color(1.0, 0.5, 0.2), 2.4), p + Vector3(0, 1.05, 0))
 		_particles(root, p + Vector3(0, 1.15, 0), Color(0.75, 0.7, 0.9), 8, Vector3(0.05, 0.02, 0.05), Vector3(0, 0.25, 0), 3.0, 0.14)
 		_obstacles.append([o + p, 0.3])
-	# Чаша с водой и светлячки-лотосы
-	_add(root, _cyl(0.7, 0.55, 0.45, 16), stone, Vector3(0, 0.22, 2.9))
-	_add(root, _cyl(0.62, 0.62, 0.02, 16), _emat(Color(0.3, 0.6, 1.0), 0.8, 0.8), Vector3(0, 0.45, 2.9))
-	for i in 3:
-		var a := i * TAU / 3.0
-		var lo := _add(root, _sphere(0.07), _emat(Color(1.0, 0.6, 0.9), 2.4), Vector3(cos(a) * 0.35, 0.5, 2.9 + sin(a) * 0.35))
-		_bobbers.append([lo, 0.5, 0.02])
-	_obstacles.append([o + Vector3(0, 0, 2.9), 0.75])
 	# Аналой с раскрытой книгой — «Хроника Охотников»
 	_add(root, _cyl(0.06, 0.12, 1.0, 6), wood, Vector3(-3.6, 0.5, 3.0))
 	_add(root, _box(0.6, 0.05, 0.45), wood, Vector3(-3.6, 1.05, 3.0), Vector3(-25, 0, 0))
@@ -3740,7 +3751,13 @@ func _fade() -> void:
 	create_tween().tween_property(_fade_rect, "modulate:a", 0.0, 0.45)
 
 
+var _enter_side := Vector3(0, 0, 1)
+
+
 func _enter_building(id: String) -> void:
+	var bp0: Vector3 = Meta.BUILDINGS[id]["pos"]
+	var rel := _avatar.position - bp0
+	_enter_side = Vector3(signf(rel.x), 0, 0) if absf(rel.x) > absf(rel.z) else Vector3(0, 0, signf(rel.z) if rel.z != 0.0 else 1.0)
 	var room := _room(id)
 	var info: Dictionary = INTERIORS[id]
 	_inside = id
@@ -3767,7 +3784,7 @@ func _exit_building() -> void:
 		(h["node"] as Node3D).queue_free()
 	_tav_heroes.clear()
 	var bp: Vector3 = Meta.BUILDINGS[id]["pos"]
-	_avatar.position = _collide(bp + Vector3(0, 0, 2.9), 0.5)
+	_avatar.position = _collide(bp + _enter_side * 2.9, 0.5)
 	_cam_target = _avatar.position
 	_fade()
 	Sound.play("click")
@@ -4438,3 +4455,35 @@ func _fill_memories(ch: int) -> void:
 	_back_to_path()
 	_add_close()
 
+
+
+## Стройка убежища — у трактирщика: здания, которых ещё нет.
+func _fill_build_orders() -> void:
+	var todo: Array = []
+	for bid in Meta.BUILDINGS:
+		if bid != "hall" and Meta.level(bid) == 0:
+			todo.append(bid)
+	if todo.is_empty():
+		return
+	_panel_box.add_child(_centered(_label("СТРОЙКА УБЕЖИЩА", 22, GOLD)))
+	for bid in todo:
+		var info: Dictionary = Meta.BUILDINGS[bid]
+		var col: Color = info["color"]
+		_panel_box.add_child(_centered(_label(info["name"], 18, col.lightened(0.2))))
+		var d := _label(info["desc"], 14, Color(0.8, 0.8, 0.95))
+		d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		d.custom_minimum_size = Vector2(minf(520, _avail()), 0)
+		d.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_panel_box.add_child(_centered(d))
+		if Meta.building_busy(bid):
+			_panel_box.add_child(_centered(_label("⚒ Идёт стройка — завершится через %d вылаз." % int(Meta.construct["left"]), 16, GOLD)))
+			continue
+		_panel_box.add_child(_centered(_build_cost_row(bid)))
+		var up := _button("ПОСТРОИТЬ — " + Meta.cost_text(Meta.build_cost(bid)), col, Meta.can_upgrade(bid))
+		up.custom_minimum_size.x = 520 if not _portrait() else 440
+		var b2: String = bid
+		up.pressed.connect(func(): _do_upgrade(b2))
+		_panel_box.add_child(_centered(up))
+		var why := Meta.upgrade_block(bid)
+		if why != "":
+			_panel_box.add_child(_centered(_label("⊘ " + why, 14, Color(1.0, 0.6, 0.6))))

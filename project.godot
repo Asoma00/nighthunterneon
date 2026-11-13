@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Ночь охотника: Неон"
-config/version="0.15.5"
+config/version="0.15.6"
 run/main_scene="res://splash.tscn"
 boot_splash/show_image=false
 boot_splash/bg_color=Color(0.02, 0.01, 0.04, 1)
@@ -52,3 +52,4 @@ textures/vram_compression/import_etc2_astc=true
 
 textures/canvas_textures/default_texture_filter=0
 viewport/hdr_2d=true
+environment/defaults/default_clear_color=Color(0, 0, 0, 1)

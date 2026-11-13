@@ -9,6 +9,7 @@ const BPM := 96.0
 const STAGES := [3.8, 3.8, 4.8]
 
 static var shown := false
+static var to_menu := false     # меню после заставки — зажигается неоном
 var _t := 0.0
 var _all_t := 0.0
 var _stage := -1
@@ -21,6 +22,8 @@ var _stars: Array = []
 
 func _ready() -> void:
 	shown = true
+	# Тёмный фон и между сценами — никакого серого кадра при переходе в меню
+	RenderingServer.set_default_clear_color(Color(0, 0, 0))
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	for i in 70:
 		_stars.append(Vector3(randf(), randf() * 0.55, randf()))
@@ -90,6 +93,7 @@ func _finish() -> void:
 	if _done:
 		return
 	_done = true
+	to_menu = true
 	var tw := create_tween()
 	tw.tween_property(self, "modulate", Color(0, 0, 0, 1), 0.4)
 	tw.tween_callback(func(): get_tree().change_scene_to_file(MENU))

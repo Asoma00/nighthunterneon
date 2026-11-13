@@ -506,6 +506,7 @@ static func _vox_build(kind: String, rng: RandomNumberGenerator) -> Node3D:
 	var root := Node3D.new()
 	var mi := MeshInstance3D.new()
 	mi.mesh = _vox_cache[key]
+	mi.set_meta("vox", true)
 	root.add_child(mi)
 	var sc := rng.randf_range(0.9, 1.12) * (1.3 if kind.begins_with("tree") else (1.2 if kind.begins_with("pine") else 1.0))
 	root.scale = Vector3(sc, sc, sc)
@@ -658,3 +659,37 @@ static func _vox_surface(mesh: ArrayMesh, g: Dictionary, glow: Dictionary) -> vo
 				for idx in [0, 1, 2, 0, 2, 3]:
 					st.add_vertex(base + (q[idx] as Vector3) * VOX)
 		st.commit(mesh)
+
+
+## Полупрозрачность воксельной модели (герой за деревом): прозрачность с предпроходом
+## глубины — видна только внешняя оболочка, ствол и внутренние грани не просвечивают.
+static var _fade_cache := {}
+
+
+static func fade_mats(k: float) -> Array:
+	var q := int(round(k * 10.0))
+	if not _fade_cache.has(q):
+		var a := 1.0 - float(q) / 10.0
+		var m := StandardMaterial3D.new()
+		m.vertex_color_use_as_albedo = true
+		m.roughness = 0.9
+		m.albedo_color = Color(1, 1, 1, a)
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS
+		var gm := StandardMaterial3D.new()
+		gm.vertex_color_use_as_albedo = true
+		gm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		gm.albedo_color = Color(2.2, 2.2, 2.2, a)
+		gm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS
+		_fade_cache[q] = [m, gm]
+	return _fade_cache[q]
+
+
+static func set_fade(mi: MeshInstance3D, k: float) -> void:
+	var n := mi.mesh.get_surface_count() if mi.mesh else 0
+	if k <= 0.001:
+		for i in n:
+			mi.set_surface_override_material(i, null)
+		return
+	var ms := fade_mats(k)
+	for i in n:
+		mi.set_surface_override_material(i, ms[mini(i, 1)])

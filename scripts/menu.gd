@@ -34,6 +34,7 @@ var _redirect := false
 func _ready() -> void:
 	# Заставка при каждом запуске игры. На ПК с автообновлением стартовая сцена берётся
 	# из старого файла игры (меню), поэтому заставку запускаем отсюда.
+	RenderingServer.set_default_clear_color(Color(0, 0, 0))
 	if not preload("res://scripts/splash.gd").shown:
 		_redirect = true
 		set_process(false)
@@ -70,6 +71,78 @@ func _ready() -> void:
 	_ver_label = ver
 	_on_upd_status()
 	Updater.status_changed.connect(_on_upd_status)
+	if _page_name == "main" and (preload("res://scripts/splash.gd").to_menu or not _ignited_once):
+		preload("res://scripts/splash.gd").to_menu = false
+		_neon_ignite()
+
+
+# ---------- Неоновое зажигание меню ----------
+# Меню загорается как неоновые лампы: фон медленно разгорается, логотип и кнопки
+# по очереди «моргают», потрескивают и вспыхивают в полную силу.
+
+static var _ignited_once := false
+var _ign: Array = []      # [узел, начало, длительность, зерно, горит]
+var _ign_t := -1.0
+
+
+func _neon_ignite() -> void:
+	_ignited_once = true
+	_ign.clear()
+	var at := 0.35
+	_ign.append([_bg, 0.1, 2.2, 0.37, false])
+	var page: Control = _pages["main"]
+	for c in page.get_children():
+		if not (c is CanvasItem) or not (c as CanvasItem).visible:
+			continue
+		var dur := 0.8 if c is Button else (1.3 if at < 0.6 else 0.6)
+		_ign.append([c, at, dur, randf() * 10.0, false])
+		at += 0.7 if at < 0.6 else 0.2
+	for c in get_children():
+		if c is Button or c == _ver_label:
+			_ign.append([c, at, 0.5, randf() * 10.0, false])
+			at += 0.15
+	for e in _ign:
+		(e[0] as CanvasItem).modulate = Color(0.03, 0.03, 0.05, 1.0)
+	_ign_t = 0.0
+
+
+func _ignite_tick(delta: float) -> void:
+	if _ign_t < 0.0:
+		return
+	# Первый кадр после загрузки меню бывает очень длинным — не перескакиваем анимацию
+	_ign_t += minf(delta, 1.0 / 30.0)
+	var all_done := true
+	var sparks := 0
+	for e in _ign:
+		var n: CanvasItem = e[0]
+		if not is_instance_valid(n):
+			continue
+		var k: float = (_ign_t - float(e[1])) / float(e[2])
+		var m := 0.03
+		if k >= 1.0:
+			m = 1.0
+		elif k >= 0.0:
+			all_done = false
+			# Мерцание лампы: чем ближе к концу — тем чаще горит
+			var r := fmod(abs(sin(float(e[3]) * 91.7 + floor(_ign_t * 26.0) * 12.9898) * 43758.5453), 1.0)
+			var on := r < 0.25 + k * 0.95
+			m = lerpf(0.55, 1.25, k) if on else 0.05 + 0.08 * k
+			if n == _bg:
+				# Фон разгорается мягче: лишь подрагивает, не гаснет целиком
+				m = lerpf(0.25, 1.0, k) if on else lerpf(0.08, 0.6, k)
+			if on and not e[4] and sparks < 2:
+				sparks += 1
+				Sound.play("zap", -20.0 + 6.0 * k, randf_range(1.4, 2.2), 0.1)
+			e[4] = on
+		else:
+			all_done = false
+		n.modulate = Color(m, m, m, 1.0)
+	if all_done:
+		for e in _ign:
+			if is_instance_valid(e[0]):
+				(e[0] as CanvasItem).modulate = Color.WHITE
+		_ign_t = -1.0
+		Sound.play("zap", -10.0, 0.8)
 
 
 var _ver_label: Label
@@ -208,6 +281,7 @@ func _build_background() -> void:
 
 func _process(delta: float) -> void:
 	_t += delta
+	_ignite_tick(delta)
 	if _pages.has(_page_name) and _page_name != "coop":
 		UiFocus.keep(_pages[_page_name], _focus)
 	_coop_tick(delta)
