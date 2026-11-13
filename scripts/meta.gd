@@ -848,6 +848,7 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 	best_time = maxf(best_time, time_alive)
 	r.merge(extra)
 	r["prog"] = preload("res://scripts/lore.gd").settle(run, victory)
+	stats.erase("buff")   # благословение убежища действует одну вылазку
 	last_reward = r
 	save()
 	return r

@@ -389,6 +389,16 @@ static func apply_run_mods(m: Dictionary) -> void:
 	m["xp"] = float(m["xp"]) * (1.0 + 0.04 * perk("scholar")) * (1.08 if set_done(2) else 1.0)
 	m["chest"] = float(m["chest"]) + 0.04 * perk("luck")
 	m["revive"] = perk("second")
+	# Благословение из убежища — на одну вылазку
+	match str(Meta.stats.get("buff", "")):
+		"well":
+			m["xp"] = float(m["xp"]) * 1.08
+		"fire":
+			m["damage"] = float(m["damage"]) * 1.05
+		"train":
+			m["cooldown"] = float(m["cooldown"]) * 0.94
+		"garden":
+			m["hp"] = float(m["hp"]) + 15.0
 
 
 # ---------------- Итоги вылазки ----------------
@@ -458,3 +468,29 @@ static func summary_lines(p: Dictionary) -> Array:
 	for id in p.get("memories", []):
 		out.append("✦ Осколок памяти: «%s»" % memory(id)["t"])
 	return out
+
+
+# ---------------- Благословения убежища (на одну вылазку) ----------------
+
+const BUFFS := {
+	"well": {"name": "Монетка в колодец", "d": "+8% опыта", "icon": "◎"},
+	"fire": {"name": "Байка у костра", "d": "+5% урона", "icon": "♨"},
+	"train": {"name": "Разминка на плацу", "d": "−6% перезарядки", "icon": "⚔"},
+	"garden": {"name": "Светоцвет за пазухой", "d": "+15 здоровья", "icon": "✿"},
+}
+
+
+static func buff() -> String:
+	return str(Meta.stats.get("buff", ""))
+
+
+static func buff_text() -> String:
+	var b := buff()
+	if not BUFFS.has(b):
+		return ""
+	return "%s %s: %s" % [BUFFS[b]["icon"], BUFFS[b]["name"], BUFFS[b]["d"]]
+
+
+static func set_buff(id: String) -> void:
+	Meta.stats["buff"] = id
+	Meta.save()

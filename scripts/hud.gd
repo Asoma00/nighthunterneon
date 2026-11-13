@@ -130,6 +130,9 @@ func _update_tracker() -> void:
 		lines.append("◆ Сюжет: %s — %s" % [st["title"], main.Meta.story_goal_text(st)])
 	if main.challenge != "":
 		lines.append("⚠ %s  •  угроза %d" % [main.Meta.CHALLENGES[main.challenge]["name"], main.threat])
+	var bt: String = main.Lore.buff_text()
+	if bt != "":
+		lines.append(bt)
 	var Q = main.QuestsScript
 	for q in main.active_quests:
 		var pr := mini(Q.progress(q, main.run), int(q["g"]))

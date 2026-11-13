@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Ночь охотника: Неон"
-config/version="0.15.9"
+config/version="0.15.10"
 run/main_scene="res://splash.tscn"
 boot_splash/show_image=false
 boot_splash/bg_color=Color(0.02, 0.01, 0.04, 1)

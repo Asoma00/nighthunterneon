@@ -865,6 +865,7 @@ func _build_decor() -> void:
 var _obstacles: Array = []
 var _flicker: Array = []   # [материал, базовая яркость, фаза]
 var _sway: Array = []      # [узел, фаза, сила]
+var _cycle: Array = []     # [материал, фаза] — плавный перелив цвета (музыкальный автомат)
 var _drones: Array = []    # [узел, радиус, скорость, угол, высота]
 
 
@@ -1033,6 +1034,11 @@ func _animate_decor(delta: float) -> void:
 		m.emission_energy_multiplier = f[1] * k
 	for s in _sway:
 		(s[0] as Node3D).rotation.y = sin(_t * 2.2 + s[1]) * s[2]
+	for c in _cycle:
+		var cm: StandardMaterial3D = c[0]
+		var col: Color = Color.from_hsv(fmod(_t * 0.08 + float(c[1]), 1.0), 0.75, 1.0)
+		cm.emission = col
+		cm.albedo_color = col
 	for d in _drones:
 		d[3] += d[2] * delta
 		var n: Node3D = d[0]
@@ -1216,6 +1222,18 @@ func _update_interaction() -> void:
 	if dl < 3.6 and dl < best_d:
 		best = "library"
 		best_d = dl
+	# Места для отдыха и дел: колодец, костёр, плац, сад, робот
+	for spot in [["well", WELL, 2.4], ["fire", CAMPFIRE, 3.4], ["train", TRAINING, 3.0], ["garden", GARDEN, 3.0]]:
+		var ds := Vector2(p.x - spot[1].x, p.z - spot[1].z).length()
+		if ds < float(spot[2]) and ds < best_d:
+			best = "act:" + str(spot[0])
+			best_d = ds
+	for o in _villagers:
+		if o["role"] == "robot":
+			var dr := (o["node"] as Node3D).position.distance_to(p)
+			if dr < 1.3 and dr < best_d:
+				best = "act:robot"
+				best_d = dr
 	var dm := Vector2(p.x - MONUMENT.x, p.z - MONUMENT.z).length()
 	if dm < 3.2 and dm < best_d:
 		best = "path"
@@ -1240,6 +1258,13 @@ func _update_interaction() -> void:
 		_prompt.text = _pk() + "Библиотека — всё об открытом"
 	elif best == "board":
 		_prompt.text = _pk() + "Доска заданий"
+	elif best.begins_with("act:"):
+		var cur := Lore.buff()
+		var act := best.substr(4)
+		var txt: String = {"well": "Бросить монетку в колодец (5 ◆) — %s", "fire": "Посидеть у костра и послушать байку — %s",
+			"train": "Размяться на плацу — %s", "garden": "Сорвать светоцвет — %s", "robot": "Похлопать робота по корпусу%s"}[act]
+		var eff := "" if act == "robot" else "на вылазку: " + str(Lore.BUFFS[act]["d"]) + ("  (сейчас: %s)" % Lore.BUFFS[cur]["name"] if cur != "" and cur != act else ("  ✓ уже есть" if cur == act else ""))
+		_prompt.text = _pk() + txt % eff
 	elif best == "path":
 		var pp := Lore.perk_points()
 		_prompt.text = _pk() + "Монумент охотников — путь, навыки, летопись" + ("  (очков: %d)" % pp if pp > 0 else "")
@@ -1265,6 +1290,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_interior_act(_near)
 			elif _near.begins_with("enter:"):
 				_enter_building(_near.substr(6))
+			elif _near.begins_with("act:"):
+				_hub_act(_near.substr(4))
 			elif _near.begins_with("info:"):
 				_toast_text("Стройку заказывают у трактирщика Бруно в таверне")
 			else:
@@ -1573,6 +1600,9 @@ func _fill_panel() -> void:
 		return
 	if id == "path":
 		_fill_path()
+		return
+	if id == "campfire":
+		_fill_campfire()
 		return
 	if id.begins_with("tale:"):
 		_fill_tale(id.substr(5))
@@ -2349,12 +2379,10 @@ func _update_villagers(delta: float) -> void:
 				# Обход вдоль стены
 				v["ang"] = float(v["ang"]) + float(v["dir"]) * delta * 0.07
 				v["target"] = Vector3(cos(v["ang"]), 0, sin(v["ang"])) * 20.0
-			"kid":
-				# Бегают за друг другом и по площади
-				if node.position.distance_to(v["target"]) < 0.4:
-					var a := randf() * TAU
-					v["target"] = Vector3(cos(a), 0, sin(a) + 0.6) * randf_range(1.0, 5.5)
-			"merchant", "smith", "monk", "musician", "elder", "trainee", "barkeep", "blacksmith", "priestess", "engineer", "commander":
+			"kid", "walker", "gardener", "elder":
+				# У каждого жителя свои занятия: ходит по делам и работает на месте
+				_job_tick(v, delta)
+			"merchant", "smith", "monk", "musician", "trainee", "barkeep", "blacksmith", "priestess", "engineer", "commander":
 				v["target"] = v["home"]
 				_npc_work(v, delta)
 			"robot":
@@ -2424,12 +2452,24 @@ func _update_villagers(delta: float) -> void:
 			f = int(v["t"] * 8.0) % 4
 			node.position.y = 0.25 + sin(float(v["t"]) * 4.0) * 0.06
 		else:
+			var pose: String = v.get("pose", "")
 			if fr["base"].size() >= Pixel.CITIZEN_FRAMES:
-				f = (6 + int(v["t"] * (16.0 if role == "kid" else 12.0)) % 8) if moving else int(v["t"] * 5.0) % 6
+				if moving:
+					f = 6 + int(v["t"] * (16.0 if role == "kid" else 12.0)) % 8
+				elif pose == "work" or (role in ["smith", "blacksmith", "engineer", "trainee"] and v.has("home")):
+					f = 14 + int(v["t"] * 7.0) % 5
+				else:
+					f = int(v["t"] * 5.0) % 6
 			else:
 				f = (4 + int(v["t"] * (12.0 if role == "kid" else 9.0)) % 4) if moving else int(v["t"] * 3.0) % 4
 		(v["base"] as Sprite3D).texture = fr["base"][f % fr["base"].size()]
 		(v["emit"] as Sprite3D).texture = fr["emit"][f % fr["emit"].size()]
+		# Сидит / стоит на коленях — спрайт ниже
+		var low := 0.0 if moving else {"sit": 0.22, "kneel": 0.14}.get(v.get("pose", ""), 0.0) as float
+		var by: float = v.get("by", (v["base"] as Sprite3D).position.y)
+		v["by"] = by
+		(v["base"] as Sprite3D).position.y = by - low
+		(v["emit"] as Sprite3D).position.y = by - low
 		# Имя — когда герой рядом
 		(v["name"] as Label3D).visible = node.position.distance_to(_avatar.position) < 3.5
 		# Реплики по роли
@@ -3490,13 +3530,20 @@ func _decor_tavern(root: Node3D, o: Vector3, w: float, d: float, wood: Material,
 		_add(root, _cyl(0.02, 0.08, 0.6, 6), skull, Vector3(5.2 + s * 0.4, 3.05, bk + 0.35), Vector3(0, 0, -s * 40))
 		_add(root, _sphere(0.06), _emat(Color(1.0, 0.2, 0.3), 3.0), Vector3(5.2 + s * 0.12, 2.9, bk + 0.6))
 	_label3d(root, "Альфа-вожак, 1-я Ночь", Vector3(5.2, 3.45, bk + 0.4), Color(0.9, 0.8, 0.6), 14)
-	# Неоновый музыкальный автомат
-	_add(root, _box(0.9, 1.5, 0.6), _mat(Color(0.3, 0.1, 0.25), 0.4, 0.4), Vector3(7.6, 0.75, -3.6))
-	var jb := _add(root, _box(0.7, 0.7, 0.05), _emat(MAGENTA, 1.8), Vector3(7.6, 1.0, -3.28))
-	_flicker.append([jb.material_override, 1.8, 0.0])
-	_add(root, _cyl(0.45, 0.45, 0.6, 16), _emat(CYAN, 1.2, 0.6), Vector3(7.6, 1.5, -3.6), Vector3(90, 0, 0))
-	_particles(root, Vector3(7.6, 1.8, -3.3), Color(1.0, 0.5, 1.0), 4, Vector3(0.3, 0.1, 0.1), Vector3(0, 0.4, 0), 2.5, 0.07)
-	_rob(o, Vector3(7.6, 0, -3.6), 0.55, 0.4)
+	# Неоновый музыкальный автомат: корпус, арка сверху, светящаяся витрина.
+	# Без прозрачных деталей и мигания — цвет витрины плавно переливается.
+	var jp := Vector3(7.6, 0, -3.6)
+	var jbody := _mat(Color(0.3, 0.1, 0.25), 0.4, 0.4)
+	_add(root, _box(0.9, 1.3, 0.6), jbody, jp + Vector3(0, 0.65, 0))
+	_add(root, _cyl(0.45, 0.45, 0.6, 16), jbody, jp + Vector3(0, 1.3, 0), Vector3(90, 0, 0))
+	var jscr := _add(root, _box(0.66, 0.5, 0.02), _emat(MAGENTA, 1.6), jp + Vector3(0, 0.95, 0.31))
+	var jarc := _add(root, _torus(0.36, 0.42), _emat(CYAN, 1.8), jp + Vector3(0, 1.3, 0.31), Vector3(90, 0, 0))
+	for i in 3:
+		_add(root, _box(0.5, 0.04, 0.02), _emat([GOLD, CYAN, MAGENTA][i], 1.4), jp + Vector3(0, 0.3 + i * 0.1, 0.31))
+	_cycle.append([jscr.material_override, 0.0])
+	_cycle.append([jarc.material_override, 0.5])
+	_particles(root, jp + Vector3(0, 1.9, 0.3), Color(1.0, 0.5, 1.0), 4, Vector3(0.3, 0.1, 0.1), Vector3(0, 0.4, 0), 2.5, 0.07)
+	_rob(o, jp, 0.55, 0.4)
 	# Книжный шкаф и кот на бочке
 	_books(root, Vector3(-w / 2.0 + 0.4, 0, -3.8), 1.2, rng)
 	_rob(o, Vector3(-w / 2.0 + 0.4, 0, -3.8), 0.6, 0.3)
@@ -4513,3 +4560,326 @@ func _sprite_ok(fr: Dictionary) -> bool:
 				if n > 20:
 					return true
 	return false
+
+
+
+# ================= Занятия жителей =================
+# У каждого жителя — свой набор дел. Дело — цепочка шагов: дойти до места,
+# поработать там (анимация, искры, капли, листья…), что-то понести с собой.
+
+const JOB_SETS := {
+	"Мира": ["gate_watch", "monument_flowers", "warm_fire", "letters_read"],
+	"Лекс": ["terminal", "board_read", "portal_scan", "antenna"],
+	"Ада": ["herbs", "bandage", "pray", "water"],
+	"Нико": ["map_sketch", "portal_scan", "gate_watch", "board_read"],
+	"Рей": ["lantern_fix", "robot_fix", "crates", "terminal"],
+	"Зоя": ["letters", "letters", "water", "warm_fire"],
+	"Флора": ["water_plants", "herbs", "flowers_market"],
+	"Бабушка Гедда": ["sit_fire", "tell_story", "monument_flowers"],
+	"Старый Йорг": ["sit_fire", "tell_story", "library_read"],
+	"Марта": ["sit_fire", "crates", "water"],
+	"_walker": ["water", "crates", "sit_fire", "board_read", "monument_flowers", "lantern_fix", "market_shop"],
+	"_kid": ["tag", "pebbles", "chase_robot", "ball", "training_watch"],
+	"_gardener": ["water_plants", "herbs", "flowers_market"],
+	"_elder": ["sit_fire", "tell_story", "sit_fire"],
+}
+
+const JOB_SAY := {
+	"water": ["Вода в колодце светится…", "Тяжёлое ведро!"], "crates": ["Куда это нести?", "Раз-два, взяли!"],
+	"lantern_fix": ["Фонарь опять мигает.", "Контакт отошёл…"], "letters": ["Письмо для вас!", "Почта из Медного островка!"],
+	"monument_flowers": ["Помним каждого.", "Покойтесь с миром, охотники."], "terminal": ["Клац-клац…", "Сигнал пойман!"],
+	"board_read": ["Новые задания…", "Хм, кто возьмётся?"], "portal_scan": ["Фон в норме.", "Портал гудит."],
+	"herbs": ["Светоцвет созрел.", "Это — для мазей."], "bandage": ["Не дёргайся.", "До свадьбы заживёт."],
+	"pray": ["Свет, храни их.", "…"], "map_sketch": ["Здесь Врата… и здесь…", "Карта почти готова."],
+	"robot_fix": ["Б-12, стой смирно!", "Новая щётка — как новенький."], "warm_fire": ["Огонь греет.", "Хорошо у костра."],
+	"sit_fire": ["Тепло…", "Ох, мои кости."], "tell_story": ["Слушайте, дети: давным-давно…", "Был у нас один охотник…"],
+	"gate_watch": ["Кто идёт?", "Тихо сегодня."], "tag": ["Догони!", "Ты водишь!"], "pebbles": ["Бульк!", "Кто дальше?"],
+	"chase_robot": ["Робот, стой!", "Хи-хи!"], "ball": ["Лови!", "Пас!"], "training_watch": ["Ух ты!", "Я тоже так смогу!"],
+	"water_plants": ["Пейте, мои хорошие.", "Растите!"], "flowers_market": ["Свежий светоцвет!", "Кому цветы?"],
+	"market_shop": ["Почём кристаллы?", "Дороговато…"], "library_read": ["Интересно…", "Где-то тут было про Омегу."],
+	"antenna": ["Чуть левее…", "Есть приём!"], "letters_read": ["От него ничего…", "Может, завтра."],
+}
+
+
+func _spot(id: String) -> Vector3:
+	match id:
+		"garden":
+			return GARDEN + Vector3(randf_range(-2.4, 2.4), 0, randf_range(-1.4, 1.4))
+		"training":
+			return TRAINING + Vector3(0.2, 0, randf_range(-1.6, 1.6))
+		"monument":
+			return MONUMENT + Vector3(randf_range(-1.2, 1.2), 0, 2.5)
+		"library":
+			return LIBRARY + (Vector3(-LIBRARY.x, 0, -LIBRARY.z).normalized() * 2.6)
+		"fire_seat":
+			var a := PI * 0.15 + (randi() % 4) * PI * 0.45
+			return CAMPFIRE + Vector3(cos(a), 0, sin(a)) * 2.1
+		"lantern":
+			return [WELL + Vector3(-1.6, 0, 0.6), BOARD + Vector3(1.6, 0, 0.8), PORTAL_POS + Vector3(3.4, 0, 2.6), CAMPFIRE + Vector3(3.4, 0, 0)][randi() % 4]
+		"robot":
+			for o in _villagers:
+				if o["role"] == "robot":
+					return (o["node"] as Node3D).position + Vector3(0.6, 0, 0.3)
+			return WELL
+		"square":
+			var a2 := randf() * TAU
+			return Vector3(cos(a2), 0, sin(a2)) * randf_range(1.5, 5.5)
+		"door":
+			var ids := Meta.BUILDINGS.keys()
+			return _place(ids[randi() % ids.size()])
+		"house":
+			var a3 := randf() * TAU
+			return Vector3(cos(a3), 0, sin(a3)) * randf_range(12.0, 17.0)
+	return _place(id)
+
+
+## Шаги дела: {to, dur, fx, pose, carry, say}
+func _job_steps(id: String) -> Array:
+	var S := func(to: String, dur: float, fx := "", pose := "", carry := "", say := false) -> Dictionary:
+		return {"to": _collide(_spot(to), 0.45), "dur": dur, "fx": fx, "pose": pose, "carry": carry, "say": say}
+	match id:
+		"water":
+			return [S.call("well", 3.5, "water", "work", "", true), S.call(["garden", "house", "campfire"][randi() % 3], 2.5, "water", "work", "bucket")]
+		"crates":
+			return [S.call("market", 2.0, "", "work", "", true), S.call("door", 2.0, "dust", "", "crate")]
+		"lantern_fix":
+			return [S.call("lantern", 5.0, "spark", "work", "", true)]
+		"letters":
+			return [S.call("door", 1.6, "paper", "", "letters", true), S.call("door", 1.6, "paper", "", "letters"), S.call("house", 1.6, "paper", "", "letters")]
+		"monument_flowers":
+			return [S.call("garden", 2.0, "leaf", "kneel"), S.call("monument", 4.0, "glow", "kneel", "flowers", true)]
+		"terminal":
+			return [S.call("lab", 5.0, "cyan", "work", "", true)]
+		"board_read":
+			return [S.call("board", 4.0, "", "", "", true)]
+		"portal_scan":
+			return [S.call("portal", 4.0, "cyan", "work", "", true)]
+		"antenna":
+			return [S.call("lab", 4.0, "spark", "work", "", true), S.call("square", 1.0)]
+		"herbs":
+			return [S.call("garden", 4.0, "leaf", "kneel", "", true), S.call("shrine", 2.0, "glow", "", "basket")]
+		"bandage":
+			return [S.call("training", 4.0, "heart", "work", "", true)]
+		"pray":
+			return [S.call("shrine", 5.0, "glow", "kneel", "", true)]
+		"map_sketch":
+			return [S.call("square", 4.0, "paper", "work", "map", true), S.call("gate", 3.0, "paper", "", "map")]
+		"robot_fix":
+			return [S.call("robot", 4.0, "spark", "work", "", true)]
+		"warm_fire", "sit_fire":
+			return [S.call("fire_seat", randf_range(8.0, 14.0), "", "sit", "", true)]
+		"tell_story":
+			return [S.call("fire_seat", 9.0, "note", "sit", "", true)]
+		"gate_watch":
+			return [S.call("gate", 6.0, "", "", "", true)]
+		"letters_read":
+			return [S.call("well", 5.0, "paper", "sit", "letters", true)]
+		"library_read":
+			return [S.call("library", 6.0, "", "", "book", true)]
+		"market_shop":
+			return [S.call("market", 3.5, "", "", "", true), S.call("door", 1.5, "", "", "basket")]
+		"tag":
+			return [S.call("square", 0.4, "", "", "", true), S.call("square", 0.4), S.call("square", 0.4), S.call("square", 0.6)]
+		"pebbles":
+			return [S.call("well", 4.0, "water", "work", "", true)]
+		"chase_robot":
+			return [S.call("robot", 0.6, "", "", "", true), S.call("robot", 0.6), S.call("robot", 0.6)]
+		"ball":
+			return [S.call("square", 3.0, "", "work", "ball", true), S.call("square", 2.0, "", "work", "ball")]
+		"training_watch":
+			return [S.call("training", 5.0, "", "", "", true)]
+		"water_plants":
+			return [S.call("well", 2.0, "water", "work"), S.call("garden", 3.5, "water", "work", "bucket", true), S.call("garden", 3.5, "water", "work", "bucket")]
+		"flowers_market":
+			return [S.call("garden", 3.0, "leaf", "kneel"), S.call("market", 4.0, "", "", "flowers", true)]
+	return [S.call("square", 2.0)]
+
+
+func _job_tick(v: Dictionary, delta: float) -> void:
+	var node: Node3D = v["node"]
+	var steps: Array = v.get("steps", [])
+	if steps.is_empty():
+		if not v.has("jobs"):
+			var nm: String = v.get("profile", {}).get("name", "")
+			v["jobs"] = JOB_SETS.get(nm, JOB_SETS.get("_" + str(v["role"]), JOB_SETS["_walker"]))
+		var jobs: Array = v["jobs"]
+		var jid: String = jobs[randi() % jobs.size()]
+		v["job"] = jid
+		steps = _job_steps(jid)
+		v["steps"] = steps
+	var st: Dictionary = steps[0]
+	v["target"] = st["to"]
+	_set_carry(v, st["carry"])
+	if node.position.distance_to(st["to"]) > 0.45:
+		v["pose"] = ""
+		return
+	# На месте: работает
+	v["pose"] = st["pose"]
+	if not st.get("started", false):
+		st["started"] = true
+		if st["say"] and randf() < 0.7:
+			var lines: Array = JOB_SAY.get(v.get("job", ""), [])
+			if not lines.is_empty():
+				var bubble: Label3D = v["bubble"]
+				bubble.text = lines[randi() % lines.size()]
+				bubble.visible = true
+				v["bubble_t"] = 3.0
+		# Повернуться к месту работы
+		var face := {"well": WELL, "board": BOARD, "portal": PORTAL_POS, "fire_seat": CAMPFIRE, "monument": MONUMENT}
+		for k in face:
+			if (face[k] as Vector3).distance_to(node.position) < 3.5:
+				var left: bool = (face[k] as Vector3).x < node.position.x
+				(v["base"] as Sprite3D).flip_h = left
+				(v["emit"] as Sprite3D).flip_h = left
+	st["dur"] = float(st["dur"]) - delta
+	v["jfx"] = float(v.get("jfx", 0.0)) - delta
+	if st["fx"] != "" and float(v["jfx"]) <= 0.0:
+		v["jfx"] = 0.7
+		_job_fx(node.position, st["fx"])
+	if float(st["dur"]) <= 0.0:
+		steps.pop_front()
+		if steps.is_empty():
+			_set_carry(v, "")
+			v["pose"] = ""
+			v["wait"] = randf_range(0.5, 2.0)
+
+
+func _job_fx(p: Vector3, fx: String) -> void:
+	var h := p + Vector3(0.35, 0.75, 0.1)
+	match fx:
+		"water":
+			_particles(_world, h, Color(0.35, 0.7, 1.0), 6, Vector3(0.15, 0.05, 0.15), Vector3(0, -3, 0), 0.5, 0.05, true, 0.8)
+		"spark":
+			_particles(_world, h + Vector3(0, 0.4, 0), Color(1.0, 0.7, 0.25), 8, Vector3(0.05, 0.05, 0.05), Vector3(0, -5, 0), 0.4, 0.04, true, 2.5)
+		"cyan":
+			_particles(_world, h, CYAN, 6, Vector3(0.08, 0.08, 0.08), Vector3(0, 0.5, 0), 0.6, 0.04, true, 1.0)
+		"leaf":
+			_particles(_world, p + Vector3(0.2, 0.2, 0.1), Color(0.4, 1.0, 0.5), 6, Vector3(0.2, 0.05, 0.2), Vector3(0, 0.6, 0), 0.8, 0.05, true, 0.6)
+		"paper":
+			_particles(_world, h, Color(0.95, 0.95, 0.85), 3, Vector3(0.1, 0.05, 0.1), Vector3(0, -0.6, 0), 1.0, 0.06, true, 0.5)
+		"glow":
+			_particles(_world, p + Vector3(0, 0.6, 0), Color(0.8, 0.55, 1.0), 6, Vector3(0.3, 0.1, 0.3), Vector3(0, 0.8, 0), 1.4, 0.05, true, 0.4)
+		"heart":
+			_particles(_world, h + Vector3(0, 0.3, 0), MAGENTA, 4, Vector3(0.1, 0.1, 0.1), Vector3(0, 1.0, 0), 1.0, 0.07, true, 0.4)
+		"note":
+			_particles(_world, h + Vector3(0, 0.5, 0), GOLD, 3, Vector3(0.1, 0.1, 0.1), Vector3(0.3, 0.8, 0), 1.6, 0.08, true, 0.5)
+		"dust":
+			_particles(_world, p + Vector3(0, 0.1, 0), Color(0.6, 0.55, 0.65), 8, Vector3(0.3, 0.02, 0.3), Vector3(0, 0.3, 0), 0.8, 0.08, true, 0.6)
+
+
+## Что житель несёт в руках: ведро, ящик, письма, корзину, цветы, книгу, карту, мяч.
+func _set_carry(v: Dictionary, kind: String) -> void:
+	if str(v.get("carry", "")) == kind:
+		return
+	if v.has("prop") and is_instance_valid(v["prop"]):
+		(v["prop"] as Node3D).queue_free()
+		_bobbers = _bobbers.filter(func(b): return is_instance_valid(b[0]) and not (v["prop"] as Node3D).is_ancestor_of(b[0]))
+	v.erase("prop")
+	v["carry"] = kind
+	if kind == "":
+		return
+	var root := Node3D.new()
+	root.position = Vector3(0.28, 0.62, 0.08)
+	(v["node"] as Node3D).add_child(root)
+	v["prop"] = root
+	var wood := _mat(Color(0.5, 0.36, 0.22), 0.9, 0.0, "wood", 4.0)
+	match kind:
+		"bucket":
+			_add(root, _cyl(0.1, 0.08, 0.16, 8), _mat(Color(0.45, 0.45, 0.52), 0.5, 0.6), Vector3.ZERO)
+			_add(root, _cyl(0.09, 0.09, 0.01, 8), _emat(Color(0.35, 0.7, 1.0), 1.2), Vector3(0, 0.07, 0))
+		"crate":
+			root.position = Vector3(0, 1.32, 0)
+			_add(root, _box(0.36, 0.26, 0.3), wood, Vector3.ZERO)
+			_add(root, _box(0.1, 0.05, 0.1), _emat(GOLD, 1.5), Vector3(0, 0.14, 0))
+		"letters":
+			_add(root, _box(0.16, 0.04, 0.12), _mat(Color(0.95, 0.92, 0.8), 0.9, 0.0, ""), Vector3.ZERO, Vector3(0, 0, 20))
+			_add(root, _box(0.05, 0.05, 0.01), _emat(MAGENTA, 1.6), Vector3(0, 0.03, 0.06))
+		"basket":
+			_add(root, _cyl(0.12, 0.09, 0.12, 8), wood, Vector3.ZERO)
+			for i in 3:
+				_add(root, _sphere(0.04), _emat([Color(0.4, 1.0, 0.5), CYAN, MAGENTA][i], 1.6), Vector3(-0.05 + i * 0.05, 0.08, 0))
+		"flowers":
+			for i in 4:
+				_add(root, _cyl(0.008, 0.008, 0.22, 4), _mat(Color(0.2, 0.6, 0.25), 0.9, 0.0, ""), Vector3(i * 0.02, 0.1, 0), Vector3(0, 0, -10 + i * 7))
+				_add(root, _sphere(0.035), _emat([MAGENTA, CYAN, GOLD, Color(0.7, 0.5, 1.0)][i], 2.0), Vector3(i * 0.02 + (-0.03 + i * 0.02), 0.22, 0))
+		"book":
+			_add(root, _box(0.16, 0.2, 0.04), _mat(Color(0.4, 0.15, 0.4), 0.9, 0.0, ""), Vector3.ZERO, Vector3(0, 0, -15))
+		"map":
+			_add(root, _box(0.26, 0.01, 0.18), _mat(Color(0.9, 0.85, 0.65), 0.9, 0.0, ""), Vector3.ZERO, Vector3(-30, 0, 0))
+			_add(root, _box(0.05, 0.012, 0.05), _emat(Color(1.0, 0.3, 0.3), 2.0), Vector3(0.05, 0.005, 0))
+		"ball":
+			var b := _add(root, _sphere(0.09), _emat(Color(1.0, 0.45, 0.6), 1.4), Vector3(0, 0.2, 0))
+			_bobbers.append([b, 0.25, 0.25])
+
+
+
+# ================= Дела охотника в убежище =================
+
+func _hub_act(id: String) -> void:
+	var p := _avatar.position
+	match id:
+		"well":
+			if Meta.shards < 5:
+				_toast_text("Нужно 5 ◆ осколков на монетку")
+				return
+			Meta.shards -= 5
+			Lore.set_buff("well")
+			Sound.play("gem", -2.0, 1.4)
+			_particles(_world, WELL + Vector3(0, 1.0, 0), GOLD, 12, Vector3(0.1, 0.1, 0.1), Vector3(0, -4, 0), 0.6, 0.06, true, 1.5)
+			_particles(_world, WELL + Vector3(0, 0.6, 0), Color(0.35, 0.7, 1.0), 20, Vector3(0.4, 0.05, 0.4), Vector3(0, 2, 0), 0.8, 0.05, true, 1.2)
+			_toast_text("Монетка звякнула о дно. Благословение: +8% опыта в следующей вылазке")
+		"fire":
+			Lore.set_buff("fire")
+			_open_panel("campfire")
+		"train":
+			Lore.set_buff("train")
+			Sound.play("hit", -2.0, 0.9)
+			_shake = 0.6
+			for k in 3:
+				_particles(_world, TRAINING + Vector3(-1.0, 1.2, -1.6 + k * 1.6), Color(0.9, 0.8, 0.6), 14, Vector3(0.2, 0.2, 0.2), Vector3(0, -3, 0), 0.6, 0.06, true, 2.5)
+			_toast_text("Пара ударов по манекенам — тело помнит. −6% перезарядки в следующей вылазке")
+		"garden":
+			Lore.set_buff("garden")
+			Sound.play("levelup", -8.0, 1.3)
+			_particles(_world, p + Vector3(0, 0.8, 0), Color(0.4, 1.0, 0.6), 24, Vector3(0.4, 0.4, 0.4), Vector3(0, 1.0, 0), 1.2, 0.06, true, 0.8)
+			_toast_text("Светоцвет пахнет озоном и мёдом. +15 здоровья в следующей вылазке")
+		"robot":
+			Sound.play("zap", -6.0, 1.6)
+			for o in _villagers:
+				if o["role"] == "robot" and (o["node"] as Node3D).position.distance_to(p) < 1.5:
+					var bubble: Label3D = o["bubble"]
+					bubble.text = ["БИП! Благодарю!", "БУП-БИП ♥", "Уровень радости: 100%", "Сканирую… друг!"][randi() % 4]
+					bubble.visible = true
+					o["bubble_t"] = 3.0
+					_particles(_world, (o["node"] as Node3D).position + Vector3(0, 0.9, 0), MAGENTA, 8, Vector3(0.2, 0.1, 0.2), Vector3(0, 1.2, 0), 1.0, 0.07, true, 0.5)
+					break
+	Meta.save()
+
+
+## Байка у костра: старейшины рассказывают то, что охотник уже узнал (или легенды).
+func _fill_campfire() -> void:
+	var pool: Array = []
+	for l in Story.PROLOGUE:
+		pool.append(["Легенда о Слиянии", l])
+	for i in mini(Meta.levels_cleared, Story.LEVEL_STORY.size()):
+		pool.append(["Охотники говорят", Story.LEVEL_STORY[i]["after"]])
+	for id in Meta.memories:
+		var m: Dictionary = Lore.memory(id)
+		pool.append(["Осколок памяти: " + str(m["t"]), m["x"]])
+	for h in Meta.heroes_owned:
+		var open: Array = Lore.tales_open(h)
+		for i in 3:
+			if open[i]:
+				pool.append(["О герое: " + str(Data.CHARACTERS[h]["name"]), Lore.HERO_TALES[h][i]])
+	for c in Story.CHATS:
+		pool.append(["Слухи у огня", "— %s\n— %s" % [c[0], c[1]]])
+	var pick: Array = pool[randi() % pool.size()]
+	var teller: String = ["Бабушка Гедда", "Старый Йорг", "Марта", "Сойка"][randi() % 4]
+	_panel_box.add_child(_centered(_label("У КОСТРА", 30, Color.WHITE, Color(Color(1.0, 0.6, 0.25), 0.7))))
+	_panel_box.add_child(_centered(_label("%s рассказывает: %s" % [teller, pick[0]], 16, Color(1.0, 0.8, 0.5))))
+	_panel_box.add_child(_centered(_wrap("«%s»" % pick[1], 16, Color(1.0, 0.94, 0.82))))
+	_panel_box.add_child(_centered(_wrap("Тепло огня остаётся с вами: +5% урона в следующей вылазке.", 14, Color(0.8, 0.8, 0.95))))
+	var more := _button("Ещё байку", Color(1.0, 0.6, 0.25))
+	more.pressed.connect(func(): _fill_panel())
+	_panel_box.add_child(_centered(more))
+	_add_close()
