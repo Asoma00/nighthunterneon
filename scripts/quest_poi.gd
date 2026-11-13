@@ -17,7 +17,31 @@ const INFO := {
 	"beacons": {"name": "Сигнальные маяки", "color": Color(0.4, 1.0, 0.85)},
 	"captive": {"name": "Пленник", "color": Color(1.0, 0.85, 0.5)},
 	"part": {"name": "Часть оружия", "color": Color(1.0, 0.6, 0.25)},
+	"memory": {"name": "Осколок памяти", "color": Color(0.75, 0.6, 1.0)},
+	"lamps": {"name": "Рунные лампады", "color": Color(1.0, 0.65, 0.3)},
+	"simon": {"name": "Поющие обелиски", "color": Color(0.45, 0.9, 1.0)},
 }
+const Lore := preload("res://scripts/lore.gd")
+##  • memory  — Осколок памяти: висит в воздухе. Постойте рядом 1,5 с — откроется запись летописи.
+##  • lamps   — Рунные лампады: 5 лампад по кругу. Шаг на лампаду переключает её и двух
+##              соседок. Зажгите все пять.
+##  • simon   — Поющие обелиски: камень в центре пропоёт мелодию из вспышек — повторите её,
+##              пройдя по обелискам. Три куплета, каждый длиннее.
+var mem_id := ""
+var _mem_label: Label3D
+var _lamp_on: Array = []
+var _lamp_pos: Array = []
+var _lamp_stand := -1
+var _lamp_presses := 0
+var _sim_pos: Array = []
+var _sim_seq: Array = []
+var _sim_round := 0
+var _sim_step := 0
+var _sim_play := -1.0       # >=0 — идёт показ мелодии
+var _sim_lit := -1
+var _sim_stand := -1
+const SIM_COLORS := [Color(1.0, 0.35, 0.4), Color(0.4, 1.0, 0.5), Color(0.4, 0.6, 1.0), Color(1.0, 0.85, 0.3)]
+const SIM_NOTES := [0.8, 1.0, 1.2, 1.45]
 const Meta := preload("res://scripts/meta.gd")
 const Data := preload("res://scripts/data.gd")
 const FREE_T := 3.0
@@ -86,6 +110,8 @@ func title() -> String:
 func arrow_visible() -> bool:
 	if state == "done":
 		return false
+	if kind == "memory":
+		return true
 	if kind == "cache":
 		return false   # тайник ищут глазами — стрелки нет
 	return true
@@ -103,6 +129,41 @@ func _ready() -> void:
 		"cache":
 			# Тайник выглядит как обычный ящик среди декора — без вспышек и стрелок
 			_add_model("crate%d" % (randi() % 2), Vector2.ZERO, 1.0)
+		"memory":
+			life = 140.0
+			_add_model("crystal_big1", Vector2(0, -30), 0.7)
+			_labels.append(_add_label("ОСКОЛОК ПАМЯТИ", Vector2.ZERO, 2.6, color(), 44))
+			_mem_label = _add_label("", Vector2(0, 40), 1.6, Color(0.95, 0.9, 1.0), 26)
+			_mem_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_mem_label.width = 760.0
+			_mem_label.modulate = Color(0.95, 0.92, 1.0, 0.95)
+			_mem_label.visible = false
+		"lamps":
+			life = 170.0
+			_add_model("obelisk2", Vector2(0, -40), 0.8)
+			_labels.append(_add_label("РУННЫЕ ЛАМПАДЫ\nзажгите все пять", Vector2.ZERO, 3.0, color(), 44))
+			for i in 5:
+				var lp := Vector2.RIGHT.rotated(TAU * i / 5.0 - PI / 2.0) * Vector2(260, 200)
+				_lamp_pos.append(lp)
+				_lamp_on.append(true)
+				_add_model("lamp%d" % (i % 2), lp + Vector2(0, -50), 0.9)
+				_labels.append(_add_label("○", lp, 2.4, color(), 120))
+			# Перемешиваем нажатиями — так решение всегда существует
+			while _lamp_on.count(true) == 5:
+				for k in randi_range(2, 3):
+					_lamp_toggle(randi() % 5, false)
+			_lamp_refresh()
+		"simon":
+			life = 170.0
+			_add_model("obelisk1", Vector2(0, -40), 0.9)
+			_labels.append(_add_label("ПОЮЩИЕ ОБЕЛИСКИ\nвстаньте на камень", Vector2.ZERO, 3.2, color(), 44))
+			for i in 4:
+				var sp2 := Vector2.RIGHT.rotated(TAU * i / 4.0 + PI / 4.0) * Vector2(270, 210)
+				_sim_pos.append(sp2)
+				_add_model("obelisk0", sp2 + Vector2(0, -60), 0.75)
+				_labels.append(_add_label(GLYPHS[i], sp2, 2.6, SIM_COLORS[i], 120))
+			for i in 5:
+				_sim_seq.append(randi() % 4)
 		"puzzle":
 			_add_model("obelisk1", Vector2(0, -40), 1.0)
 			var order := [0, 1, 2, 3, 4]
@@ -217,6 +278,12 @@ func _process(delta: float) -> void:
 			_tick_puzzle(delta)
 		"beacons":
 			_tick_beacons(delta)
+		"memory":
+			_tick_memory(delta)
+		"lamps":
+			_tick_lamps(delta)
+		"simon":
+			_tick_simon(delta)
 
 
 # ---------- Тайник ----------
@@ -517,6 +584,159 @@ func _tick_beacons(delta: float) -> void:
 			main.combo_pop(position + Vector2(0, -120), "МАЯКИ ПОГАСЛИ", Color(0.7, 0.7, 0.8))
 
 
+# ---------- Осколок памяти ----------
+
+func _tick_memory(delta: float) -> void:
+	var inside := _near(Vector2.ZERO, 85.0)
+	_hold = minf(1.5, _hold + delta) if inside else maxf(0.0, _hold - delta * 2.0)
+	if _hold >= 1.5 and mem_id != "":
+		if not (mem_id in Meta.memories):
+			Meta.memories.append(mem_id)
+		main.run["memories"] = int(main.run.get("memories", 0)) + 1
+		(main.run["mem_ids"] as Array).append(mem_id)
+		var m: Dictionary = Lore.memory(mem_id)
+		Sound.play("evolve", -2.0, 1.3)
+		main.combo_pop(position + Vector2(0, -150), "ОСКОЛОК ПАМЯТИ: «%s»" % m["t"], Pixel.hdr(color(), 1.6))
+		Fx.ring(main, position, 10.0, 220.0, Pixel.hdr(color(), 2.2), 0.6, 6.0)
+		_mem_label.text = str(m["x"])
+		_mem_label.visible = true
+		var ch := int(mem_id.split(":")[0])
+		if Lore.set_done(ch):
+			Fx.text_pop(main, position + Vector2(0, -220), "Набор «%s» собран: %s" % [Lore.MEMORY_SETS[ch]["name"], Lore.MEMORY_SETS[ch]["d"]], Pixel.hdr(GOLD_C, 1.5), 20)
+		mem_id = ""
+		state = "done"
+		life = 12.0
+		for l in _labels:
+			if is_instance_valid(l):
+				l.visible = false
+
+const GOLD_C := Color(1.0, 0.85, 0.3)
+
+
+# ---------- Рунные лампады ----------
+
+func _lamp_toggle(i: int, fx := true) -> void:
+	for d in [-1, 0, 1]:
+		var j: int = (i + d + 5) % 5
+		_lamp_on[j] = not _lamp_on[j]
+	if fx:
+		Fx.ring(main, position + _lamp_pos[i], 10.0, 110.0, Pixel.hdr(color(), 1.8), 0.35, 4.0)
+
+
+func _lamp_refresh() -> void:
+	for i in 5:
+		var l: Label3D = _labels[i + 1]
+		l.text = "●" if _lamp_on[i] else "○"
+		l.modulate = Pixel.hdr(Color(1.0, 0.85, 0.5), 1.6) if _lamp_on[i] else Color(0.6, 0.55, 0.7, 0.7)
+
+
+func _tick_lamps(_delta: float) -> void:
+	var on := -1
+	for i in 5:
+		if _near(_lamp_pos[i], 65.0):
+			on = i
+	if on != _lamp_stand:
+		_lamp_stand = on
+		if on >= 0:
+			_lamp_toggle(on)
+			_lamp_presses += 1
+			Sound.play("gem", -4.0, 0.7 + 0.1 * _lamp_on.count(true))
+			_lamp_refresh()
+			# Каждый пятый шаг лампады зовут стражу
+			if _lamp_presses % 5 == 0:
+				for k in 5:
+					main.spawn_enemy(main.pick_enemy_kind(), position + Vector2.RIGHT.rotated(randf() * TAU) * 420.0)
+			if _lamp_on.count(true) == 5:
+				_solve_extra("lamps")
+
+
+# ---------- Поющие обелиски ----------
+
+func _sim_len() -> int:
+	return 3 + _sim_round
+
+
+func _tick_simon(delta: float) -> void:
+	_fail_flash = maxf(0.0, _fail_flash - delta)
+	if _sim_play >= 0.0:
+		_sim_play += delta
+		var idx := int(_sim_play / 0.75)
+		var phase := fmod(_sim_play, 0.75)
+		if idx >= _sim_len():
+			_sim_play = -1.0
+			_sim_lit = -1
+			_sim_step = 0
+			main.combo_pop(position + Vector2(0, -160), "Повторите мелодию: %d нот" % _sim_len(), color())
+			return
+		var note: int = _sim_seq[idx]
+		if phase < 0.5:
+			if _sim_lit != note:
+				Sound.play("zap", -6.0, SIM_NOTES[note])
+			_sim_lit = note
+		else:
+			_sim_lit = -1
+		return
+	# Встать на камень — услышать мелодию
+	if _near(Vector2.ZERO, 70.0):
+		_hold = minf(1.0, _hold + delta)
+		if _hold >= 1.0:
+			_hold = 0.0
+			_sim_play = 0.0
+			_sim_step = 0
+			return
+	else:
+		_hold = maxf(0.0, _hold - delta * 2.0)
+	var on := -1
+	for i in 4:
+		if _near(_sim_pos[i], 70.0):
+			on = i
+	if on != _sim_stand:
+		_sim_stand = on
+		if on >= 0:
+			_sim_press(on)
+
+
+func _sim_press(i: int) -> void:
+	if _sim_step >= _sim_len():
+		return
+	if i == _sim_seq[_sim_step]:
+		_sim_step += 1
+		Sound.play("gem", -2.0, SIM_NOTES[i])
+		Fx.ring(main, position + _sim_pos[i], 10.0, 100.0, Pixel.hdr(SIM_COLORS[i], 2.0), 0.35, 4.0)
+		if _sim_step >= _sim_len():
+			_sim_round += 1
+			if _sim_round >= 3:
+				_solve_extra("simon")
+			else:
+				main.combo_pop(position + Vector2(0, -160), "КУПЛЕТ %d / 3 — встаньте на камень" % (_sim_round + 1), Pixel.hdr(color(), 1.4))
+				_sim_step = 0
+	else:
+		_sim_step = 0
+		_fail_flash = 0.8
+		Sound.play("hurt", -4.0, 0.6)
+		main.combo_pop(position + Vector2(0, -160), "ФАЛЬШЬ! Обелиски злятся", Color(1.0, 0.4, 0.4))
+		for pl in main.players:
+			if not pl._dead and pl.position.distance_to(position) < 420.0:
+				pl.take_damage(pl.max_hp * 0.08)
+		for k in 6:
+			main.spawn_enemy(main.pick_enemy_kind(), position + Vector2.RIGHT.rotated(randf() * TAU) * randf_range(320.0, 420.0))
+
+
+func _solve_extra(k: String) -> void:
+	main.run["puzzles"] = int(main.run["puzzles"]) + 1
+	main.run[k] = int(main.run.get(k, 0)) + 1
+	Sound.play("evolve", 0.0)
+	main.screen_flash(0.25)
+	main.drop_material(position, "chips", 2)
+	main.drop_material(position + Vector2(30, 0), "scrap", 5)
+	if randf() < 0.5:
+		main.drop_material(position + Vector2(-30, 0), "cores", 1)
+	main.drop_chest(position + Vector2(0, 70))
+	main.combo_pop(position + Vector2(0, -150), "ЗАГАДКА РЕШЕНА!", Pixel.hdr(Color(1.0, 0.85, 0.3), 1.5))
+	Fx.ring(main, position, 10.0, 320.0, Pixel.hdr(color(), 2.2), 0.6, 6.0)
+	_done()
+
+
 func _done() -> void:
 	state = "done"
 	life = 3.0
@@ -533,6 +753,12 @@ func quest_text() -> String:
 		return "Освобождение: %d%%  •  стойте у клетки" % int(_hold / FREE_T * 100.0)
 	if kind == "puzzle" and _found.count(true) > 0:
 		return "Рунная загадка: подсказки %d / %d — ищите духа и скрижаль в округе  •  руны %d / 4" % [_found.count(true), _found.size(), _step]
+	if kind == "memory" and _hold > 0.0:
+		return "Осколок памяти: %d%%" % int(_hold / 1.5 * 100.0)
+	if kind == "lamps" and _lamp_presses > 0:
+		return "Рунные лампады: горят %d / 5  •  шаг меняет лампаду и соседей" % _lamp_on.count(true)
+	if kind == "simon" and (_sim_round > 0 or _sim_step > 0 or _sim_play >= 0.0):
+		return "Поющие обелиски: куплет %d / 3  •  нота %d / %d" % [_sim_round + 1, _sim_step, _sim_len()]
 	if kind == "beacons" and _timer > 0.0:
 		var n := 0
 		for l in _lit:
@@ -588,6 +814,38 @@ func _draw() -> void:
 				if _fail_flash > 0.0:
 					draw_arc(p, 78.0, 0.0, TAU, 32, Color(1.0, 0.2, 0.2, _fail_flash), 5.0)
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		"memory":
+			if state != "done":
+				draw_circle(Vector2.ZERO, 85.0, Color(c, 0.08 + 0.05 * sin(_t * 2.5)))
+				draw_arc(Vector2.ZERO, 85.0, _t, _t + TAU * 0.7, 32, Color(c, 0.8), 2.5)
+				if _hold > 0.0:
+					draw_arc(Vector2.ZERO, 95.0, -PI / 2.0, -PI / 2.0 + TAU * _hold / 1.5, 32, Pixel.hdr(Color.WHITE, 1.5), 5.0)
+		"lamps":
+			for i in _lamp_pos.size():
+				var lp: Vector2 = _lamp_pos[i]
+				if _lamp_on[i]:
+					draw_circle(lp, 65.0, Color(1.0, 0.75, 0.35, 0.16))
+					draw_arc(lp, 65.0, 0.0, TAU, 32, Pixel.hdr(Color(1.0, 0.8, 0.4), 1.5), 3.5)
+				else:
+					draw_arc(lp, 65.0, 0.0, TAU, 32, Color(c, 0.3), 1.5)
+				var nx: Vector2 = _lamp_pos[(i + 1) % 5]
+				draw_line(lp.lerp(nx, 0.25), lp.lerp(nx, 0.75), Color(c, 0.25), 2.0)
+		"simon":
+			draw_arc(Vector2.ZERO, 70.0, 0.0, TAU, 40, Color(c, 0.35), 1.5)
+			if _hold > 0.0 and _sim_play < 0.0:
+				draw_arc(Vector2.ZERO, 80.0, -PI / 2.0, -PI / 2.0 + TAU * _hold, 32, Pixel.hdr(Color.WHITE, 1.5), 5.0)
+			for i in _sim_pos.size():
+				var sp3: Vector2 = _sim_pos[i]
+				var sc: Color = SIM_COLORS[i]
+				if _sim_lit == i:
+					draw_circle(sp3, 70.0, Color(sc, 0.45))
+					draw_arc(sp3, 76.0, 0.0, TAU, 32, Pixel.hdr(sc, 2.4), 6.0)
+				else:
+					draw_arc(sp3, 70.0, 0.0, TAU, 32, Color(sc, 0.45), 2.0)
+				if _fail_flash > 0.0:
+					draw_arc(sp3, 80.0, 0.0, TAU, 32, Color(1.0, 0.2, 0.2, _fail_flash), 5.0)
+			for k in mini(_sim_step, _sim_len()):
+				draw_circle(Vector2(-12.0 * (_sim_len() - 1) + 24.0 * k, 95.0), 6.0, Pixel.hdr(SIM_COLORS[_sim_seq[k]], 1.6))
 		"beacons":
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 			for i in _beacons.size():

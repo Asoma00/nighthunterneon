@@ -114,6 +114,9 @@ const QuestsScript := preload("res://scripts/quests.gd")
 const Story := preload("res://scripts/story.gd")
 const QuestPoiScript := preload("res://scripts/quest_poi.gd")
 const EventsScript := preload("res://scripts/events.gd")
+const OmensScript := preload("res://scripts/omens.gd")
+const Lore := preload("res://scripts/lore.gd")
+var omens: Node2D
 var events: Node
 var active_quests: Array = []
 var threat := 0          # угроза (растёт с прогрессом)
@@ -145,7 +148,9 @@ var rng := RandomNumberGenerator.new()
 func _ready() -> void:
 	run = {"hero": Data.selected_character, "kills": 0, "wkills": {}, "elites": 0, "altars": 0, "trials": 0,
 		"caches": 0, "puzzles": 0, "beacons": 0, "events": 0, "reactions": 0, "boss": 0, "mat_scrap": 0,
-		"mat_chips": 0, "mat_cores": 0, "scrap": 0, "nodmg": 0, "minutes": 0, "level": 1, "combo": 0, "fusions": 0}
+		"mat_chips": 0, "mat_cores": 0, "scrap": 0, "nodmg": 0, "minutes": 0, "level": 1, "combo": 0, "fusions": 0,
+		"omens": 0, "memories": 0, "mem_ids": [], "ekills": {}}
+	Lore.prepare_run()
 	if not Data.coop and Net.mode == "":
 		active_quests = QuestsScript.active(Data.selected_character)
 	if Net.mode == "":
@@ -246,6 +251,9 @@ func _ready() -> void:
 	events = EventsScript.new()
 	events.main = self
 	world.add_child(events)
+	omens = OmensScript.new()
+	omens.main = self
+	world.add_child(omens)
 
 	camera = Camera2D.new()
 	camera.position_smoothing_enabled = true
@@ -1471,6 +1479,8 @@ func _separate_enemies() -> void:
 func on_enemy_killed(enemy: Node2D) -> void:
 	kills += 1
 	Meta.discover("e:" + str(enemy.get("kind")))
+	var ek: Dictionary = run["ekills"]
+	ek[enemy.kind] = int(ek.get(enemy.kind, 0)) + 1
 	# Часть оружия спасённого героя: 1 из 1000
 	if net_mode != "client" and rng.randf() < 0.001:
 		spawn_part(enemy.position)
@@ -1806,7 +1816,7 @@ func _handle_quest_pois(delta: float) -> void:
 	_qpoi_t -= delta
 	if _qpoi_t > 0.0 or boss != null:
 		return
-	var have := {"cache": 0, "puzzle": 0, "beacons": 0}
+	var have := {"cache": 0, "puzzle": 0, "beacons": 0, "lamps": 0, "simon": 0}
 	for p in pois:
 		if is_instance_valid(p) and p.get_script() == QuestPoiScript:
 			have[p.kind] = int(have.get(p.kind, 0)) + 1
@@ -1818,11 +1828,25 @@ func _handle_quest_pois(delta: float) -> void:
 			_spawn_qpoi("captive", view_center() + Vector2.RIGHT.rotated(rng.randf() * TAU) * rng.randf_range(800.0, 1100.0), str(cand[rng.randi() % cand.size()]))
 			Fx.text_pop(self, player.position + Vector2(0, -140), "Где-то рядом зовут на помощь…", Pixel.hdr(Color(1.0, 0.85, 0.5), 1.4), 22)
 			return
+	# Осколок памяти: не больше одного за вылазку, пока в главе есть ненайденные
+	if not bool(run.get("mem_spawned", false)) and time_alive > 90.0 and not endless:
+		var mid := Lore.next_memory(Data.chapter_of(level_index))
+		if mid != "" and rng.randf() < 0.3 + 0.15 * Lore.perk("lore"):
+			run["mem_spawned"] = true
+			_qpoi_t = rng.randf_range(70.0, 110.0)
+			var mp := view_center() + Vector2.RIGHT.rotated(rng.randf() * TAU) * rng.randf_range(750.0, 1000.0)
+			_spawn_qpoi("memory", mp, "")
+			for q in pois:
+				if is_instance_valid(q) and q.get("kind") == "memory":
+					q.mem_id = mid
+			Fx.text_pop(self, player.position + Vector2(0, -140), "Воздух дрожит: рядом осколок памяти…", Pixel.hdr(Color(0.75, 0.6, 1.0), 1.4), 22)
+			return
 	# Тайники — редкость: даже по заданию появляются нечасто и без всякого шума
 	# Загадки и маяки — редкость: без задания почти не встречаются
 	var weights := {"cache": 0.7 if quest_wants("caches") else 0.15, "puzzle": 0.6 if quest_wants("puzzles") else 0.05,
-		"beacons": 0.6 if quest_wants("beacons") else 0.06}
-	var cap := {"cache": 1, "puzzle": 1, "beacons": 1}
+		"beacons": 0.6 if quest_wants("beacons") else 0.06,
+		"lamps": 0.35 if quest_wants("puzzles") else 0.06, "simon": 0.35 if quest_wants("puzzles") else 0.06}
+	var cap := {"cache": 1, "puzzle": 1, "beacons": 1, "lamps": 1, "simon": 1}
 	var sum := 0.0
 	for k in weights:
 		if have[k] >= cap[k]:
@@ -1843,7 +1867,7 @@ func _handle_quest_pois(delta: float) -> void:
 	var dist := rng.randf_range(900.0, 1300.0) if kind == "cache" else rng.randf_range(700.0, 1000.0)
 	for tries in 10:
 		pos = c + Vector2.RIGHT.rotated(rng.randf() * TAU) * dist
-		if ground_node == null or ground_node.is_free(pos, 300.0 if kind == "puzzle" else 110.0):
+		if ground_node == null or ground_node.is_free(pos, 300.0 if kind in ["puzzle", "lamps", "simon"] else 110.0):
 			break
 	var q := QuestPoiScript.new()
 	q.main = self

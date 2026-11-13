@@ -5,6 +5,7 @@ extends Node2D
 const Data := preload("res://scripts/data.gd")
 const Pixel := preload("res://scripts/pixel.gd")
 const Fx := preload("res://scripts/fx.gd")
+const Lore := preload("res://scripts/lore.gd")
 
 const SPAWN_TIME := 0.45
 const BulletScript := preload("res://scripts/enemy_bullet.gd")
@@ -672,7 +673,7 @@ func hit(amount: float, from: Vector2, knockback: float = 160.0, status := "") -
 	last_pl = atk
 	var src: String = atk._src
 	last_src = src
-	amount *= atk.hit_mult(self) * atk.aspect_damage(src)
+	amount *= atk.hit_mult(self) * atk.aspect_damage(src) * float(Lore.beast_k.get(kind, 1.0))
 	var wcrit: float = atk.weapon_crit if Data.WEAPONS.has(src) else 0.0
 	var wm: Dictionary = atk.wmods_for(src) if atk.has_method("wmods_for") else {}
 	if not wm.is_empty():

@@ -17,6 +17,7 @@ const SPRITE_PX := 0.045
 const PORTAL_POS := Vector3(0, 0, -2.5)
 const BOARD := Vector3(-3.6, 0, -1.0)   # доска заданий у портала
 const Quests := preload("res://scripts/quests.gd")
+const Lore := preload("res://scripts/lore.gd")
 
 var _vp: SubViewport
 var _world: Node3D
@@ -1209,6 +1210,10 @@ func _update_interaction() -> void:
 	if dl < 3.6 and dl < best_d:
 		best = "library"
 		best_d = dl
+	var dm := Vector2(p.x - MONUMENT.x, p.z - MONUMENT.z).length()
+	if dm < 3.2 and dm < best_d:
+		best = "path"
+		best_d = dm
 	var db := Vector2(p.x - BOARD.x, p.z - BOARD.z).length()
 	if db < 2.2 and db < best_d:
 		best = "board"
@@ -1227,6 +1232,9 @@ func _update_interaction() -> void:
 		_prompt.text = _pk() + "Библиотека — всё об открытом"
 	elif best == "board":
 		_prompt.text = _pk() + "Доска заданий"
+	elif best == "path":
+		var pp := Lore.perk_points()
+		_prompt.text = _pk() + "Монумент охотников — путь, навыки, летопись" + ("  (очков: %d)" % pp if pp > 0 else "")
 
 	elif best != "":
 		var lvl := _lvl(best)
@@ -1471,6 +1479,11 @@ func _show_reward(r: Dictionary) -> void:
 	var qs: Array = r.get("quests", [])
 	if not qs.is_empty():
 		t += "   •   заданий выполнено: %d" % qs.size()
+	var pr: Dictionary = r.get("prog", {})
+	if int(pr.get("rank_up", 0)) > 0:
+		t += "\n★ Новый ранг охотника: %d — %s. Загляните к Монументу!" % [int(pr["rank"]), Lore.rank_title(int(pr["rank"]))]
+	elif not pr.is_empty():
+		t += "\nОпыт охотника +%d" % int(pr.get("rank_xp", 0))
 	_toast_text(t)
 
 
@@ -1539,6 +1552,15 @@ func _fill_panel() -> void:
 		return
 	if id == "board":
 		_fill_board()
+		return
+	if id == "path":
+		_fill_path()
+		return
+	if id.begins_with("tale:"):
+		_fill_tale(id.substr(5))
+		return
+	if id.begins_with("mem:"):
+		_fill_memories(int(id.substr(4)))
 		return
 	if id.begins_with("hire:"):
 		_fill_hire(id.substr(5))
@@ -2116,6 +2138,7 @@ const TRAINING := Vector3(-15, 0, 3)
 const WELL := Vector3(14, 0, 4)
 const GARDEN := Vector3(0, 0, 17)
 const LIBRARY := Vector3(14, 0, -8)
+const MONUMENT := Vector3(-14, 0, -8)
 const STALLS := [Vector3(-4.6, 0, -8.2), Vector3(4.6, 0, -8.2), Vector3(-12.5, 0, 13.0), Vector3(12.5, 0, 13.0)]
 
 const NPC_PHRASES := {
@@ -2197,7 +2220,7 @@ func _make_npc(role: String, pos: Vector3, seed: int, nm: String) -> Dictionary:
 	if role == "robot":
 		frames = Pixel.frames("drone")
 	else:
-		frames = Pixel.frames("villager_%d" % seed)
+		frames = Pixel.frames("citizen_%s_%d" % [role, seed])
 	var pair := _sprite_pair(node, frames)
 	if role == "kid":
 		node.scale = Vector3.ONE * 0.75
@@ -2373,7 +2396,10 @@ func _update_villagers(delta: float) -> void:
 			f = int(v["t"] * 8.0) % 4
 			node.position.y = 0.25 + sin(float(v["t"]) * 4.0) * 0.06
 		else:
-			f = (4 + int(v["t"] * (12.0 if role == "kid" else 9.0)) % 4) if moving else int(v["t"] * 3.0) % 4
+			if fr["base"].size() >= Pixel.CITIZEN_FRAMES:
+				f = (6 + int(v["t"] * (16.0 if role == "kid" else 12.0)) % 8) if moving else int(v["t"] * 5.0) % 6
+			else:
+				f = (4 + int(v["t"] * (12.0 if role == "kid" else 9.0)) % 4) if moving else int(v["t"] * 3.0) % 4
 		(v["base"] as Sprite3D).texture = fr["base"][f % fr["base"].size()]
 		(v["emit"] as Sprite3D).texture = fr["emit"][f % fr["emit"].size()]
 		# Имя — когда герой рядом
@@ -2426,9 +2452,10 @@ func _npc_work(v: Dictionary, delta: float) -> void:
 # ---- Новые места: костёр, тренировочный плац, колодец, сад ----
 
 func _build_places() -> void:
-	_reserved = [CAMPFIRE, TRAINING, WELL, GARDEN, PORTAL_POS + Vector3(3.6, 0, 1.5), LIBRARY]
+	_reserved = [CAMPFIRE, TRAINING, WELL, GARDEN, PORTAL_POS + Vector3(3.6, 0, 1.5), LIBRARY, MONUMENT]
 	_reserved.append_array(STALLS)
 	_build_library()
+	_build_monument()
 	var stone := _mat(Color(0.26, 0.24, 0.32), 0.85, 0.1, "brick", 1.4)
 	var wood := _mat(Color(0.34, 0.24, 0.18), 0.9, 0.0, "wood", 1.0)
 	# Костёр со скамьями и гирляндой
@@ -2905,6 +2932,15 @@ func _lib_article(art: VBoxContainer, tab: String, key: String) -> void:
 			if not ed.is_empty():
 				_section(art, "Повадки")
 				art.add_child(_para("Здоровье: %d   •   скорость: %d   •   урон: %d" % [int(ed["hp"]), int(ed["speed"]), int(ed["damage"])], Color(0.8, 0.8, 0.95), 14))
+			if Lore.BEAST_LORE.has(key):
+				var bt := Lore.beast_tier(key)
+				_section(art, "Знание охотников  %s" % ("★".repeat(bt) + "☆".repeat(3 - bt)))
+				art.add_child(_para("Убито: %d   •   урон по ним: +%d%%" % [Lore.beast_kills(key), 5 * bt], Color(0.8, 0.8, 0.95), 14))
+				for i in 3:
+					if i < bt:
+						art.add_child(_para(Lore.BEAST_LORE[key][i], Color(1.0, 0.9, 0.75), 14))
+					else:
+						art.add_child(_para("🔒 Откроется после %d убийств этих тварей" % Lore.BEAST_TIERS[i], Color(0.6, 0.6, 0.75), 13))
 			var barks: Array = info.get("barks", [])
 			if not barks.is_empty():
 				_section(art, "Что бормочет в бою")
@@ -2914,6 +2950,11 @@ func _lib_article(art: VBoxContainer, tab: String, key: String) -> void:
 			_lib_head(art, Pixel.portrait(c["sprite"]), 5.0, c["name"], c["title"], c["color"])
 			_section(art, "История")
 			art.add_child(_para(Data.HERO_LORE.get(key, ""), Color(0.9, 0.85, 1.0), 15))
+			var opn: Array = Lore.tales_open(key)
+			for ti in Lore.HERO_TALES.get(key, []).size():
+				if opn[ti]:
+					art.add_child(_para(Lore.HERO_TALES[key][ti], Color(1.0, 0.92, 0.8), 14))
+			art.add_child(_para("Мастерство: ур. %d  •  страниц истории: %d / 4 (новые — у Монумента охотников)" % [Lore.mastery(key), opn.count(true)], Color(0.75, 0.75, 0.9), 13))
 			var steps: Array = Quests.HERO_QUESTS.get(key, [])
 			var done_n := Quests.hero_step(key)
 			for i in steps.size():
@@ -3156,6 +3197,7 @@ func _build_room(id: String) -> void:
 			_furnish_shrine(root, o, w, d, dark)
 		"lab":
 			_furnish_lab(root, o, w, d, dark)
+	_decorate_room(id, root, o, w, d, wood, dark, rng)
 	# Хозяин
 	var role: String = info["npc"][0]
 	var npc := _make_npc(role, o + info["npc_pos"], 900 + absi(hash(role)) % 50, info["npc"][1])
@@ -3293,6 +3335,316 @@ func _furnish_lab(root: Node3D, o: Vector3, w: float, d: float, dark: Material) 
 	# Кабели по полу
 	for i in 4:
 		_add(root, _cyl(0.04, 0.04, 3.0, 6), dark, Vector3(2.0 + i * 0.3, 0.04, 0.6), Vector3(90, 20 * i, 0))
+
+
+# ---- Декор интерьеров: мебель, украшения, мелочи ----
+
+func _books(root: Node3D, p: Vector3, width: float, rng: RandomNumberGenerator, rows := 3) -> void:
+	var dark := _mat(Color(0.2, 0.14, 0.1), 0.9, 0.0, "wood", 1.0)
+	_add(root, _box(width + 0.1, rows * 0.55 + 0.1, 0.42), dark, p + Vector3(0, rows * 0.275, 0))
+	var cols := [Color(0.55, 0.15, 0.15), Color(0.15, 0.3, 0.55), Color(0.2, 0.45, 0.25), Color(0.6, 0.5, 0.2),
+		Color(0.35, 0.2, 0.45), Color(0.7, 0.65, 0.55)]
+	for r in rows:
+		var x := -width / 2.0 + 0.06
+		while x < width / 2.0 - 0.1:
+			var bw := rng.randf_range(0.06, 0.13)
+			var bh := rng.randf_range(0.3, 0.45)
+			if rng.randf() < 0.88:
+				_add(root, _box(bw, bh, 0.3), _mat(cols[rng.randi() % cols.size()], 0.9, 0.0, ""),
+					p + Vector3(x + bw / 2.0, 0.08 + r * 0.55 + bh / 2.0, 0.04), Vector3(0, 0, rng.randf_range(-4, 4)))
+			x += bw + 0.015
+		# Светящийся «кристалл памяти» на каждой полке
+		if rng.randf() < 0.5:
+			_add(root, _sphere(0.06), _emat(Color(0.5, 0.9, 1.0), 2.2), p + Vector3(width / 2.0 - 0.15, 0.16 + r * 0.55, 0.05))
+
+
+func _plant(root: Node3D, p: Vector3, big := false) -> void:
+	var k := 1.4 if big else 1.0
+	_add(root, _cyl(0.22 * k, 0.16 * k, 0.4 * k, 10), _mat(Color(0.55, 0.3, 0.2), 0.9, 0.0, "brick", 2.0), p + Vector3(0, 0.2 * k, 0))
+	for i in 5:
+		var a := i * TAU / 5.0
+		_add(root, _sphere(0.18 * k), _mat(Color(0.18, 0.45 + i * 0.04, 0.25), 0.9, 0.0, ""),
+			p + Vector3(cos(a) * 0.14 * k, (0.55 + (i % 2) * 0.18) * k, sin(a) * 0.14 * k))
+	_add(root, _sphere(0.05), _emat(Color(1.0, 0.4, 0.8), 2.0), p + Vector3(0.05, 0.85 * k, 0.1))
+	_obstacles.append([root.position + p, 0.3 * k])
+
+
+func _poster(root: Node3D, p: Vector3, col: Color, w := 0.9, h := 1.2, side := 0.0) -> void:
+	var frame := _mat(Color(0.25, 0.17, 0.1), 0.8, 0.0, "wood", 2.0)
+	_add(root, _box(w + 0.12, h + 0.12, 0.05), frame, p, Vector3(0, side, 0))
+	var inner := _add(root, _box(w, h, 0.03), _emat(col.darkened(0.55), 0.6), p + Vector3(0, 0, 0.03).rotated(Vector3.UP, deg_to_rad(side)), Vector3(0, side, 0))
+	inner.name = "poster"
+	# Простой «рисунок» — светящиеся полосы и круг
+	var off := Vector3(0, 0, 0.05).rotated(Vector3.UP, deg_to_rad(side))
+	_add(root, _sphere(w * 0.18), _emat(col, 1.8), p + off + Vector3(0, h * 0.12, 0))
+	_add(root, _box(w * 0.7, 0.04, 0.02), _emat(col.lightened(0.3), 1.6), p + off + Vector3(0, -h * 0.28, 0), Vector3(0, side, 0))
+
+
+func _hang_lamp(root: Node3D, p: Vector3, col: Color) -> void:
+	var dark := _mat(Color(0.12, 0.1, 0.1), 0.6, 0.5)
+	_add(root, _cyl(0.01, 0.01, 4.4 - p.y, 4), dark, Vector3(p.x, (4.4 + p.y) / 2.0, p.z))
+	_add(root, _cyl(0.08, 0.2, 0.18, 8), dark, p + Vector3(0, 0.1, 0))
+	var bulb := _add(root, _sphere(0.09), _emat(col, 3.0), p)
+	_flicker.append([bulb.material_override, 3.0, randf() * 10.0])
+
+
+func _crate(root: Node3D, p: Vector3, size: float, wood: Material, glow := Color(0, 0, 0, 0)) -> void:
+	_add(root, _box(size, size, size), wood, p + Vector3(0, size / 2.0, 0), Vector3(0, randf_range(-12, 12), 0))
+	_add(root, _box(size + 0.02, 0.06, size + 0.02), _mat(Color(0.2, 0.2, 0.22), 0.5, 0.6), p + Vector3(0, size * 0.8, 0))
+	if glow.a > 0.0:
+		_add(root, _box(size * 0.5, 0.05, size * 0.5), _emat(glow, 2.0), p + Vector3(0, size + 0.02, 0))
+
+
+func _rug(root: Node3D, p: Vector3, w: float, d: float, c1: Color, c2: Color) -> void:
+	_add(root, _box(w, 0.02, d), _mat(c1, 1.0, 0.0, ""), p + Vector3(0, 0.012, 0))
+	_add(root, _box(w - 0.4, 0.022, d - 0.4), _mat(c2, 1.0, 0.0, ""), p + Vector3(0, 0.014, 0))
+	_add(root, _box(w - 0.8, 0.024, d - 0.8), _mat(c1.lightened(0.1), 1.0, 0.0, ""), p + Vector3(0, 0.016, 0))
+
+
+func _garland(root: Node3D, a: Vector3, b: Vector3, n: int) -> void:
+	var cols := [Color(1.0, 0.3, 0.6), Color(0.3, 1.0, 1.0), Color(1.0, 0.85, 0.3), Color(0.5, 1.0, 0.4)]
+	for i in n + 1:
+		var t := float(i) / n
+		var q := a.lerp(b, t) - Vector3(0, sin(t * PI) * 0.45, 0)
+		var m := _add(root, _sphere(0.05), _emat(cols[i % 4], 2.6), q)
+		_flicker.append([m.material_override, 2.6, i * 0.7])
+
+
+func _decorate_room(id: String, root: Node3D, o: Vector3, w: float, d: float, wood: Material, dark: Material, rng: RandomNumberGenerator) -> void:
+	var bk := -d / 2.0       # задняя стена
+	var col: Color = Meta.BUILDINGS[id]["color"]
+	# Общие мелочи: растения у двери, плинтус, паутина огоньков под потолком
+	for s in [-1.0, 1.0]:
+		_plant(root, Vector3(s * (w / 2.0 - 0.6), 0, d / 2.0 - 0.7), true)
+		_add(root, _box(0.06, 0.15, d), dark, Vector3(s * (w / 2.0 - 0.03), 0.08, 0))
+	_add(root, _box(w, 0.15, 0.06), dark, Vector3(0, 0.08, bk + 0.03))
+	match id:
+		"hall":
+			_decor_tavern(root, o, w, d, wood, dark, rng, col)
+		"forge":
+			_decor_forge(root, o, w, d, wood, dark, rng, col)
+		"shrine":
+			_decor_shrine(root, o, w, d, wood, dark, rng, col)
+		"lab":
+			_decor_lab(root, o, w, d, wood, dark, rng, col)
+
+
+func _decor_tavern(root: Node3D, o: Vector3, w: float, d: float, wood: Material, dark: Material, rng: RandomNumberGenerator, col: Color) -> void:
+	var bk := -d / 2.0
+	# Гирлянды под потолком, подвесные лампы над столами
+	_garland(root, Vector3(-w / 2.0 + 0.5, 3.9, bk + 0.6), Vector3(w / 2.0 - 0.5, 3.9, bk + 0.6), 22)
+	_garland(root, Vector3(-w / 2.0 + 0.5, 3.8, 0.5), Vector3(w / 2.0 - 0.5, 3.8, 0.5), 22)
+	for t in [Vector3(-3.5, 2.6, 1.0), Vector3(0.8, 2.6, 2.2), Vector3(4.6, 2.6, 0.6)]:
+		_hang_lamp(root, t, Color(1.0, 0.75, 0.4))
+	# Посуда на столах
+	for t in [Vector3(-3.5, 0.82, 1.0), Vector3(0.8, 0.82, 2.2), Vector3(4.6, 0.82, 0.6)]:
+		for i in 3:
+			var a := i * 2.1 + rng.randf()
+			_add(root, _cyl(0.07, 0.06, 0.16, 8), _mat(Color(0.65, 0.5, 0.3), 0.5, 0.4), t + Vector3(cos(a) * 0.45, 0.08, sin(a) * 0.45))
+			_add(root, _cyl(0.06, 0.06, 0.02, 8), _emat(Color(1.0, 0.8, 0.2), 1.2), t + Vector3(cos(a) * 0.45, 0.17, sin(a) * 0.45))
+		_add(root, _cyl(0.22, 0.22, 0.03, 12), _mat(Color(0.85, 0.82, 0.75), 0.6, 0.1, ""), t + Vector3(-0.15, 0.02, -0.2))
+		_add(root, _sphere(0.1), _mat(Color(0.7, 0.35, 0.15), 0.8, 0.0, ""), t + Vector3(-0.15, 0.1, -0.2))
+	# Левая стена: доска «Разыскиваются» с плакатами тварей
+	_add(root, _box(0.08, 1.6, 2.6), wood, Vector3(-w / 2.0 + 0.05, 2.1, 1.6))
+	for i in 3:
+		var pc: Color = [Color(1.0, 0.3, 0.3), Color(0.7, 0.4, 1.0), Color(1.0, 0.7, 0.3)][i]
+		_poster(root, Vector3(-w / 2.0 + 0.12, 2.1 + (i % 2) * 0.15, 0.85 + i * 0.75), pc, 0.55, 0.75, 90.0)
+	_label3d(root, "РАЗЫСКИВАЮТСЯ", Vector3(-w / 2.0 + 0.3, 3.15, 1.6), Color(1.0, 0.5, 0.4), 20)
+	# Мишень для дротиков и трофейный череп над камином
+	_add(root, _cyl(0.4, 0.4, 0.06, 16), _mat(Color(0.2, 0.15, 0.1), 0.9, 0.0, ""), Vector3(2.2, 2.2, bk + 0.05), Vector3(90, 0, 0))
+	for r in 3:
+		_add(root, _torus(0.1 + r * 0.1, 0.13 + r * 0.1), _emat([Color(1, 0.3, 0.3), Color(1, 1, 1), Color(0.3, 1.0, 0.5)][r], 1.4), Vector3(2.2, 2.2, bk + 0.09), Vector3(90, 0, 0))
+	for i in 3:
+		_add(root, _cyl(0.01, 0.01, 0.2, 4), _mat(Color(0.8, 0.8, 0.8), 0.4, 0.6, ""), Vector3(2.1 + i * 0.1, 2.25 - i * 0.08, bk + 0.18), Vector3(90, 0, 0))
+	var skull := _mat(Color(0.85, 0.82, 0.72), 0.7, 0.0, "")
+	_add(root, _sphere(0.32), skull, Vector3(5.2, 2.85, bk + 0.35))
+	for s in [-1.0, 1.0]:
+		_add(root, _cyl(0.02, 0.08, 0.6, 6), skull, Vector3(5.2 + s * 0.4, 3.05, bk + 0.35), Vector3(0, 0, -s * 40))
+		_add(root, _sphere(0.06), _emat(Color(1.0, 0.2, 0.3), 3.0), Vector3(5.2 + s * 0.12, 2.9, bk + 0.6))
+	_label3d(root, "Альфа-вожак, 1-я Ночь", Vector3(5.2, 3.45, bk + 0.4), Color(0.9, 0.8, 0.6), 14)
+	# Неоновый музыкальный автомат
+	_add(root, _box(0.9, 1.5, 0.6), _mat(Color(0.3, 0.1, 0.25), 0.4, 0.4), Vector3(7.6, 0.75, -3.6))
+	var jb := _add(root, _box(0.7, 0.7, 0.05), _emat(MAGENTA, 1.8), Vector3(7.6, 1.0, -3.28))
+	_flicker.append([jb.material_override, 1.8, 0.0])
+	_add(root, _cyl(0.45, 0.45, 0.6, 16), _emat(CYAN, 1.2, 0.6), Vector3(7.6, 1.5, -3.6), Vector3(90, 0, 0))
+	_particles(root, Vector3(7.6, 1.8, -3.3), Color(1.0, 0.5, 1.0), 4, Vector3(0.3, 0.1, 0.1), Vector3(0, 0.4, 0), 2.5, 0.07)
+	_rob(o, Vector3(7.6, 0, -3.6), 0.55, 0.4)
+	# Книжный шкаф и кот на бочке
+	_books(root, Vector3(-w / 2.0 + 0.4, 0, -3.8), 1.2, rng)
+	_rob(o, Vector3(-w / 2.0 + 0.4, 0, -3.8), 0.6, 0.3)
+	var cat := _mat(Color(0.15, 0.12, 0.12), 0.9, 0.0, "")
+	_add(root, _sphere(0.2), cat, Vector3(-7.2, 1.05, -1.4))
+	_add(root, _sphere(0.12), cat, Vector3(-7.0, 1.18, -1.3))
+	for s in [-1.0, 1.0]:
+		_add(root, _sphere(0.03), _emat(Color(0.6, 1.0, 0.3), 3.0), Vector3(-6.92, 1.2, -1.3 + s * 0.05))
+	# Ковры и меню на мелу
+	_rug(root, Vector3(-4.0, 0, 3.4), 2.6, 1.6, Color(0.2, 0.25, 0.45), Color(0.6, 0.45, 0.2))
+	_add(root, _box(1.2, 0.8, 0.05), _mat(Color(0.08, 0.1, 0.08), 0.9, 0.0, ""), Vector3(-0.6, 2.4, bk + 0.05))
+	_label3d(root, "МЕНЮ\nэль · похлёбка\nпирог с грибами", Vector3(-0.6, 2.4, bk + 0.15), Color(0.9, 0.95, 0.85), 12)
+
+
+func _decor_forge(root: Node3D, o: Vector3, w: float, d: float, wood: Material, dark: Material, rng: RandomNumberGenerator, col: Color) -> void:
+	var bk := -d / 2.0
+	var iron := _mat(Color(0.25, 0.25, 0.3), 0.4, 0.8)
+	# Стена инструментов над горном
+	_add(root, _box(2.4, 1.4, 0.05), wood, Vector3(-0.8, 2.5, bk + 0.05))
+	for i in 6:
+		var x := -1.8 + i * 0.4
+		_add(root, _cyl(0.025, 0.025, 0.7, 6), wood, Vector3(x, 2.4, bk + 0.12))
+		if i % 2 == 0:
+			_add(root, _box(0.22, 0.12, 0.1), iron, Vector3(x, 2.8, bk + 0.12))
+		else:
+			_add(root, _box(0.05, 0.3, 0.05), iron, Vector3(x + 0.05, 2.1, bk + 0.12), Vector3(0, 0, 18))
+	# Мехи у горна
+	_add(root, _box(0.9, 0.35, 0.6), _mat(Color(0.4, 0.25, 0.15), 0.9, 0.0, ""), Vector3(-5.4, 0.6, bk + 1.0))
+	_add(root, _cyl(0.05, 0.08, 0.6, 6), iron, Vector3(-4.9, 0.7, bk + 1.0), Vector3(0, 0, 90))
+	_rob(o, Vector3(-5.4, 0, bk + 1.0), 0.5, 0.35)
+	# Точильный круг (крутится) с искрами
+	_add(root, _box(0.7, 0.6, 0.4), wood, Vector3(1.6, 0.3, 1.2))
+	var wheel := _add(root, _cyl(0.38, 0.38, 0.12, 16), _mat(Color(0.5, 0.48, 0.45), 0.9, 0.0, "brick", 3.0), Vector3(1.6, 0.95, 1.2), Vector3(90, 0, 0))
+	_spinners.append([wheel, Vector3.UP, 4.0])
+	_particles(root, Vector3(1.9, 0.85, 1.25), Color(1.0, 0.7, 0.2), 10, Vector3(0.05, 0.05, 0.05), Vector3(0, -3.0, 0), 0.5, 0.04, false, 2.0)
+	_obstacles.append([o + Vector3(1.6, 0, 1.2), 0.5])
+	# Манекен в броне
+	_add(root, _cyl(0.04, 0.04, 1.2, 6), wood, Vector3(5.3, 0.6, -1.2))
+	_add(root, _box(0.6, 0.7, 0.35), iron, Vector3(5.3, 1.35, -1.2))
+	_add(root, _sphere(0.2), iron, Vector3(5.3, 1.9, -1.2))
+	_add(root, _box(0.22, 0.04, 0.05), _emat(col, 2.5), Vector3(5.3, 1.92, -1.02))
+	for s in [-1.0, 1.0]:
+		_add(root, _sphere(0.16), iron, Vector3(5.3 + s * 0.38, 1.62, -1.2))
+	_obstacles.append([o + Vector3(5.3, 0, -1.2), 0.4])
+	# Слитки и куча угля
+	for i in 6:
+		_add(root, _box(0.35, 0.1, 0.16), _mat([Color(0.7, 0.55, 0.25), Color(0.6, 0.6, 0.65), Color(0.4, 0.75, 0.9)][i % 3], 0.3, 0.9, ""),
+			Vector3(-1.9 + (i % 3) * 0.38, 0.06 + (i / 3) * 0.1, 3.0), Vector3(0, 0, 0))
+	for i in 7:
+		_add(root, _sphere(0.18 - i * 0.012), _mat(Color(0.08, 0.08, 0.08), 1.0, 0.0, ""), Vector3(-5.6 + rng.randf_range(-0.3, 0.3), 0.1, -0.4 + rng.randf_range(-0.3, 0.3)))
+	_add(root, _sphere(0.07), _emat(Color(1.0, 0.35, 0.1), 2.5), Vector3(-5.55, 0.2, -0.35))
+	# Цепи с потолка с крюком
+	for c in [Vector3(-2.2, 0, -0.5), Vector3(3.4, 0, 2.5)]:
+		for k in 8:
+			_add(root, _torus(0.04, 0.06), iron, c + Vector3(0, 4.3 - k * 0.12, 0), Vector3(0, 0, 90 * (k % 2)))
+		_add(root, _torus(0.08, 0.12), iron, c + Vector3(0, 3.25, 0), Vector3(90, 0, 0))
+	# Чертежи на стене и герб гильдии
+	_poster(root, Vector3(-w / 2.0 + 0.08, 2.3, 0.6), Color(0.4, 0.7, 1.0), 1.1, 0.8, 90.0)
+	_poster(root, Vector3(w / 2.0 - 0.08, 2.3, 0.4), col, 1.0, 1.2, -90.0)
+	_label3d(root, "Молот помнит руку", Vector3(w / 2.0 - 0.4, 3.2, 0.4), Color(1.0, 0.75, 0.4), 14)
+	_crate(root, Vector3(5.2, 0, 3.0), 0.6, wood, Color(1.0, 0.6, 0.2))
+	_rob(o, Vector3(5.2, 0, 3.0), 0.35, 0.35)
+
+
+func _decor_shrine(root: Node3D, o: Vector3, w: float, d: float, wood: Material, dark: Material, rng: RandomNumberGenerator, col: Color) -> void:
+	var bk := -d / 2.0
+	var stone := _mat(Color(0.35, 0.32, 0.42), 0.8, 0.1, "brick", 1.0)
+	# Витраж на задней стене — мозаика из светящихся стёкол
+	var gc := [Color(1.0, 0.4, 0.85), Color(0.4, 0.8, 1.0), Color(1.0, 0.85, 0.35), Color(0.5, 1.0, 0.6), Color(0.7, 0.45, 1.0)]
+	for gx in 5:
+		for gy in 6:
+			var dx := gx - 2.0
+			var dy := gy - 2.5
+			if dx * dx / 6.0 + dy * dy / 9.0 > 1.1:
+				continue
+			_add(root, _box(0.3, 0.3, 0.04), _emat(gc[(gx * 3 + gy) % 5], 1.3), Vector3(dx * 0.34, 2.9 + dy * 0.34, bk + 0.04))
+	_add(root, _torus(1.0, 1.1), _mat(Color(0.25, 0.22, 0.3), 0.6, 0.4), Vector3(0, 2.9, bk + 0.06), Vector3(90, 0, 0))
+	# Колонны вдоль стен
+	for s in [-1.0, 1.0]:
+		for z in [-1.0, 2.2]:
+			_add(root, _cyl(0.24, 0.3, 4.4, 10), stone, Vector3(s * (w / 2.0 - 0.6), 2.2, z))
+			_add(root, _box(0.7, 0.2, 0.7), stone, Vector3(s * (w / 2.0 - 0.6), 4.3, z))
+			_obstacles.append([o + Vector3(s * (w / 2.0 - 0.6), 0, z), 0.35])
+		# Знамёна героев
+		_add(root, _box(0.7, 1.6, 0.03), _mat(Color(0.35, 0.1, 0.3) if s < 0 else Color(0.1, 0.2, 0.4), 1.0, 0.0, ""), Vector3(s * (w / 2.0 - 0.06), 2.6, 0.6), Vector3(0, 90, 0))
+		_add(root, _sphere(0.14), _emat(col if s < 0 else CYAN, 2.0), Vector3(s * (w / 2.0 - 0.1), 2.8, 0.6))
+	# Курильницы с дымом
+	for s in [-1.0, 1.0]:
+		var p := Vector3(s * 2.2, 0, bk + 1.6)
+		_add(root, _cyl(0.05, 0.05, 0.9, 6), _mat(Color(0.6, 0.5, 0.3), 0.3, 0.9), p + Vector3(0, 0.45, 0))
+		_add(root, _cyl(0.22, 0.12, 0.2, 10), _mat(Color(0.6, 0.5, 0.3), 0.3, 0.9), p + Vector3(0, 0.95, 0))
+		_add(root, _sphere(0.08), _emat(Color(1.0, 0.5, 0.2), 2.4), p + Vector3(0, 1.05, 0))
+		_particles(root, p + Vector3(0, 1.15, 0), Color(0.75, 0.7, 0.9), 8, Vector3(0.05, 0.02, 0.05), Vector3(0, 0.25, 0), 3.0, 0.14)
+		_obstacles.append([o + p, 0.3])
+	# Чаша с водой и светлячки-лотосы
+	_add(root, _cyl(0.7, 0.55, 0.45, 16), stone, Vector3(0, 0.22, 2.9))
+	_add(root, _cyl(0.62, 0.62, 0.02, 16), _emat(Color(0.3, 0.6, 1.0), 0.8, 0.8), Vector3(0, 0.45, 2.9))
+	for i in 3:
+		var a := i * TAU / 3.0
+		var lo := _add(root, _sphere(0.07), _emat(Color(1.0, 0.6, 0.9), 2.4), Vector3(cos(a) * 0.35, 0.5, 2.9 + sin(a) * 0.35))
+		_bobbers.append([lo, 0.5, 0.02])
+	_obstacles.append([o + Vector3(0, 0, 2.9), 0.75])
+	# Аналой с раскрытой книгой — «Хроника Охотников»
+	_add(root, _cyl(0.06, 0.12, 1.0, 6), wood, Vector3(-3.6, 0.5, 3.0))
+	_add(root, _box(0.6, 0.05, 0.45), wood, Vector3(-3.6, 1.05, 3.0), Vector3(-25, 0, 0))
+	_add(root, _box(0.5, 0.03, 0.36), _mat(Color(0.92, 0.88, 0.75), 0.9, 0.0, ""), Vector3(-3.6, 1.09, 3.0), Vector3(-25, 0, 0))
+	_add(root, _sphere(0.04), _emat(col, 3.0), Vector3(-3.6, 1.18, 3.0))
+	_label3d(root, "Хроника Охотников", Vector3(-3.6, 1.5, 3.0), Color(0.95, 0.85, 1.0), 14)
+	_obstacles.append([o + Vector3(-3.6, 0, 3.0), 0.35])
+	# Кольцо парящих рун над алтарём
+	var ring := Node3D.new()
+	ring.position = Vector3(0, 3.0, bk + 1.3)
+	root.add_child(ring)
+	for i in 8:
+		var a := i * TAU / 8.0
+		_add(ring, _box(0.12, 0.2, 0.02), _emat(col.lightened(0.2), 2.4), Vector3(cos(a) * 1.0, 0, sin(a) * 1.0), Vector3(0, -rad_to_deg(a), 0))
+	_spinners.append([ring, Vector3.UP, 0.5])
+	# Подушки для медитации
+	for i in 3:
+		_add(root, _cyl(0.3, 0.32, 0.12, 12), _mat([Color(0.5, 0.15, 0.35), Color(0.15, 0.3, 0.5), Color(0.5, 0.4, 0.15)][i], 1.0, 0.0, ""), Vector3(-1.2 + i * 1.2, 0.06, bk + 3.0))
+	_rug(root, Vector3(0, 0, 0.8), 1.6, 5.0, Color(0.3, 0.12, 0.3), Color(0.5, 0.35, 0.15))
+
+
+func _decor_lab(root: Node3D, o: Vector3, w: float, d: float, wood: Material, dark: Material, rng: RandomNumberGenerator, col: Color) -> void:
+	var bk := -d / 2.0
+	var metal := _mat(Color(0.2, 0.22, 0.28), 0.4, 0.7)
+	# Серверные стойки с мигающими огнями — левая стена
+	for i in 2:
+		var p := Vector3(-w / 2.0 + 0.55, 0, -1.4 + i * 1.0)
+		_add(root, _box(0.8, 2.2, 0.8), metal, p + Vector3(0, 1.1, 0))
+		for r in 8:
+			for c in 3:
+				var lc: Color = [Color(0.3, 1.0, 0.5), col, Color(1.0, 0.6, 0.2)][(r + c + i) % 3]
+				var led := _add(root, _box(0.05, 0.04, 0.02), _emat(lc, 2.5), p + Vector3(0.41, 0.3 + r * 0.24, -0.2 + c * 0.2), Vector3(0, 90, 0))
+				if (r * 3 + c) % 4 == 0:
+					_flicker.append([led.material_override, 2.5, rng.randf() * 10.0])
+		_rob(o, p, 0.45, 0.45)
+	# Капсула с образцом твари
+	var cp := Vector3(w / 2.0 - 0.9, 0, 1.2)
+	_add(root, _cyl(0.55, 0.55, 0.25, 14), metal, cp + Vector3(0, 0.12, 0))
+	_add(root, _cyl(0.48, 0.48, 1.9, 14), _emat(Color(0.3, 1.0, 0.7), 0.5, 0.35), cp + Vector3(0, 1.2, 0))
+	_add(root, _cyl(0.55, 0.55, 0.25, 14), metal, cp + Vector3(0, 2.25, 0))
+	var spec := _add(root, _sphere(0.28), _mat(Color(0.25, 0.1, 0.35), 0.6, 0.0, ""), cp + Vector3(0, 1.2, 0))
+	_bobbers.append([spec, 1.2, 0.08])
+	_add(root, _sphere(0.05), _emat(Color(1.0, 0.2, 0.3), 3.0), cp + Vector3(0.12, 1.28, 0.22))
+	_particles(root, cp + Vector3(0, 0.5, 0), Color(0.7, 1.0, 0.9), 6, Vector3(0.25, 0.1, 0.25), Vector3(0, 0.9, 0), 2.0, 0.05)
+	_label3d(root, "ОБРАЗЕЦ №7 — НЕ КОРМИТЬ", cp + Vector3(0, 2.7, 0), Color(1.0, 0.5, 0.5), 14)
+	_obstacles.append([o + cp, 0.6])
+	# Роборука над верстаком
+	var arm := Node3D.new()
+	arm.position = Vector3(-2.2, 0.95, 0.6)
+	root.add_child(arm)
+	_add(arm, _cyl(0.15, 0.2, 0.2, 10), metal, Vector3(0, 0.1, 0))
+	_add(arm, _box(0.12, 0.9, 0.12), _mat(Color(0.9, 0.6, 0.15), 0.4, 0.5), Vector3(0, 0.6, 0), Vector3(0, 0, -20))
+	_add(arm, _box(0.1, 0.7, 0.1), _mat(Color(0.9, 0.6, 0.15), 0.4, 0.5), Vector3(0.35, 1.05, 0.2), Vector3(70, 0, 30))
+	_add(arm, _sphere(0.07), _emat(col, 3.0), Vector3(0.45, 1.0, 0.55))
+	_spinners.append([arm, Vector3.UP, 0.35])
+	# Доска со схемами и маркерная надпись
+	_add(root, _box(2.2, 1.2, 0.04), _mat(Color(0.9, 0.92, 0.95), 0.5, 0.0, ""), Vector3(3.8, 2.6, bk + 0.05))
+	for i in 5:
+		_add(root, _box(rng.randf_range(0.4, 1.4), 0.03, 0.01), _emat([CYAN, MAGENTA, Color(0.3, 0.9, 0.4)][i % 3], 1.0), Vector3(3.4 + rng.randf_range(-0.4, 0.6), 2.2 + i * 0.18, bk + 0.08))
+	_label3d(root, "Резонанс Врат = ?", Vector3(3.8, 3.35, bk + 0.1), Color(0.2, 0.3, 0.5), 14)
+	# Дрон-помощник парит
+	var drone := _add(root, _box(0.35, 0.12, 0.35), metal, Vector3(1.0, 2.6, 1.8))
+	_bobbers.append([drone, 2.6, 0.15])
+	_add(drone, _sphere(0.07), _emat(CYAN, 3.0), Vector3(0, -0.08, 0.15))
+	for s in [-1.0, 1.0]:
+		_add(drone, _cyl(0.14, 0.14, 0.02, 10), _emat(Color(0.6, 0.9, 1.0), 0.8, 0.5), Vector3(s * 0.28, 0.08, 0))
+	# Кабельные лотки под потолком и ящики ядер
+	for i in 3:
+		_add(root, _box(w - 1.0, 0.05, 0.3), metal, Vector3(0, 3.9 - i * 0.03, -2.4 + i * 1.6))
+		_add(root, _box(w - 1.2, 0.03, 0.05), _emat([CYAN, MAGENTA, col][i], 1.2), Vector3(0, 3.85 - i * 0.03, -2.4 + i * 1.6))
+	for i in 3:
+		_crate(root, Vector3(-4.8 + i * 0.75, 0, 3.2), 0.55, metal, [CYAN, MAGENTA, Color(0.3, 1.0, 0.5)][i])
+	_rob(o, Vector3(-4.05, 0, 3.2), 1.1, 0.35)
+	_books(root, Vector3(1.4, 0, bk + 0.35), 1.1, rng, 2)
 
 
 # ---- Герои и наёмники в таверне ----
@@ -3611,6 +3963,10 @@ func _npc_offer(v: Dictionary) -> Dictionary:
 			return {}
 	if Meta.total_runs < int(Meta.npc_cd.get(nm, 0)):
 		return {}
+	# Сага жителя — многоэтапная история; пока не пройдена, он просит только её
+	var sq := Lore.saga_quest(nm)
+	if not sq.is_empty():
+		return sq
 	var k: String = prof["quest"]
 	var t := Quests.tier()
 	return {"k": k, "g": int(Quests.POOL[k]["g"][t]), "tier": t, "giver": nm}
@@ -3769,6 +4125,25 @@ func _fill_talk(i: int) -> void:
 	_panel_box.add_child(_centered(story))
 	var act := _npc_active(v)
 	var offer := _npc_offer(v)
+	var nm0: String = prof["name"]
+	if Lore.SAGAS.has(nm0):
+		var sg: Dictionary = Lore.SAGAS[nm0]
+		var st_n := Lore.saga_stage(nm0)
+		var marks := ""
+		for si in sg["steps"].size():
+			marks += "●" if si < st_n else "○"
+		_panel_box.add_child(_centered(_label("Сага «%s»  %s" % [sg["name"], marks], 17, Color(0.85, 0.7, 1.0))))
+		if Lore.saga_done(nm0):
+			var fin := _label("«%s»" % sg["final"], 15, Color(1.0, 0.92, 0.75))
+			fin.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			fin.custom_minimum_size = Vector2(_story_w(), 0)
+			_panel_box.add_child(_centered(fin))
+	var stage_q: Dictionary = act if act.has("saga") else offer
+	if stage_q.has("saga"):
+		var stx := _label("Этап «%s»: «%s»" % [stage_q["title"], stage_q["text"]], 15, Color(1.0, 0.85, 0.6))
+		stx.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		stx.custom_minimum_size = Vector2(_story_w(), 0)
+		_panel_box.add_child(_centered(stx))
 	if not act.is_empty():
 		_panel_box.add_child(_centered(_label("Вы обещали помочь:", 15, GOLD)))
 		_panel_box.add_child(_centered(_label(Quests.desc(act) + "  •  награда: " + Quests.reward_text(Quests.reward(act)), 15, Color(0.92, 0.92, 1.0))))
@@ -3860,3 +4235,206 @@ func _fill_prologue() -> void:
 		_fill_panel())
 	_panel_box.add_child(_centered(go))
 	_add_close()
+
+# ---- Монумент охотников: ранг, навыки, мастерство, осколки памяти, саги ----
+
+func _build_monument() -> void:
+	var stone := _mat(Color(0.3, 0.28, 0.36), 0.85, 0.1, "brick", 1.2)
+	var root := Node3D.new()
+	root.position = MONUMENT
+	_world.add_child(root)
+	_add(root, _cyl(2.4, 2.6, 0.3, 16), stone, Vector3(0, 0.15, 0))
+	_add(root, _cyl(1.6, 1.8, 0.4, 12), stone, Vector3(0, 0.5, 0))
+	_add(root, _box(1.1, 3.6, 1.1), stone, Vector3(0, 2.5, 0))
+	var cap := _add(root, PrismMesh.new(), stone, Vector3(0, 4.6, 0))
+	cap.scale = Vector3(1.1, 0.8, 1.1)
+	# Имена павших охотников светятся на гранях
+	for side in 4:
+		var a := side * PI / 2.0
+		for r in 6:
+			var ln := _add(root, _box(0.6 - (r % 3) * 0.12, 0.05, 0.02), _emat([CYAN, GOLD, MAGENTA][(r + side) % 3], 1.2),
+				Vector3(sin(a) * 0.56, 1.3 + r * 0.38, cos(a) * 0.56), Vector3(0, rad_to_deg(a), 0))
+			_flicker.append([ln.material_override, 1.2, randf() * 10.0])
+	# Парящая звезда ранга и кольца
+	var star := _add(root, _sphere(0.32), _emat(GOLD, 3.0), Vector3(0, 5.6, 0))
+	_bobbers.append([star, 5.6, 0.15])
+	var ring := _add(root, _torus(0.55, 0.62), _emat(CYAN, 2.0), Vector3(0, 5.6, 0), Vector3(70, 0, 0))
+	_spinners.append([ring, Vector3.UP, 0.9])
+	for k in 6:
+		var a := TAU * k / 6.0
+		_add(root, _cyl(0.05, 0.06, 0.35, 6), _mat(Color(0.95, 0.9, 0.8), 0.9, 0.0, ""), Vector3(cos(a) * 1.9, 0.48, sin(a) * 1.9))
+		var fm := _add(root, _sphere(0.05), _emat(Color(1.0, 0.75, 0.4), 4.0), Vector3(cos(a) * 1.9, 0.7, sin(a) * 1.9))
+		_flicker.append([fm.material_override, 4.0, randf() * 10.0])
+	_particles(root, Vector3(0, 5.6, 0), GOLD, 14, Vector3(0.4, 0.3, 0.4), Vector3(0, 0.5, 0), 2.0, 0.05)
+	_light(root, Vector3(0, 3.0, 1.5), GOLD, 1.2, 6.0)
+	_label3d(_world, "МОНУМЕНТ ОХОТНИКОВ", MONUMENT + Vector3(0, 6.6, 0), Color(1.0, 0.85, 0.5), 30)
+	_obstacles.append([MONUMENT, 2.0])
+
+
+func _row(left: Control, right: Control) -> HBoxContainer:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 12)
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(left)
+	h.add_child(right)
+	h.custom_minimum_size = Vector2(_story_w(), 0)
+	return h
+
+
+func _small_btn(text: String, accent: Color, enabled := true) -> Button:
+	var b := _button(text, accent, enabled)
+	b.custom_minimum_size = Vector2(120, 38)
+	b.add_theme_font_size_override("font_size", 15)
+	return b
+
+
+func _wrap(text: String, size: int, col: Color) -> Label:
+	var l := _label(text, size, col)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size = Vector2(_story_w(), 0)
+	return l
+
+
+func _fill_path() -> void:
+	var ro := Lore.rank_of(Meta.rank_xp)
+	var r := int(ro[0])
+	_panel_box.add_child(_centered(_label("ПУТЬ ОХОТНИКА", 32, Color.WHITE, Color(GOLD, 0.7))))
+	_panel_box.add_child(_centered(_label("%s  •  ранг %d — %s" % [Meta.nickname, r, Lore.rank_title(r)], 19, GOLD)))
+	var bar := ProgressBar.new()
+	bar.max_value = float(ro[2])
+	bar.value = float(ro[1])
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(minf(420.0, _avail()), 14)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = GOLD
+	fill.set_corner_radius_all(4)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.1, 0.07, 0.16)
+	bg.border_color = Color(GOLD, 0.5)
+	bg.set_border_width_all(1)
+	bg.set_corner_radius_all(4)
+	bar.add_theme_stylebox_override("fill", fill)
+	bar.add_theme_stylebox_override("background", bg)
+	_panel_box.add_child(_centered(bar))
+	_panel_box.add_child(_centered(_label("опыт ранга %d / %d  •  за вылазку: убийства, минуты, боссы, знамения, загадки" % [int(ro[1]), int(ro[2])], 13, Color(0.75, 0.75, 0.9))))
+	# --- Навыки ---
+	var pts := Lore.perk_points()
+	_panel_box.add_child(_centered(_label("НАВЫКИ  •  свободных очков: %d" % pts, 20, CYAN if pts > 0 else Color(0.8, 0.8, 0.95))))
+	_panel_box.add_child(_centered(_wrap("Очко навыка — за каждый ранг и за каждую завершённую сагу жителя. Навыки действуют на всех героев.", 13, Color(0.75, 0.75, 0.9))))
+	for id in Lore.PERKS:
+		var pk: Dictionary = Lore.PERKS[id]
+		var lv := Lore.perk(id)
+		var left := _label("%s  %s\n%s" % [pk["name"], "▮".repeat(lv) + "▯".repeat(int(pk["max"]) - lv), pk["d"]], 15, Color(1.0, 0.92, 0.75) if lv > 0 else Color(0.88, 0.88, 1.0))
+		var full := lv >= int(pk["max"])
+		var b := _small_btn("МАКС" if full else "+1", GOLD, Lore.can_buy_perk(id))
+		var pid: String = id
+		b.pressed.connect(func():
+			if Lore.buy_perk(pid):
+				Sound.play("levelup", -6.0)
+				_fill_panel())
+		_panel_box.add_child(_centered(_row(left, b)))
+	if not Meta.perks.is_empty():
+		var rs := _small_btn("Сбросить навыки", Color(1.0, 0.5, 0.5))
+		rs.custom_minimum_size = Vector2(220, 38)
+		rs.pressed.connect(func():
+			Lore.reset_perks()
+			_fill_panel())
+		_panel_box.add_child(_centered(rs))
+	# --- Мастерство героев ---
+	_panel_box.add_child(_centered(_label("МАСТЕРСТВО ГЕРОЕВ", 20, Color(0.85, 0.7, 1.0))))
+	_panel_box.add_child(_centered(_wrap("Каждый уровень: +2% урона и +4 здоровья этому герою. На 2, 5 и 8 уровне открываются страницы его истории, а победа над «Эхом прошлого» в знамении — четвёртая.", 13, Color(0.75, 0.75, 0.9))))
+	for h in Meta.HERO_ORDER:
+		if not (h in Meta.heroes_owned):
+			continue
+		var lv := Lore.mastery(h)
+		var xp := Lore.mastery_xp(h)
+		var nxt: int = Lore.MASTERY_XP[mini(lv + 1, Lore.MASTERY_XP.size() - 1)]
+		var open_n: int = Lore.tales_open(h).count(true)
+		var left := _label("%s — ур. %d%s   •   страниц %d / 4" % [Data.CHARACTERS[h]["name"], lv, "" if lv >= 10 else "  (%d / %d)" % [xp, nxt], open_n], 15, Data.CHARACTERS[h]["color"].lerp(Color.WHITE, 0.4))
+		var b := _small_btn("История", Color(0.85, 0.7, 1.0), open_n > 0)
+		var hid: String = h
+		b.pressed.connect(func():
+			_panel_id = "tale:" + hid
+			_fill_panel())
+		_panel_box.add_child(_centered(_row(left, b)))
+	# --- Осколки памяти ---
+	_panel_box.add_child(_centered(_label("ОСКОЛКИ ПАМЯТИ", 20, Color(0.75, 0.6, 1.0))))
+	_panel_box.add_child(_centered(_wrap("Редкие находки в бою: дрожащий кристалл где-то неподалёку. Собранный набор главы даёт постоянный бонус.", 13, Color(0.75, 0.75, 0.9))))
+	for ch in Lore.MEMORIES.size():
+		var n := Lore.memory_count(ch)
+		var st: Dictionary = Lore.MEMORY_SETS[ch]
+		var left := _label("%s  %d / %d\n%s %s" % [st["name"], n, Lore.MEMORIES[ch].size(), "✓" if Lore.set_done(ch) else "◇", st["d"]], 15, GOLD if Lore.set_done(ch) else Color(0.88, 0.88, 1.0))
+		var b := _small_btn("Читать", Color(0.75, 0.6, 1.0), n > 0)
+		var chn: int = ch
+		b.pressed.connect(func():
+			_panel_id = "mem:%d" % chn
+			_fill_panel())
+		_panel_box.add_child(_centered(_row(left, b)))
+	# --- Саги ---
+	_panel_box.add_child(_centered(_label("САГИ ЖИТЕЛЕЙ", 20, Color(1.0, 0.75, 0.5))))
+	var lines: Array = []
+	for nm in Lore.SAGAS:
+		var sg: Dictionary = Lore.SAGAS[nm]
+		var stn := Lore.saga_stage(nm)
+		var lock := Meta.story_step < int(Story.NPC_UNLOCK.get(nm, 0))
+		lines.append("%s «%s» — %s  %s" % [nm, sg["name"], "●".repeat(stn) + "○".repeat(sg["steps"].size() - stn),
+			"завершена" if Lore.saga_done(nm) else ("пока не доверяет" if lock else "этап %d" % (stn + 1))])
+	_panel_box.add_child(_centered(_wrap("\n".join(lines), 14, Color(0.9, 0.88, 1.0))))
+	# --- Бестиарий ---
+	_panel_box.add_child(_centered(_label("ЗНАНИЕ ТВАРЕЙ", 20, Color(1.0, 0.5, 0.5))))
+	var bl: Array = []
+	for k in Lore.BEAST_LORE:
+		var t := Lore.beast_tier(k)
+		var nk := Lore.beast_kills(k)
+		var need: int = Lore.BEAST_TIERS[mini(t, 2)]
+		bl.append("%s — %s  %s" % [Story.ENEMY_INFO[k]["name"], "★".repeat(t) + "☆".repeat(3 - t),
+			("урон +%d%%" % (5 * t)) + ("" if t >= 3 else "  (%d / %d)" % [nk, need])])
+	_panel_box.add_child(_centered(_wrap("\n".join(bl) + "\nПодробности знаний — в Библиотеке, в разделе тварей.", 14, Color(0.9, 0.88, 1.0))))
+	# --- Знамения ---
+	_panel_box.add_child(_centered(_label("ЗНАМЕНИЯ", 20, Color(0.6, 0.9, 1.0))))
+	var ol: Array = []
+	for c in preload("res://scripts/omens.gd").conditions():
+		ol.append("%s — условие: %s" % [c[0], c[1]])
+	_panel_box.add_child(_centered(_wrap("Особые испытания в бою. Случаются, только если выполнено условие:\n" + "\n".join(ol), 14, Color(0.9, 0.88, 1.0))))
+	_add_close()
+
+
+func _back_to_path() -> void:
+	var b := _button("← К монументу", GOLD)
+	b.pressed.connect(func():
+		_panel_id = "path"
+		_fill_panel())
+	_panel_box.add_child(_centered(b))
+
+
+func _fill_tale(h: String) -> void:
+	var c: Dictionary = Data.CHARACTERS[h]
+	_panel_box.add_child(_centered(_label(str(c["name"]).to_upper(), 30, Color.WHITE, Color(c["color"], 0.7))))
+	_panel_box.add_child(_centered(_label("%s  •  мастерство %d" % [c["title"], Lore.mastery(h)], 16, Color(0.8, 0.8, 1.0))))
+	var open: Array = Lore.tales_open(h)
+	var pages: Array = Lore.HERO_TALES.get(h, [])
+	for i in pages.size():
+		if open[i]:
+			_panel_box.add_child(_centered(_wrap(("Эхо" if i == 3 else "Страница %d" % (i + 1)), 16, GOLD)))
+			_panel_box.add_child(_centered(_wrap(pages[i], 15, Color(0.92, 0.9, 1.0))))
+		else:
+			var why := "Победите «Эхо прошлого» в знамении" if i == 3 else "Откроется на %d уровне мастерства" % Lore.TALE_AT[i]
+			_panel_box.add_child(_centered(_wrap("🔒 %s" % why, 14, Color(0.6, 0.6, 0.75))))
+	_back_to_path()
+	_add_close()
+
+
+func _fill_memories(ch: int) -> void:
+	var st: Dictionary = Lore.MEMORY_SETS[ch]
+	_panel_box.add_child(_centered(_label(str(st["name"]).to_upper(), 28, Color.WHITE, Color(0.75, 0.6, 1.0, 0.7))))
+	_panel_box.add_child(_centered(_label(Story.CHAPTERS[ch]["name"], 16, Color(0.8, 0.8, 1.0))))
+	for i in Lore.MEMORIES[ch].size():
+		var m: Dictionary = Lore.MEMORIES[ch][i]
+		if Lore.memory_id(ch, i) in Meta.memories:
+			_panel_box.add_child(_centered(_wrap("✦ " + str(m["t"]), 16, GOLD)))
+			_panel_box.add_child(_centered(_wrap(m["x"], 15, Color(0.92, 0.9, 1.0))))
+		else:
+			_panel_box.add_child(_centered(_wrap("◇ Не найден — ищите в боях главы «%s»" % Story.CHAPTERS[ch]["short"], 14, Color(0.6, 0.6, 0.75))))
+	_back_to_path()
+	_add_close()
+

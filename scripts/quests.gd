@@ -32,6 +32,11 @@ const POOL := {
 	"bossfast": {"t": "Блиц", "d": "Победите босса быстрее чем за 75 секунд (%d)", "g": [1, 1, 1, 1, 2]},
 }
 
+## Счётчики, которых нет на доске (только для саг жителей).
+const EXTRA_DESC := {"omens": "Исполните знамения в бою: %d", "memories": "Найдите осколки памяти: %d",
+	"lamps": "Зажгите рунные лампады: %d", "simon": "Повторите песню обелисков: %d"}
+const Lore := preload("res://scripts/lore.gd")
+
 ## Личные задания героев: цепочка из 3 шагов с кусочком истории.
 ## Выполняются только этим героем. Шаги открывают узлы его дерева («личное задание N»).
 const HERO_QUESTS := {
@@ -127,6 +132,8 @@ static func reward(q: Dictionary) -> Dictionary:
 		r = {"shards": 120, "scrap": 10, "chips": 3, "cores": 1}
 	if q.has("giver"):
 		r = {"shards": 60 + 30 * t, "scrap": 6 + 4 * t, "chips": 1 + t / 2, "cores": 1 if t >= 2 else 0}
+	if q.has("saga"):
+		r = {"shards": 150 + 40 * int(q.get("stage", 0)), "scrap": 10, "chips": 3, "cores": 1}
 	if q.get("contract", false):
 		# Контракт трактирщика: цель тяжелее, награда почти вдвое щедрее
 		r = {"shards": 90 + 45 * t, "scrap": 10 + 5 * t, "chips": 2 + t, "cores": 1 + t / 2}
@@ -192,6 +199,8 @@ static func reward_text(r: Dictionary) -> String:
 static func title(q: Dictionary) -> String:
 	if q.has("hero"):
 		return str(q.get("title", ""))
+	if q.has("saga"):
+		return "Сага «%s» %d/%d: %s" % [Lore.SAGAS[q["saga"]]["name"], int(q["stage"]) + 1, int(q["steps"]), q["title"]]
 	if q.has("giver"):
 		return "Просьба (%s): %s" % [q["giver"], POOL[q["k"]]["t"]]
 	return ("Контракт: " if q.get("contract", false) else "") + str(POOL[q["k"]]["t"])
@@ -200,6 +209,8 @@ static func title(q: Dictionary) -> String:
 static func desc(q: Dictionary) -> String:
 	if q.get("k") == "boss":
 		return "Победите босса" if int(q["g"]) <= 1 else "Победите боссов: %d" % int(q["g"])
+	if EXTRA_DESC.has(q["k"]):
+		return EXTRA_DESC[q["k"]] % int(q["g"])
 	return POOL[q["k"]]["d"] % int(q["g"])
 
 
@@ -297,7 +308,11 @@ static func settle(run: Dictionary, hero: String) -> Array:
 			Meta.add_reward(r)
 			out.append([title(q), reward_text(r)])
 			Meta.npc_thanks.append(str(q.get("giver", "")))
-			Meta.npc_cd[str(q.get("giver", ""))] = Meta.total_runs + 2
+			Meta.npc_cd[str(q.get("giver", ""))] = Meta.total_runs + (1 if q.has("saga") else 2)
+			if q.has("saga"):
+				var fin := Lore.saga_advance(str(q["saga"]))
+				if fin != "":
+					out.append(["Сага «%s» завершена" % Lore.SAGAS[q["saga"]]["name"], "+1 очко навыка, запись в летописи"])
 		else:
 			kn.append(q)
 	Meta.npc_quests = kn

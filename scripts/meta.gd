@@ -77,6 +77,11 @@ static var npc_quests: Array = []
 static var npc_cd := {}          # имя жителя -> номер забега, с которого он снова просит
 static var npc_thanks: Array = []
 static var parts := {}
+static var rank_xp := 0             # опыт ранга охотника (см. lore.gd)
+static var perks := {}              # навыки охотника: id -> уровень
+static var mastery := {}            # опыт мастерства героев: id -> опыт
+static var memories: Array = []     # найденные осколки памяти: "глава:номер"
+static var sagas := {}              # саги жителей: имя -> пройдено этапов
 const PARTS_NEED := 3
 
 # ---------- Деревья прокачки ----------
@@ -244,6 +249,11 @@ static func reset() -> void:
 	npc_thanks = []
 	construct = {}
 	just_built = ""
+	rank_xp = 0
+	perks = {}
+	mastery = {}
+	memories = []
+	sagas = {}
 
 
 static func ensure_loaded() -> void:
@@ -294,6 +304,17 @@ static func ensure_loaded() -> void:
 	contracts = cfg.get_value("meta", "contracts", [])
 	offers = cfg.get_value("meta", "offers", [])
 	construct = cfg.get_value("meta", "construct", {})
+	rank_xp = int(cfg.get_value("meta", "rank_xp", 0))
+	perks = cfg.get_value("meta", "perks", {})
+	mastery = cfg.get_value("meta", "mastery", {})
+	memories = cfg.get_value("meta", "memories", [])
+	sagas = cfg.get_value("meta", "sagas", {})
+	if not cfg.has_section_key("meta", "rank_xp") and total_runs > 0:
+		# Старое сохранение: ранг и мастерство — по уже пройденному пути
+		rank_xp = int(stats.get("kills", 0)) / 4 + int(float(stats.get("time", 0.0)) / 60.0) * 25 + int(stats.get("bosses", 0)) * 120
+		var hk: Dictionary = stats.get("hkills", {})
+		for h in hk:
+			mastery[h] = int(hk[h]) / 3
 	# Старые сохранения: всё оружие и модули уже встречались
 	if seen.is_empty() and total_runs > 0:
 		var D = preload("res://scripts/data.gd")
@@ -330,6 +351,11 @@ static func save() -> void:
 	cfg.set_value("meta", "parts", parts)
 	cfg.set_value("meta", "offers", offers)
 	cfg.set_value("meta", "construct", construct)
+	cfg.set_value("meta", "rank_xp", rank_xp)
+	cfg.set_value("meta", "perks", perks)
+	cfg.set_value("meta", "mastery", mastery)
+	cfg.set_value("meta", "memories", memories)
+	cfg.set_value("meta", "sagas", sagas)
 	cfg.set_value("meta", "saved_at", Time.get_datetime_string_from_system(false, true))
 	cfg.save(slot_path(current_slot()))
 
@@ -767,7 +793,7 @@ static func recruit() -> Dictionary:
 ## Бонусы убежища, которые действуют в забеге.
 static func run_mods() -> Dictionary:
 	ensure_loaded()
-	return {
+	var m := {
 		"damage": 1.0 + 0.06 * level("forge"),
 		"hp": 0.0,
 		"cooldown": 1.0,
@@ -775,6 +801,9 @@ static func run_mods() -> Dictionary:
 		"xp": 1.0 + 0.05 * mini(level("hall"), 5),
 		"chest": 0.1 * level("shrine"),
 	}
+	# Навыки охотника и наборы осколков памяти
+	preload("res://scripts/lore.gd").apply_run_mods(m)
+	return m
 
 
 ## Подсчёт награды за забег. Возвращает словарь с подробностями.
@@ -799,6 +828,9 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 	var total := 0
 	for k in r:
 		total += r[k]
+	# Навык «Жадность»
+	r["greed"] = int(round(float(total) * 0.05 * float(perks.get("greed", 0))))
+	total += r["greed"]
 	# Угроза и испытание вылазки повышают награду
 	var bonus_k := 1.0 + 0.03 * float(run.get("threat", 0)) + float(CHALLENGES.get(run.get("challenge", ""), {}).get("bonus", 0.0))
 	r["bonus"] = int(round(float(total) * (bonus_k - 1.0)))
@@ -815,6 +847,7 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 	stats["best_kills"] = maxi(int(stats.get("best_kills", 0)), kills)
 	best_time = maxf(best_time, time_alive)
 	r.merge(extra)
+	r["prog"] = preload("res://scripts/lore.gd").settle(run, victory)
 	last_reward = r
 	save()
 	return r
@@ -831,6 +864,7 @@ static func _settle_run(run: Dictionary, victory: bool) -> Dictionary:
 	var k := 1.0 if victory else 0.6
 	if has_node("c:" + str(run.get("hero", "")), "mats1"):
 		k *= 1.2
+	k *= 1.0 + 0.1 * float(perks.get("salvage", 0))
 	for m in MATERIALS:
 		var v := int(round(float(run.get("mat_" + m, 0)) * k))
 		if v > 0:
@@ -975,6 +1009,10 @@ static func hero_mods(id: String) -> Dictionary:
 		"armor": 1.0 if has_node(k, "armor") else 0.0, "awaken": has_node(k, "awaken"),
 		"regen": 0.4 if has_node(k, "regen1") else 0.0, "magnet": 1.25 if has_node(k, "magnet1") else 1.0,
 		"xp": 1.1 if has_node(k, "xp1") else 1.0, "dodge": 0.05 if has_node(k, "dodge1") else 0.0}
+	# Мастерство героя: урон и здоровье за уровень
+	var mb: Dictionary = preload("res://scripts/lore.gd").mastery_bonus(id)
+	out["damage"] = float(out["damage"]) + float(mb["damage"])
+	out["hp"] = float(out["hp"]) + float(mb["hp"])
 	# Личная ветвь героя
 	out["hp"] = float(out["hp"]) + float(fx.get("hp", 0.0))
 	out["speed"] = float(out["speed"]) * float(fx.get("speed", 1.0))

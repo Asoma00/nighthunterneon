@@ -255,7 +255,7 @@ static func frames(key: String, cache_key := "") -> Dictionary:
 		cache_key = key
 	if _cache.has(cache_key):
 		return _cache[cache_key]
-	var spec: Array = SPECS[key] if SPECS.has(key) else [18, 24, 8, true]
+	var spec: Array = SPECS[key] if SPECS.has(key) else ([48, 60, CITIZEN_FRAMES, true, 0.5] if key.begins_with("citizen_") else [18, 24, 8, true])
 	var w: int = spec[0]
 	var h: int = spec[1]
 	var count: int = spec[2]
@@ -469,6 +469,11 @@ static func _paint(key: String, b: Image, e: Image, f: int) -> void:
 		return
 	if key.begins_with("villager_"):
 		_paint_villager(b, e, f, int(key.substr(9)))
+		return
+	if key.begins_with("citizen_"):
+		_paint_hero_rig(key, b, e, f)
+		_citizen_extras(b, e, look(key), f)
+		_hero_detail(b, e, look(key))
 		return
 	if key in HERO_KEYS:
 		_paint_hero48(key, b, e, f)
@@ -2616,6 +2621,104 @@ const LOOKS := {
 }
 
 
+## ===== Жители хаба на том же риге, что и герои =====
+## Ключ: citizen_<роль>_<семя>. Внешность собирается из палитр по роли.
+const CITIZEN_FRAMES := 14     # покой 0–5, ходьба 6–13
+static var _gen_looks := {}
+
+
+static func look(key: String) -> Dictionary:
+	if LOOKS.has(key):
+		return LOOKS[key]
+	if not _gen_looks.has(key):
+		var parts := key.split("_")
+		_gen_looks[key] = citizen_look(parts[1] if parts.size() > 2 else "walker", int(parts[-1]))
+	return _gen_looks[key]
+
+
+static func citizen_look(role: String, seed: int) -> Dictionary:
+	var r := RandomNumberGenerator.new()
+	r.seed = seed * 7919 + 13
+	var pick := func(a: Array): return a[r.randi_range(0, a.size() - 1)]
+	var skins := [Color(0.95, 0.8, 0.68), Color(0.86, 0.66, 0.52), Color(0.68, 0.48, 0.36), Color(0.48, 0.33, 0.25),
+		Color(0.92, 0.76, 0.66), Color(0.62, 0.74, 0.86)]
+	var cloth := [Color(0.22, 0.25, 0.5), Color(0.45, 0.18, 0.35), Color(0.18, 0.38, 0.32), Color(0.42, 0.32, 0.2),
+		Color(0.3, 0.3, 0.36), Color(0.5, 0.25, 0.15), Color(0.55, 0.5, 0.42), Color(0.15, 0.3, 0.45), Color(0.4, 0.12, 0.14)]
+	var hairs := [Color(0.12, 0.08, 0.06), Color(0.45, 0.25, 0.12), Color(0.85, 0.7, 0.35), Color(0.75, 0.75, 0.78),
+		Color(0.7, 0.2, 0.15), Color(0.25, 0.75, 0.85), Color(0.85, 0.35, 0.7)]
+	var neons := [Color(0.3, 1.0, 1.0), Color(1.0, 0.3, 0.75), Color(0.4, 1.0, 0.5), Color(1.0, 0.75, 0.3), Color(0.7, 0.45, 1.0)]
+	var main: Color = pick.call(cloth)
+	var L := {"skin": pick.call(skins), "main": main, "trim": (pick.call(cloth) as Color).lightened(0.35),
+		"legs": main.darkened(0.45), "boots": Color(0.18, 0.13, 0.1), "back": "none", "back_c": main.darkened(0.2),
+		"head": pick.call(["hair", "hair", "cap", "kerchief"]), "head_c": pick.call(cloth), "hair": pick.call(hairs),
+		"neon": pick.call(neons), "neon2": pick.call(neons), "weapon": "none", "w_c": Color(0.45, 0.4, 0.35),
+		"gem": pick.call(neons), "build": r.randi_range(0, 1), "citizen": role,
+		"apron": false, "satchel": r.randf() < 0.4, "beard": r.randf() < 0.3, "lamp": r.randf() < 0.35}
+	match role:
+		"merchant":
+			L["head"] = "kerchief"; L["back"] = "coat"; L["satchel"] = true; L["weapon"] = "flask"
+		"guard":
+			L["head"] = pick.call(["great_helm", "samurai"]); L["back"] = "cape"; L["weapon"] = pick.call(["mace", "katana"])
+			L["main"] = Color(0.38, 0.4, 0.48); L["legs"] = Color(0.25, 0.26, 0.32); L["w_c"] = Color(0.6, 0.62, 0.7); L["build"] = 2
+		"smith", "blacksmith":
+			L["head"] = "dwarf" if role == "blacksmith" else "cap"; L["apron"] = true; L["weapon"] = "hammer"; L["build"] = 2
+			L["beard"] = true; L["w_c"] = Color(0.42, 0.42, 0.5); L["neon"] = Color(1.0, 0.6, 0.2)
+		"monk":
+			L["head"] = "hood"; L["back"] = "robe"; L["weapon"] = "staff"; L["gem"] = Color(0.4, 0.9, 1.0)
+		"priestess":
+			L["head"] = "hood_white"; L["back"] = "robe"; L["weapon"] = "orbstaff"; L["main"] = Color(0.85, 0.84, 0.8)
+			L["head_c"] = Color(0.92, 0.9, 0.86); L["gem"] = Color(1.0, 0.85, 0.4); L["build"] = 1
+		"musician":
+			L["head"] = "feathers"; L["back"] = "scarf"; L["lamp"] = true
+		"elder":
+			L["head"] = pick.call(["hood", "hair"]); L["back"] = "robe"; L["weapon"] = "staff"; L["hair"] = Color(0.85, 0.85, 0.88)
+			L["beard"] = true; L["build"] = 1; L["w_c"] = Color(0.4, 0.28, 0.18)
+		"trainee":
+			L["head"] = "samurai"; L["weapon"] = "blade"; L["back"] = "scarf"
+		"barkeep":
+			L["head"] = "hair"; L["apron"] = true; L["weapon"] = "flask"; L["build"] = 2; L["beard"] = true
+		"engineer":
+			L["head"] = "goggles"; L["back"] = "coat"; L["weapon"] = "wand"; L["satchel"] = true; L["head_c"] = Color(0.3, 0.3, 0.36)
+		"commander":
+			L["head"] = "great_helm"; L["back"] = "cloak"; L["weapon"] = "katana"; L["main"] = Color(0.12, 0.12, 0.18)
+			L["back_c"] = Color(0.45, 0.08, 0.12); L["trim"] = Color(0.9, 0.7, 0.3); L["build"] = 2
+		"gardener":
+			L["head"] = "kerchief"; L["apron"] = true; L["weapon"] = "staff"; L["head_c"] = Color(0.3, 0.6, 0.3)
+		"kid":
+			L["head"] = pick.call(["hair", "cap", "goggles"]); L["build"] = 1; L["beard"] = false
+		_:
+			L["back"] = pick.call(["none", "none", "scarf", "coat", "cape_short", "cloak"])
+			if r.randf() < 0.2:
+				L["head"] = pick.call(["hood", "goggles", "witch", "ninja"])
+	return L
+
+
+## Детали горожанина поверх рига: фартук, сумка, фонарик.
+static func _citizen_extras(b: Image, e: Image, L: Dictionary, f: int) -> void:
+	if _anc.is_empty():
+		return
+	var cx: float = _anc["cx"]
+	var sh: float = _anc["sh"]
+	var hip: float = _anc["hip"]
+	var tw: float = _anc["tw"]
+	if L.get("apron", false):
+		var ac := Color(0.42, 0.3, 0.2) if L["citizen"] != "gardener" else Color(0.3, 0.45, 0.25)
+		spoly(b, PackedVector2Array([Vector2(cx - tw + 1, sh + 3), Vector2(cx + tw, sh + 3), Vector2(cx + tw + 1, hip + 5), Vector2(cx - tw, hip + 5)]), ac)
+		sline(b, int(cx - tw + 1), int(sh + 3), int(cx + 1), int(sh - 1), ac.darkened(0.3))
+		srect(b, int(cx - 1), int(hip - 1), 3, 2, ac.lightened(0.2))
+	if L.get("satchel", false):
+		sline(b, int(cx + tw - 1), int(sh), int(cx - tw), int(hip), Color(0.35, 0.22, 0.14))
+		sell(b, cx - tw, hip + 1, 2.4, 2.0, Color(0.45, 0.3, 0.18))
+		spx(e, int(cx - tw), int(hip + 1), Color(L["neon"], 0.8))
+	if L.get("lamp", false):
+		var g: Color = L["gem"]
+		var y := hip + 2 + sin(f * 0.8) * 0.6
+		sell(e, cx - tw - 1, y, 1.3, 1.6, Color(g, 0.9))
+		spx(e, int(cx - tw - 1), int(y), Color.WHITE)
+	# Неоновая нашивка на плече у всех — «знак Ковчега»
+	spx(e, int(cx + tw - 2), int(sh + 2), Color(L["neon2"], 0.85))
+
+
 static func hero_frame(fr: Dictionary, state: String, t: float) -> int:
 	var n: int = fr["base"].size()
 	if n < HERO_FRAMES:
@@ -2664,7 +2767,7 @@ static func slimb(im: Image, a: Vector2, c: Vector2, w: int, col: Color) -> void
 
 ## Кадр героя 48×60: поза рига + смерть/рывок/способность + проходы детализации.
 static func _paint_hero48(key: String, b: Image, e: Image, f: int) -> void:
-	var L: Dictionary = LOOKS[key]
+	var L: Dictionary = look(key)
 	if f >= 26 and f < 32:
 		# Смерть: оседает, падает навзничь, тает
 		var k := f - 26
@@ -2854,7 +2957,7 @@ static func _limb(im: Image, a: Vector2, c: Vector2, w: int, col: Color) -> void
 
 
 static func _paint_hero_rig(key: String, b: Image, e: Image, f: int) -> void:
-	var L: Dictionary = LOOKS[key]
+	var L: Dictionary = look(key)
 	var weapon: String = L["weapon"]
 	var melee := weapon in ["katana", "hammer", "scythe", "blade", "mace"]
 	var P := _rig_pose(f, melee)
@@ -3043,6 +3146,32 @@ static func _paint_hero_rig(key: String, b: Image, e: Image, f: int) -> void:
 			if not blink:
 				srect(e, int(hx), int(hy + 1), 4, 1, neon)
 				spx(e, int(hx + 3), int(hy + 1), neon2)
+		"hair":
+			sell(b, hx, hy + 0.5, 4.4, 4.4, skin)
+			sell(b, hx - 1, hy - 2.0, 5.0, 3.2, L["hair"])
+			spoly(b, PackedVector2Array([Vector2(hx - 4, hy - 1), Vector2(hx - 5 - sway * 0.5, hy + 4), Vector2(hx - 2, hy + 2)]), L["hair"])
+			if L.get("beard", false):
+				spoly(b, PackedVector2Array([Vector2(hx - 1, hy + 2), Vector2(hx + 5, hy + 2), Vector2(hx + 3, hy + 6), Vector2(hx, hy + 5)]), L["hair"].lightened(0.1))
+			if not blink:
+				spx(b, int(hx + 2), int(hy), Color(0.1, 0.08, 0.12))
+				spx(e, int(hx + 3), int(hy), Color(neon, 0.5))
+		"cap":
+			sell(b, hx, hy + 0.5, 4.4, 4.4, skin)
+			sell(b, hx - 0.5, hy - 2.5, 4.8, 2.6, hc)
+			srect(b, int(hx), int(hy - 2), 7, 1, hc.darkened(0.25))
+			spx(e, int(hx - 1), int(hy - 4), neon)
+			if L.get("beard", false):
+				spoly(b, PackedVector2Array([Vector2(hx - 1, hy + 2), Vector2(hx + 5, hy + 2), Vector2(hx + 2, hy + 6)]), L["hair"])
+			if not blink:
+				spx(b, int(hx + 2), int(hy), Color(0.1, 0.08, 0.12))
+		"kerchief":
+			sell(b, hx, hy + 0.5, 4.4, 4.4, skin)
+			sell(b, hx - 0.5, hy - 1.8, 5.0, 3.0, hc)
+			spoly(b, PackedVector2Array([Vector2(hx - 4, hy - 1), Vector2(hx - 8 - sway, hy + 1), Vector2(hx - 4, hy + 2)]), hc.darkened(0.15))
+			for i in 3:
+				spx(b, int(hx - 3 + i * 2), int(hy - 3), hc.lightened(0.35))
+			if not blink:
+				spx(b, int(hx + 2), int(hy), Color(0.1, 0.08, 0.12))
 	if st == "hurt":
 		# Зажмуренные глаза-«крестики»
 		spx(b, int(hx + 1), int(hy), Color(0.95, 0.95, 1.0))

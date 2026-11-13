@@ -184,6 +184,7 @@ func setup(id: String) -> void:
 	cooldown_mult *= m["cooldown"]
 	magnet *= m["magnet"]
 	xp_mult *= m["xp"]
+	revive_charges = int(m.get("revive", 0))
 	# Дерево героя из Академии
 	var hm: Dictionary = _m_hero()
 	max_hp += hm["hp"]
@@ -1044,6 +1045,7 @@ func set_source(id: String) -> void:
 
 
 var laststand := false
+var revive_charges := 0   # навык «Второе дыхание»
 
 
 ## Бонусы дерева оружия для конкретного источника урона ({} — не оружие).
@@ -1487,6 +1489,14 @@ func take_damage(amount: float) -> void:
 	Sound.play("hurt", -2.0, 1.0, 0.1)
 	Fx.sparks(main, position + Vector2(0, -25), Color(1.0, 0.25, 0.35), 10)
 	Fx.number(main, position + Vector2(0, -30), amount, Color(1.0, 0.35, 0.4), 18)
+	if hp <= 0.0 and revive_charges > 0:
+		revive_charges -= 1
+		hp = max_hp * 0.3
+		_invuln = 2.5
+		Fx.ring(main, position, 10.0, 220.0, Pixel.hdr(Color(1.0, 0.85, 0.3), 2.2), 0.6, 7.0)
+		Fx.text_pop(main, position + Vector2(0, -70), "ВТОРОЕ ДЫХАНИЕ!", Pixel.hdr(Color(1.0, 0.85, 0.3), 1.6), 24)
+		Sound.play("evolve", -2.0, 1.2)
+		return
 	if hp <= 0.0:
 		hp = 0.0
 		if main.coop:

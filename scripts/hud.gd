@@ -98,7 +98,10 @@ func _update_pois() -> void:
 
 
 func _poi_list() -> Array:
-	var l: Array = main.pois.duplicate()
+	var l: Array = []
+	if main.get("omens") != null:
+		l.append(main.omens)
+	l.append_array(main.pois)
 	if main.events != null:
 		l.append(main.events)
 	return l
@@ -1121,6 +1124,11 @@ func show_game_over(victory: bool, time_alive: float, kills: int, level: int, re
 			_over_stats.text += "\n✓ Задание «%s»:  %s" % [q[0], q[1]]
 		if str(main.reward.get("built", "")) != "":
 			_over_stats.text += "\n⚒ Стройка завершена: %s" % main.Meta.BUILDINGS[main.reward["built"]]["name"]
+		if int(main.reward.get("greed", 0)) > 0:
+			_over_stats.text += "\nНавык «Жадность»: +%d ◆" % int(main.reward["greed"])
+		var prog: Array = main.Lore.summary_lines(main.reward.get("prog", {}))
+		if not prog.is_empty():
+			_over_stats.text += "\n\n— ПУТЬ ОХОТНИКА —\n" + "\n".join(prog)
 	_over_root.visible = true
 	_over_root.modulate.a = 0.0
 	var tw := _over_root.create_tween()
