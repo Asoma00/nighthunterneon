@@ -1462,7 +1462,11 @@ func _build_hud() -> void:
 	panel.add_child(_panel_scroll)
 	_panel_box = VBoxContainer.new()
 	_panel_box.add_theme_constant_override("separation", 12)
+	# Содержимое — по центру окна; окно подстраивается под содержимое при любой его смене
+	# (например, при переключении вкладок настроек)
+	_panel_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_panel_scroll.add_child(_panel_box)
+	_panel_box.minimum_size_changed.connect(func(): _fit_panel.call_deferred())
 
 
 var _badge_pic: TextureRect
