@@ -119,8 +119,12 @@ func _build() -> void:
 			_rebuild.call_deferred())
 		tabs.add_child(tb)
 	v.add_child(tabs)
+	# Ширина окна одна для всех вкладок: вкладки в одну строку, окно не «прыгает»
+	var vw := get_viewport().get_visible_rect().size.x
+	tabs.custom_minimum_size.x = minf(3.0 * 190.0 + 2.0 * 12.0, vw - 40.0)
 
 	var panel := PanelContainer.new()
+	panel.custom_minimum_size.x = minf(860.0 if vw >= 1180.0 and not Settings.is_portrait() else 620.0, vw - 40.0)
 	var pb := _box(CYAN.darkened(0.3), PANEL_BG, 2, 10)
 	pb.set_content_margin_all(26)
 	panel.add_theme_stylebox_override("panel", pb)
@@ -129,6 +133,7 @@ func _build() -> void:
 	grid.columns = 2 if (Settings.is_portrait() or get_viewport().get_visible_rect().size.x < 1180.0) else 4   # «название — значение», на вертикальном экране — одна пара в ряд
 	grid.add_theme_constant_override("h_separation", 18)
 	grid.add_theme_constant_override("v_separation", 12)
+	grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	panel.add_child(grid)
 
 	# --- Телефон: только чёткость картинки (окна и форматы не нужны) ---

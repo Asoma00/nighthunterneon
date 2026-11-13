@@ -2240,6 +2240,11 @@ func _make_npc(role: String, pos: Vector3, seed: int, nm: String) -> Dictionary:
 		frames = Pixel.frames("drone")
 	else:
 		frames = Pixel.frames("citizen_%s_%d" % [role, seed])
+		# Страховка: если детальный спрайт жителя по какой-то причине вышел пустым —
+		# показываем простой (и пишем в журнал, чтобы найти причину)
+		if not _sprite_ok(frames):
+			push_warning("Житель %s/%d: детальный спрайт пуст, беру простой" % [role, seed])
+			frames = Pixel.frames("villager_%d" % seed)
 	var pair := _sprite_pair(node, frames)
 	if role != "robot":
 		# Жители — чуть крупнее и светлее: не теряются на тёмной площади ночью
@@ -4491,3 +4496,20 @@ func _fill_build_orders() -> void:
 		var why := Meta.upgrade_block(bid)
 		if why != "":
 			_panel_box.add_child(_centered(_label("⊘ " + why, 14, Color(1.0, 0.6, 0.6))))
+
+
+## Есть ли в первом кадре хоть сколько-то непрозрачных пикселей.
+func _sprite_ok(fr: Dictionary) -> bool:
+	if fr.is_empty() or (fr.get("base", []) as Array).is_empty():
+		return false
+	var im: Image = (fr["base"][0] as Texture2D).get_image()
+	if im == null:
+		return false
+	var n := 0
+	for y in range(0, im.get_height(), 2):
+		for x in range(0, im.get_width(), 2):
+			if im.get_pixel(x, y).a > 0.5:
+				n += 1
+				if n > 20:
+					return true
+	return false
