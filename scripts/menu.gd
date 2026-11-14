@@ -46,7 +46,8 @@ func _ready() -> void:
 	_selected = Data.selected_character
 	_build_background()
 	_build_main_page()
-	_build_select_page()
+	# Страница выбора героя в меню больше не открывается (герой выбирается в убежище):
+	# не строим её — меню грузится быстрее, а широкий ряд карточек не растягивает экран
 	_build_settings_page()
 	_build_saves_page()
 	_build_profile_page()
@@ -956,10 +957,16 @@ func _build_coop_page() -> void:
 	v.add_child(title)
 	var sub := _label("Два героя на одном экране. Каждый игрок управляет своим устройством.", 16, Color(0.8, 0.8, 0.95))
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var vw := get_viewport().get_visible_rect().size.x
+	sub.custom_minimum_size = Vector2(minf(900.0, vw - 40.0), 0)
 	v.add_child(sub)
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 26)
+	# Панели игроков переносятся на новую строку, если экран узкий (вертикальный телефон)
+	var row := HFlowContainer.new()
+	row.alignment = FlowContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("h_separation", 26)
+	row.add_theme_constant_override("v_separation", 16)
+	row.custom_minimum_size = Vector2(minf(1200.0, vw - 20.0), 0)
 	v.add_child(row)
 	for i in 2:
 		var slot := _coop_panel(i)
@@ -970,6 +977,8 @@ func _build_coop_page() -> void:
 		else:
 			row.add_child(slot["panel"])
 	_coop_hint = _label("", 15, Color(0.75, 0.75, 0.9))
+	_coop_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_coop_hint.custom_minimum_size = Vector2(minf(900.0, vw - 40.0), 0)
 	_coop_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(_coop_hint)
 	var buttons := HBoxContainer.new()

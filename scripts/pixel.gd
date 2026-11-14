@@ -261,6 +261,18 @@ static func frames(key: String, cache_key := "") -> Dictionary:
 	var count: int = spec[2]
 	var volume: bool = spec[3]
 	var result := {"base": [], "emit": [], "flash": [], "size": Vector2(w, h), "k": float(spec[4]) if spec.size() > 4 else 1.0}
+	# Готовые кадры с диска (нарисованы в прошлый запуск этой же сборки)
+	var disk := _disk_path(cache_key)
+	if disk != "" and FileAccess.file_exists(disk):
+		var atlas := Image.load_from_file(disk)
+		if atlas != null and atlas.get_width() == w * count and atlas.get_height() == h * 3:
+			for f in count:
+				for row in 3:
+					var fr_img := atlas.get_region(Rect2i(f * w, row * h, w, h))
+					result[["base", "emit", "flash"][row]].append(ImageTexture.create_from_image(fr_img))
+			_cache[cache_key] = result
+			return result
+	var save_atlas: Image = Image.create(w * count, h * 3, false, Image.FORMAT_RGBA8) if disk != "" else null
 	for f in count:
 		var base := blank(w, h)
 		var emit := blank(w, h)
@@ -276,11 +288,43 @@ static func frames(key: String, cache_key := "") -> Dictionary:
 			shade(base)
 		if not key.begins_with("puddle") and not key.begins_with("decal_"):
 			outline(base, Color(0.08, 0.2, 0.3) if key == "wraith" else OUT)
+		var sil := silhouette(base)
 		result["base"].append(tex(base))
 		result["emit"].append(tex(emit))
-		result["flash"].append(tex(silhouette(base)))
+		result["flash"].append(tex(sil))
+		if save_atlas != null:
+			save_atlas.blit_rect(base, Rect2i(0, 0, w, h), Vector2i(f * w, 0))
+			save_atlas.blit_rect(emit, Rect2i(0, 0, w, h), Vector2i(f * w, h))
+			save_atlas.blit_rect(sil, Rect2i(0, 0, w, h), Vector2i(f * w, h * 2))
 	_cache[cache_key] = result
+	if save_atlas != null:
+		save_atlas.save_png(disk)
 	return result
+
+
+# ---------- Кэш спрайтов на диске ----------
+# Попиксельная отрисовка дорогая (герои, жители, враги — тысячи кадров). Нарисованное
+# сохраняется в user://sprites/<сборка>/ и при следующем запуске читается за миллисекунды.
+static var _disk_dir := ""
+
+
+static func _disk_path(cache_key: String) -> String:
+	if OS.has_feature("web") or DisplayServer.get_name() == "headless":
+		return ""
+	if _disk_dir == "":
+		var build := int(load("res://scripts/build.gd").BUILD)
+		_disk_dir = "user://sprites/%d" % build
+		DirAccess.make_dir_recursive_absolute(_disk_dir)
+		# Кэш прошлых сборок — удалить
+		var root := DirAccess.open("user://sprites")
+		if root != null:
+			for d in root.get_directories():
+				if d != str(build):
+					var old := "user://sprites/" + d
+					for f in DirAccess.get_files_at(old):
+						DirAccess.remove_absolute(old + "/" + f)
+					DirAccess.remove_absolute(old)
+	return "%s/%s.png" % [_disk_dir, cache_key.md5_text()]
 
 
 # ---------- Модули на герое ----------

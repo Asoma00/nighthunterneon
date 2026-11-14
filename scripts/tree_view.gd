@@ -46,7 +46,7 @@ func setup(key: String, color: Color, narrow := false, max_w := 0.0) -> void:
 		b.position = _npos(n)
 		b.size = btn
 		b.custom_minimum_size = btn
-		b.add_theme_font_size_override("font_size", 12 if narrow else 13)
+		b.add_theme_font_size_override("font_size", 11 if narrow else 13)
 		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		b.clip_text = true
 		b.icon = Pixel.icon(_node_icon(key, n["id"]))

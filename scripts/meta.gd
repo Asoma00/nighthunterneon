@@ -671,9 +671,9 @@ static func cond_text(c: Array, hero := "", with_progress := true) -> String:
 
 ## Короткая подпись условия для кнопки узла: «боссы 1/3».
 static func cond_short(c: Array, hero := "") -> String:
-	var names := {"kills": "убийства", "best_kills": "убийств за забег", "bosses": "боссы", "reactions": "реакции",
-		"endless": "бесконечный, мин", "level": "уровни", "runs": "вылазки", "max_level": "ур. в забеге", "hero_runs": "вылазки героем",
-		"wkills": "убийства оружием", "hkills": "убийства героем", "wruns": "вылазки с оружием", "mused": "вылазки с модулем",
+	var names := {"kills": "убийства", "best_kills": "убийств за раз", "bosses": "боссы", "reactions": "реакции",
+		"endless": "бескон., мин", "level": "уровни", "runs": "вылазки", "max_level": "ур. в бою", "hero_runs": "вылазки",
+		"wkills": "убийства", "hkills": "убийства", "wruns": "вылазки", "mused": "вылазки",
 		"hq": "личное задание", "quests": "задания", "caches": "тайники", "puzzles": "загадки", "beacons": "маяки",
 		"events": "события", "elites": "элита", "nodmg_best": "без урона, с", "fusions": "слияния"}
 	return "%s %d/%d" % [names.get(str(c[0]), str(c[0])), mini(stat_value(c[0], hero), int(c[1])), int(c[1])]

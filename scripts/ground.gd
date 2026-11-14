@@ -444,14 +444,16 @@ func _prop_extras(kind: String, pos: Vector2, root: Node2D, size: Vector2, with_
 		light.position = top
 		root.add_child(light)
 		main.mirror_light(light, root, 1.6)
-		var halo := Sprite2D.new()
-		halo.texture = Pixel.glow()
-		halo.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-		halo.material = Pixel.mat_add()
-		halo.modulate = Color(col, 0.22)
-		halo.scale = Vector2(0.7, 0.7 * Pixel.STAND)
-		halo.position = top
+		# Ореол — только у плоских спрайтов (у 3D-моделей свой свет). Раньше узел
+		# создавался всегда и для 3D-моделей оставался «сиротой» — утечка памяти.
 		if not Props3D.supports(kind):
+			var halo := Sprite2D.new()
+			halo.texture = Pixel.glow()
+			halo.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+			halo.material = Pixel.mat_add()
+			halo.modulate = Color(col, 0.22)
+			halo.scale = Vector2(0.7, 0.7 * Pixel.STAND)
+			halo.position = top
 			root.add_child(halo)
 
 

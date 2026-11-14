@@ -421,6 +421,9 @@ func _process(delta: float) -> void:
 	if modal != _focus_root:
 		_focus_root = modal
 		_focus = {}
+		# Окно — поверх всех плашек (зона, сюжет, подсказки), иначе они перекрывают кнопки
+		if modal != null:
+			move_child(modal, get_child_count() - 1)
 	if modal != null:
 		UiFocus.keep(modal, _focus)
 	_lvl_t += delta
@@ -1032,6 +1035,20 @@ func hide_level_up() -> void:
 	_levelup_root.visible = false
 
 
+var _over_scroll: ScrollContainer
+
+
+## Размер прокрутки итогов под текущий экран
+func _fit_over() -> void:
+	var vs := get_viewport().get_visible_rect().size
+	var w := minf(780.0, vs.x - 120.0)
+	_over_stats.custom_minimum_size = Vector2(w, 0)
+	await get_tree().process_frame
+	var h := _over_stats.get_combined_minimum_size().y
+	_over_scroll.custom_minimum_size = Vector2(w, minf(h, vs.y - 330.0))
+	_over_scroll.scroll_vertical = 0
+
+
 func _build_game_over() -> void:
 	_over_root = _make_overlay(Color(0.03, 0.0, 0.08, 0.78))
 	var center := CenterContainer.new()
@@ -1048,9 +1065,15 @@ func _build_game_over() -> void:
 	_over_title = _label("", 46, Color.WHITE, Color(MAGENTA, 0.8))
 	_over_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(_over_title)
-	_over_stats = _label("", 22, Color(0.85, 0.85, 1.0))
+	_over_stats = _label("", 20, Color(0.85, 0.85, 1.0))
 	_over_stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(_over_stats)
+	_over_stats.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Итоги прокручиваются, если не помещаются: кнопки всегда на экране
+	_over_scroll = ScrollContainer.new()
+	_over_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_over_stats.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_over_scroll.add_child(_over_stats)
+	v.add_child(_over_scroll)
 	var btn := Button.new()
 	btn.text = "ИГРАТЬ СНОВА"
 	btn.custom_minimum_size = Vector2(300, 56)
@@ -1091,6 +1114,7 @@ func show_story(title: String, text: String) -> void:
 	var w := minf(620.0, vs.x - 40.0)
 	b.custom_minimum_size = Vector2(w - 24.0, 0)
 	add_child(box)
+	box.z_index = -1   # под окнами (повышение уровня, сундук, пауза), не поверх кнопок
 	box.position = Vector2((vs.x - w) / 2.0, vs.y * (0.62 if portrait() else 0.66))
 	box.modulate.a = 0.0
 	var tw := box.create_tween()
@@ -1132,6 +1156,7 @@ func show_game_over(victory: bool, time_alive: float, kills: int, level: int, re
 		var prog: Array = main.Lore.summary_lines(main.reward.get("prog", {}))
 		if not prog.is_empty():
 			_over_stats.text += "\n\n— ПУТЬ ОХОТНИКА —\n" + "\n".join(prog)
+	_fit_over()
 	_over_root.visible = true
 	_over_root.modulate.a = 0.0
 	var tw := _over_root.create_tween()

@@ -12,7 +12,7 @@ const UiFocus := preload("res://scripts/ui_focus.gd")
 const CYAN := Color(0.3, 0.95, 1.0)
 const MAGENTA := Color(1.0, 0.3, 0.75)
 const GOLD := Color(1.0, 0.8, 0.3)
-const PANEL_BG := Color(0.05, 0.03, 0.1, 0.92)
+const PANEL_BG := Color(0.05, 0.03, 0.1, 0.97)
 const SPRITE_PX := 0.045
 const PORTAL_POS := Vector3(0, 0, -2.5)
 const BOARD := Vector3(-3.6, 0, -1.0)   # доска заданий у портала
@@ -1152,14 +1152,26 @@ func _update_avatar(delta: float) -> void:
 	_av_emit.flip_h = _facing_left
 
 
+var _obs_all: Array = []
+var _obs_n := -1
+
+
 func _collide(pos: Vector3, r: float) -> Vector3:
-	var obstacles: Array = [[PORTAL_POS + Vector3(-1.8, 0, 0), 0.6], [PORTAL_POS + Vector3(1.8, 0, 0), 0.6]]
-	for id in Meta.BUILDINGS:
-		# Здание стоит на квадратном фундаменте 3.6 × 3.6
-		obstacles.append([Meta.BUILDINGS[id]["pos"], Vector2(1.85, 1.85), 0.0])
-	obstacles.append_array(_obstacles)
-	for o in obstacles:
+	# Список препятствий собирается один раз (и заново — только когда добавились новые),
+	# а не на каждый вызов: жители проверяют столкновения много раз за кадр
+	if _obs_n != _obstacles.size():
+		_obs_n = _obstacles.size()
+		_obs_all = [[PORTAL_POS + Vector3(-1.8, 0, 0), 0.6], [PORTAL_POS + Vector3(1.8, 0, 0), 0.6]]
+		for id in Meta.BUILDINGS:
+			# Здание стоит на квадратном фундаменте 3.6 × 3.6
+			_obs_all.append([Meta.BUILDINGS[id]["pos"], Vector2(1.85, 1.85), 0.0])
+		_obs_all.append_array(_obstacles)
+	for o in _obs_all:
 		var c: Vector3 = o[0]
+		# Далёкие препятствия пропускаем без точной проверки
+		var ext: float = (absf(o[1].x) + absf(o[1].y)) if o.size() == 3 else float(o[1])
+		if absf(pos.x - c.x) > ext + 2.0 or absf(pos.z - c.z) > ext + 2.0:
+			continue
 		if o.size() == 3:
 			# Прямоугольник (повёрнутый): ближайшая точка на нём
 			var half: Vector2 = o[1]
@@ -1472,7 +1484,7 @@ func _build_hud() -> void:
 	_panel_root.visible = false
 	_hud.add_child(_panel_root)
 	var dim := ColorRect.new()
-	dim.color = Color(0.02, 0.0, 0.06, 0.45)
+	dim.color = Color(0.02, 0.0, 0.06, 0.6)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_panel_root.add_child(dim)
 	var center := CenterContainer.new()
@@ -1943,7 +1955,7 @@ func _fill_tree_panel(id: String) -> void:
 		list = flow
 	else:
 		var scroll := ScrollContainer.new()
-		scroll.custom_minimum_size = Vector2(minf(240, _avail()), 470)
+		scroll.custom_minimum_size = Vector2(minf(268, _avail()), 470)
 		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		var vb := VBoxContainer.new()
 		vb.add_theme_constant_override("separation", 4)
@@ -1956,9 +1968,11 @@ func _fill_tree_panel(id: String) -> void:
 		var owned: int = Meta.trees.get(tk, []).size()
 		var total: int = Meta.tree_nodes(tk).size()
 		var locked: bool = id == "shrine" and not Meta.hero_unlocked(key)
-		var b := _button("%s %d/%d" % [name_txt, owned, total] if not locked else "%s ⊘" % name_txt, col if tk == _tree_tab else col.darkened(0.5), not locked)
-		b.custom_minimum_size = Vector2(minf(150 if narrow else 222, _avail()), 52 if narrow else (50 if id == "shrine" else 36))
-		b.add_theme_font_size_override("font_size", 13 if narrow else 14)
+		var b := _button(("%s\n%d/%d" if narrow else "%s %d/%d") % [name_txt, owned, total] if not locked else "%s ⊘" % name_txt, col if tk == _tree_tab else col.darkened(0.5), not locked)
+		if narrow:
+			b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		b.custom_minimum_size = Vector2(minf(150 if narrow else 254, _avail()), 52 if narrow else (50 if id == "shrine" else 36))
+		b.add_theme_font_size_override("font_size", 13)
 		b.clip_text = true
 		if id == "shrine":
 			b.icon = Pixel.portrait(source[key]["sprite"], locked)
@@ -2432,7 +2446,7 @@ func _update_villagers(delta: float) -> void:
 			var before := node.position
 			node.position = _steer(node.position, to.normalized(), step, v)
 			var mv := node.position - before
-			if absf(mv.x) > 0.002:
+			if absf(mv.x) > 0.002 and (v["base"] as Sprite3D).flip_h != (mv.x < 0.0):
 				(v["base"] as Sprite3D).flip_h = mv.x < 0.0
 				(v["emit"] as Sprite3D).flip_h = mv.x < 0.0
 			# Застрял: за 2 с почти не приблизился к цели — ищет другой путь
@@ -2462,14 +2476,20 @@ func _update_villagers(delta: float) -> void:
 					f = int(v["t"] * 5.0) % 6
 			else:
 				f = (4 + int(v["t"] * (12.0 if role == "kid" else 9.0)) % 4) if moving else int(v["t"] * 3.0) % 4
-		(v["base"] as Sprite3D).texture = fr["base"][f % fr["base"].size()]
-		(v["emit"] as Sprite3D).texture = fr["emit"][f % fr["emit"].size()]
+		# Свойства спрайта меняем только при изменении: каждое присваивание перестраивает его меш
+		var bs: Sprite3D = v["base"]
+		var es: Sprite3D = v["emit"]
+		var bt: Texture2D = fr["base"][f % fr["base"].size()]
+		if bs.texture != bt:
+			bs.texture = bt
+			es.texture = fr["emit"][f % fr["emit"].size()]
 		# Сидит / стоит на коленях — спрайт ниже
 		var low := 0.0 if moving else {"sit": 0.22, "kneel": 0.14}.get(v.get("pose", ""), 0.0) as float
-		var by: float = v.get("by", (v["base"] as Sprite3D).position.y)
+		var by: float = v.get("by", bs.position.y)
 		v["by"] = by
-		(v["base"] as Sprite3D).position.y = by - low
-		(v["emit"] as Sprite3D).position.y = by - low
+		if not is_equal_approx(bs.position.y, by - low):
+			bs.position.y = by - low
+			es.position.y = by - low
 		# Имя — когда герой рядом
 		(v["name"] as Label3D).visible = node.position.distance_to(_avatar.position) < 3.5
 		# Реплики по роли
@@ -2719,8 +2739,16 @@ func _fill_board() -> void:
 		lore.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		lore.custom_minimum_size = Vector2(minf(440 if _portrait() else 720, _avail()), 0)
 		v.add_child(lore)
-		v.add_child(_label("Цель: " + Quests.desc(hq) + "  (только этим героем)", 16, GOLD))
-		v.add_child(_label("Награда: " + Quests.reward_text(Quests.reward(hq)) + "  •  открывает узлы дерева героя", 14, Color(0.7, 1.0, 0.75)))
+		var cw := minf(440 if _portrait() else 720, _avail() - 40.0)
+		t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		t.custom_minimum_size = Vector2(cw, 0)
+		lore.custom_minimum_size = Vector2(cw, 0)
+		for ln in [[ "Цель: " + Quests.desc(hq) + "  (только этим героем)", 16, GOLD],
+				["Награда: " + Quests.reward_text(Quests.reward(hq)) + "  •  открывает узлы дерева героя", 14, Color(0.7, 1.0, 0.75)]]:
+			var l2 := _label(ln[0], ln[1], ln[2])
+			l2.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l2.custom_minimum_size = Vector2(cw, 0)
+			v.add_child(l2)
 		var hid: String = Data.selected_character
 		var tk := Quests.hero_taken(hid)
 		var hb := _button("✓ Взято — отказаться" if tk else "ВЗЯТЬ", Color(0.6, 1.0, 0.7) if tk else GOLD)
@@ -2961,7 +2989,8 @@ func _lib_head(art: VBoxContainer, tex: Texture2D, k: float, title: String, sub:
 	if sub != "":
 		var sl := _label(sub, 17, col.lightened(0.3))
 		sl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		sl.custom_minimum_size = Vector2(minf(460, _avail()), 0)
+		var fw: float = frame.get_combined_minimum_size().x
+		sl.custom_minimum_size = Vector2(clampf(_avail() - fw - 60.0, 160.0, 460.0), 0)
 		v.add_child(sl)
 	head.add_child(v)
 	art.add_child(head)
@@ -4180,6 +4209,9 @@ func _fill_talk(i: int) -> void:
 		_add_close()
 		return
 	var v: Dictionary = _villagers[i]
+	if not v.has("profile"):
+		_add_close()
+		return
 	var prof: Dictionary = v["profile"]
 	if prof["name"] == "Ворон":
 		_fill_story()
