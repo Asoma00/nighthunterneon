@@ -9,7 +9,7 @@ signal status(text: String)
 
 const PORT := 7777
 const DISCO_PORT := 7779
-const VERSION := "neon-1"
+const VERSION := "neon-2"
 
 var mode := ""            # "" | "host" | "client"
 var lobby := {"hero1": "vega", "hero2": "rin", "level": 0, "ready1": false, "ready2": false, "client": false}
@@ -29,6 +29,7 @@ var host_hub := {}        # клиент: здания/жители хоста
 var buddy := {}           # позиция и герой второго игрока в убежище
 var peer_profile := {}    # хост: прокачка второго игрока из его сохранения
 var peer_hero := "rin"    # хост: герой второго игрока
+var peer_sprite := ""     # хост: спрайт героя второго игрока с его обликом (скином)
 var peer_nick := ""
 # Распределённая симуляция: клиент сам считает своего героя, его оружие и эффекты,
 # а хосту отправляет только итог — попадания, своё состояние и эффекты для показа.
@@ -193,10 +194,13 @@ func c_hello(ver: String, hero2: String) -> void:
 
 ## Клиент меняет своего героя / готовность.
 @rpc("any_peer", "reliable")
-func c_lobby(hero2: String, ready2: bool) -> void:
+func c_lobby(hero2: String, ready2: bool, sprite2 := "") -> void:
 	if mode != "host":
 		return
 	lobby["hero2"] = hero2
+	if sprite2 != "":
+		lobby["sprite2"] = sprite2
+		peer_sprite = sprite2
 	lobby["ready2"] = ready2
 	_push_lobby()
 
@@ -208,8 +212,10 @@ func h_lobby(state: Dictionary) -> void:
 
 
 func set_local(hero: String, ready: bool, level := -1) -> void:
+	var M = load("res://scripts/meta.gd")
 	if mode == "host":
 		lobby["hero1"] = hero
+		lobby["sprite1"] = M.hero_sprite(hero)
 		lobby["ready1"] = ready
 		if level >= 0:
 			lobby["level"] = level
@@ -217,7 +223,7 @@ func set_local(hero: String, ready: bool, level := -1) -> void:
 	elif mode == "client":
 		lobby["hero2"] = hero
 		lobby["ready2"] = ready
-		rpc_id(1, "c_lobby", hero, ready)
+		rpc_id(1, "c_lobby", hero, ready, M.hero_sprite(hero))
 		lobby_changed.emit()
 
 
@@ -234,6 +240,10 @@ func can_start() -> bool:
 func start() -> void:
 	if not can_start():
 		return
+	# Облики обоих игроков: свой — из сохранения, напарника — присланный им
+	lobby["sprite1"] = load("res://scripts/meta.gd").hero_sprite(lobby["hero1"])
+	if not lobby.has("sprite2") and peer_sprite != "":
+		lobby["sprite2"] = peer_sprite
 	rpc("h_start", lobby, randi() % 2000000000 + 1)
 
 
@@ -313,12 +323,15 @@ func send_hub_pos(pos: Vector3, left: bool, moving: bool, hero: String) -> void:
 		return
 	if mode == "host" and not lobby["client"]:
 		return
-	rpc("hub_pos", pos, left, moving, hero, load("res://scripts/meta.gd").nickname)
+	var M = load("res://scripts/meta.gd")
+	rpc("hub_pos", pos, left, moving, hero, M.nickname, M.hero_sprite(hero))
 
 
 @rpc("any_peer", "unreliable_ordered")
-func hub_pos(pos: Vector3, left: bool, moving: bool, hero: String, nick := "") -> void:
-	buddy = {"pos": pos, "left": left, "moving": moving, "hero": hero, "t": Time.get_ticks_msec(), "nick": nick}
+func hub_pos(pos: Vector3, left: bool, moving: bool, hero: String, nick := "", sprite := "") -> void:
+	buddy = {"pos": pos, "left": left, "moving": moving, "hero": hero, "t": Time.get_ticks_msec(), "nick": nick, "sprite": sprite}
+	if mode == "host" and sprite != "":
+		peer_sprite = sprite
 	if nick != "":
 		peer_nick = nick
 	if mode == "host":
@@ -331,7 +344,9 @@ func send_profile() -> void:
 		return
 	var Data := load("res://scripts/data.gd")
 	var Meta := load("res://scripts/meta.gd")
-	rpc_id(1, "c_profile", Data.selected_character, Meta.profile(Data.selected_character))
+	var prof: Dictionary = Meta.profile(Data.selected_character)
+	prof["sprite"] = Meta.hero_sprite(Data.selected_character)
+	rpc_id(1, "c_profile", Data.selected_character, prof)
 
 
 @rpc("any_peer", "reliable")
@@ -339,6 +354,7 @@ func c_profile(hero: String, prof: Dictionary) -> void:
 	if mode == "host":
 		peer_hero = hero
 		peer_profile = prof
+		peer_sprite = str(prof.get("sprite", ""))
 		if prof.get("nick", "") != "":
 			peer_nick = prof["nick"]
 
@@ -348,7 +364,9 @@ func start_run(level: int) -> void:
 	var Data := load("res://scripts/data.gd")
 	if mode != "host" or not lobby["client"]:
 		return
-	var state := {"hero1": Data.selected_character, "hero2": peer_hero, "level": level, "nick1": load("res://scripts/meta.gd").nickname}
+	var M = load("res://scripts/meta.gd")
+	var state := {"hero1": Data.selected_character, "hero2": peer_hero, "level": level, "nick1": M.nickname,
+		"sprite1": M.hero_sprite(Data.selected_character), "sprite2": peer_sprite}
 	rpc("h_start", state, randi() % 2000000000 + 1)
 
 

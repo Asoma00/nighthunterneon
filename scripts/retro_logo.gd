@@ -256,6 +256,19 @@ func _layout() -> void:
 	_stage.queue_redraw()
 
 
+## Картинка логотипа целиком (для отражения в заставке).
+func view_texture() -> Texture2D:
+	return _vp.get_texture() if _vp != null else null
+
+
+## Прямоугольник хромированной надписи на экране.
+func chrome_rect() -> Rect2:
+	if _chrome == null:
+		return Rect2()
+	var sz := _chrome.size * _chrome.scale
+	return Rect2(_chrome.position + _chrome.size / 2.0 - sz / 2.0, sz)
+
+
 func play() -> void:
 	t = 0.0
 	playing = true

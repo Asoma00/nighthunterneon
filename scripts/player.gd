@@ -211,7 +211,7 @@ func setup(id: String) -> void:
 func _ready() -> void:
 	if char_data.is_empty():
 		setup(char_id)
-	sprite_key = str(char_data["sprite"]) if remote else preload("res://scripts/meta.gd").hero_sprite(char_id)
+	sprite_key = _coop_sprite()
 	_frames = Pixel.frames(sprite_key)
 	var size: Vector2 = _frames["size"]
 
@@ -2276,6 +2276,17 @@ func _mod_tiers() -> Dictionary:
 	for id in passives:
 		m[id] = 2 if int(passives[id]) >= 5 else 1
 	return m
+
+
+## Облик героя: свой — из сохранения; в сетевой игре — тот, что прислал его владелец.
+func _coop_sprite() -> String:
+	var base := str(char_data["sprite"])
+	var key := ""
+	if Net.in_game and Data.coop:
+		key = str(Net.lobby.get("sprite1" if pid == 0 else "sprite2", ""))
+	else:
+		key = preload("res://scripts/meta.gd").hero_sprite(char_id)
+	return key if Pixel.base_key(key) == base else base
 
 
 func _refresh_mod_frames() -> void:

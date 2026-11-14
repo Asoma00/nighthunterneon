@@ -23,6 +23,7 @@ const Skins := preload("res://scripts/skins.gd")
 const Dialog := preload("res://scripts/dialog.gd")
 const Scenes := preload("res://scripts/scenes.gd")
 var _dlg: CanvasLayer = null
+var _bd_sprite := ""
 ## Гардероб в таверне (облики): место в зале и выбранные герой/облик.
 const WARDROBE := Vector3(-7.4, 0, 3.4)
 var _wd_hero := ""
@@ -2728,12 +2729,16 @@ func _net_tick(delta: float) -> void:
 	var bn: String = b.get("nick", "")
 	if bn != "" and _bd_label.text != bn:
 		_bd_label.text = bn
-	if b["hero"] != _bd_hero:
+	var bsp := str(b.get("sprite", ""))
+	if b["hero"] != _bd_hero or bsp != _bd_sprite:
 		_bd_hero = b["hero"]
+		_bd_sprite = bsp
 		if _bd_base:
 			_bd_base.queue_free()
 			_bd_emit.queue_free()
-		_bd_frames = Pixel.frames(Meta.hero_sprite(_bd_hero) if Data.CHARACTERS.has(_bd_hero) else "hero")
+		# Облик напарника — тот, что он сам надел
+		var base_sp := str(Data.CHARACTERS.get(_bd_hero, Data.CHARACTERS["vega"])["sprite"])
+		_bd_frames = Pixel.frames(bsp if Pixel.base_key(bsp) == base_sp else base_sp)
 		var pair := _sprite_pair(_buddy, _bd_frames)
 		_bd_base = pair[0]
 		_bd_emit = pair[1]
@@ -2972,6 +2977,10 @@ func _separate(p: Vector3, v: Dictionary) -> Vector3:
 	for o in _villagers:
 		if o == v or o.has("chat") and o["chat"]["with"] == v:
 			continue
+		# Стоящих на месте обходят по пути, а не толкаются с ними — иначе у узких
+		# проходов собиралась «пробка»
+		if not o.get("mv", false):
+			continue
 		var op: Vector3 = (o["node"] as Node3D).position
 		var d := Vector3(p.x - op.x, 0, p.z - op.z)
 		var l := d.length()
@@ -3081,10 +3090,41 @@ func _nav_next(v: Dictionary, pos: Vector3) -> Vector3:
 	return path[0] if not path.is_empty() else target
 
 
+## Свободная точка рядом с p: не занята целью или телом другого жителя и не внутри модели.
+func _free_spot(p: Vector3, v: Dictionary) -> Vector3:
+	for r in [0.0, 0.8, 1.4, 2.0]:
+		var n := 1 if r == 0.0 else 8
+		var a0 := randf() * TAU
+		for k in n:
+			var c: Vector3 = p + Vector3(cos(a0 + TAU * k / n), 0, sin(a0 + TAU * k / n)) * float(r)
+			if _collide(c, 0.4).distance_to(c) > 0.05:
+				continue
+			if _nav != null and absf(c.x) < NAV_R and absf(c.z) < NAV_R and _nav.is_point_solid(_nav_cell(c)):
+				continue
+			var busy := false
+			for o in _villagers:
+				if o == v:
+					continue
+				var ot: Vector3 = o.get("target", Vector3.INF)
+				if Vector2(ot.x - c.x, ot.z - c.z).length() < 0.75 or (o["node"] as Node3D).position.distance_to(c) < 0.6:
+					busy = true
+					break
+			if not busy:
+				return c
+	return p
+
+
 func _unstick(v: Dictionary) -> void:
 	stuck_n += 1
 	var node: Node3D = v["node"]
 	var role: String = v["role"]
+	if v.has("steps") and not (v["steps"] as Array).is_empty():
+		# Житель с делом: сначала встаёт рядом с местом, второй раз — бросает этот шаг
+		v["blocked_n"] = int(v.get("blocked_n", 0)) + 1
+		if int(v["blocked_n"]) >= 3:
+			(v["steps"] as Array).pop_front()
+			v["blocked_n"] = 0
+		return
 	if role in ["merchant", "smith", "monk", "musician", "elder", "trainee", "barkeep", "blacksmith", "priestess", "engineer", "commander"]:
 		# Стоят на своём месте: если место занято моделью — переносим «дом» рядом
 		v["home"] = _collide(v["home"], 0.5)
@@ -3152,12 +3192,15 @@ func _update_villagers(delta: float) -> void:
 		# Цель внутри стены или модели — сдвигаем к ближайшему свободному месту
 		if v.get("tchk", Vector3.INF) != v["target"]:
 			v["target"] = _collide(v["target"], 0.45)
+			if role in ["walker", "robot", "gardener"] and not v.has("steps"):
+				v["target"] = _free_spot(v["target"], v)
 			v["tchk"] = v["target"]
 		var to_goal: Vector3 = v["target"] - node.position
 		to_goal.y = 0
 		var to: Vector3 = _nav_next(v, node.position) - node.position
 		to.y = 0
 		var moving := to_goal.length() > 0.2
+		v["mv"] = moving
 		if moving and to.length() < 0.05:
 			to = to_goal
 		if moving:
@@ -3212,7 +3255,7 @@ func _update_villagers(delta: float) -> void:
 			bs.position.y = by - low
 			es.position.y = by - low
 		# Имя — когда герой рядом
-		(v["name"] as Label3D).visible = node.position.distance_to(_avatar.position) < 3.5
+		(v["name"] as Label3D).visible = node.position.distance_to(_avatar.position) < 2.4 and not _bubble_shown(v)
 		# Реплики по роли
 		v["bubble_t"] = float(v["bubble_t"]) - delta
 		var bubble: Label3D = v["bubble"]
@@ -3220,11 +3263,25 @@ func _update_villagers(delta: float) -> void:
 			if bubble.visible:
 				bubble.visible = false
 				v["bubble_t"] = randf_range(7.0, 16.0)
+			elif _bubble_near(node.position, v):
+				# Рядом уже кто-то говорит — реплики не наслаиваются друг на друга
+				v["bubble_t"] = randf_range(2.0, 5.0)
 			else:
 				var ph: Array = v["profile"]["lines"] if v.has("profile") and randf() < 0.6 else NPC_PHRASES.get(role, HOST_PHRASES.get(role, NPC_PHRASES["walker"]))
 				bubble.text = ph[randi() % ph.size()]
 				bubble.visible = true
 				v["bubble_t"] = 3.0
+
+
+func _bubble_shown(v: Dictionary) -> bool:
+	return (v["bubble"] as Label3D).visible
+
+
+func _bubble_near(p: Vector3, v: Dictionary) -> bool:
+	for o in _villagers:
+		if o != v and (o["bubble"] as Label3D).visible and (o["node"] as Node3D).position.distance_to(p) < 3.0:
+			return true
+	return false
 
 
 ## Работа на месте: искры у подмастерья, руны у монаха, ноты у музыканта...
@@ -4807,7 +4864,7 @@ func _contract_card(q: Dictionary, i: int, taken: bool) -> Control:
 
 const Props3D := preload("res://scripts/props3d.gd")
 const Story := preload("res://scripts/story.gd")
-const COMMANDER_POS := Vector3(-5.6, 0, 0.4)
+const COMMANDER_POS := Vector3(-5.0, 0, 3.8)   # в стороне от прохода между кузницей и доской
 var _role_n := {}
 var _chat_t := 6.0
 
@@ -5529,9 +5586,16 @@ func _job_tick(v: Dictionary, delta: float) -> void:
 		steps = _job_steps(jid)
 		v["steps"] = steps
 	var st: Dictionary = steps[0]
+	if not st.get("claimed", false):
+		# Место занято другим жителем — встаём рядом, а не толкаемся в одной точке
+		st["claimed"] = true
+		st["to"] = _free_spot(st["to"], v)
+		v["blocked_n"] = 0
 	v["target"] = st["to"]
 	_set_carry(v, st["carry"])
-	if node.position.distance_to(st["to"]) > 0.45:
+	var dist := node.position.distance_to(st["to"])
+	# Не дошёл, потому что место обступили — считаем, что пришёл
+	if dist > 0.45 and not (dist < 1.6 and int(v.get("blocked_n", 0)) >= 1):
 		v["pose"] = ""
 		return
 	# На месте: работает

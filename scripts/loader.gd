@@ -244,6 +244,10 @@ func _jobs_for(path: String) -> Array:
 			keys.append(k)
 		# Герой в надетом облике
 		keys.append(preload("res://scripts/meta.gd").hero_sprite(Data.selected_character))
+		if Data.coop:
+			for sk in [Net.lobby.get("sprite1", ""), Net.lobby.get("sprite2", ""), preload("res://scripts/meta.gd").hero_sprite(Data.selected_character2)]:
+				if str(sk) != "" and not (str(sk) in keys):
+					keys.append(str(sk))
 		for id in Data.WEAPONS:
 			jobs.append(Callable(Pixel, "icon").bind(id))
 		for id in Data.PASSIVES:
