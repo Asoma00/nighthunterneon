@@ -19,6 +19,14 @@ const BOARD := Vector3(-3.6, 0, -1.0)   # доска заданий у порт�
 const Quests := preload("res://scripts/quests.gd")
 const Lore := preload("res://scripts/lore.gd")
 const Arsenal := preload("res://scripts/arsenal.gd")
+const Skins := preload("res://scripts/skins.gd")
+const Dialog := preload("res://scripts/dialog.gd")
+const Scenes := preload("res://scripts/scenes.gd")
+var _dlg: CanvasLayer = null
+## Гардероб в таверне (облики): место в зале и выбранные герой/облик.
+const WARDROBE := Vector3(-7.4, 0, 3.4)
+var _wd_hero := ""
+var _wd_skin := ""
 
 var _vp: SubViewport
 var _world: Node3D
@@ -113,9 +121,18 @@ func _ready() -> void:
 	_build_hud()
 	Sound.set_track("hub")
 	if not Meta.intro_seen and not _net_client:
-		get_tree().create_timer(1.2).timeout.connect(func():
+		get_tree().create_timer(1.0).timeout.connect(func():
 			if _panel_id == "":
-				_open_panel("prologue"))
+				_dialog("prologue", {}, func():
+					Meta.intro_seen = true
+					Meta.save()))
+	elif not _net_client and int(Meta.last_reward.get("after_scene", -1)) >= 0:
+		# Разговор после первой победы на уровне
+		var lv := int(Meta.last_reward["after_scene"])
+		get_tree().create_timer(5.0).timeout.connect(func():
+			if _panel_id == "" and not Scenes.seen("after_%d" % lv):
+				Scenes.mark("after_%d" % lv)
+				_dialog("after_%d" % lv))
 	if not Meta.last_reward.is_empty():
 		_show_reward(Meta.last_reward)
 		Meta.last_reward = {}
@@ -1091,7 +1108,7 @@ func _set_avatar_sprites() -> void:
 		_av_base.queue_free()
 		_av_emit.queue_free()
 	var c: Dictionary = Data.CHARACTERS[Data.selected_character]
-	_av_frames = Pixel.frames(c["sprite"])
+	_av_frames = Pixel.frames(Meta.hero_sprite(Data.selected_character))
 	var pair := _sprite_pair(_avatar, _av_frames)
 	_av_base = pair[0]
 	_av_emit = pair[1]
@@ -1309,6 +1326,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_enter_building(_near.substr(6))
 			elif _near.begins_with("act:"):
 				_hub_act(_near.substr(4))
+			elif _near.begins_with("talk:"):
+				_talk_dialog(int(_near.substr(5)))
 			elif _near.begins_with("info:"):
 				_toast_text("Стройку заказывают у трактирщика Бруно в таверне")
 			else:
@@ -1419,7 +1438,7 @@ func _build_hud() -> void:
 	bh.add_theme_constant_override("separation", 10)
 	bh.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.add_child(bh)
-	_badge_pic = _pic(Pixel.portrait(Data.CHARACTERS[Data.selected_character]["sprite"]), 2.0)
+	_badge_pic = _pic(Pixel.portrait(Meta.hero_sprite(Data.selected_character)), 2.0)
 	_badge_pic.custom_minimum_size = Vector2(minf(50, _avail()), 50)
 	_badge_pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	bh.add_child(_badge_pic)
@@ -1518,7 +1537,7 @@ var _badge_pic: TextureRect
 
 func _update_hero_label() -> void:
 	if _badge_pic:
-		_badge_pic.texture = Pixel.portrait(Data.CHARACTERS[Data.selected_character]["sprite"])
+		_badge_pic.texture = Pixel.portrait(Meta.hero_sprite(Data.selected_character))
 	var c: Dictionary = Data.CHARACTERS[Data.selected_character]
 	var who := "%s  •  Герой: %s, %s" % [Meta.nickname, c["name"], c["title"].to_lower()]
 	_hero_label.text = "%s\nВылазок: %d   •   Рекорд: %02d:%02d" % [
@@ -1635,8 +1654,13 @@ func _fill_panel() -> void:
 	if id == "path":
 		_fill_path()
 		return
+	if id == "dialog":
+		return
 	if id == "ach":
 		_fill_achievements()
+		return
+	if id == "wardrobe":
+		_fill_wardrobe()
 		return
 	if id == "campfire":
 		_fill_campfire()
@@ -1764,6 +1788,9 @@ func _hero_card(hid: String) -> Control:
 					if _inside == "hall":
 						_rebuild_tavern_heroes()
 					get_tree().create_timer(3.0).timeout.connect(_check_unlocks)
+					if Scenes.HIRE.has(hid):
+						_dialog.call_deferred(Scenes.HIRE[hid])
+						return
 				_fill_panel())
 		"expensive":
 			b = _button("%d ◆ — мало" % int(u["cost"]), GOLD.darkened(0.4), false)
@@ -2252,6 +2279,341 @@ func _forge_cinematic(w: String) -> void:
 		_check_unlocks.call_deferred())
 
 
+# ================= Диалоги (визуальная новелла) =================
+
+## Сцена-диалог поверх убежища. Пока она идёт, охотник стоит, а подсказки скрыты.
+func _dialog(scene, opts := {}, after := Callable()) -> void:
+	if _dlg != null and is_instance_valid(_dlg):
+		return
+	if _panel_id != "" and _panel_id != "dialog":
+		_close_panel()
+	_panel_id = "dialog"
+	_prompt.visible = false
+	# Портреты жителей — те же спрайты, что ходят по площади
+	var fr: Dictionary = opts.get("frames", {}).duplicate()
+	for v in _villagers:
+		var nm := str(v.get("profile", {}).get("name", ""))
+		if Scenes.BY_NAME.has(nm) and not fr.has(Scenes.BY_NAME[nm]):
+			fr[Scenes.BY_NAME[nm]] = v["frames"]
+	opts["frames"] = fr
+	_dlg = Dialog.open(self, scene, opts)
+	_dlg.finished.connect(func():
+		_dlg = null
+		if _panel_id == "dialog":
+			_panel_id = ""
+		if after.is_valid():
+			after.call())
+
+
+## Разговор с жителем: реплика, его история, просьба — как сцена новеллы.
+func _talk_dialog(i: int) -> void:
+	if i < 0 or i >= _villagers.size():
+		return
+	var v: Dictionary = _villagers[i]
+	if not v.has("profile"):
+		return
+	var prof: Dictionary = v["profile"]
+	var nm: String = prof["name"]
+	if nm == "Ворон":
+		_voron_dialog()
+		return
+	var who := "v"
+	var cast := {who: {"name": "%s, %s" % [nm, prof["title"]], "color": CYAN, "sprite": "", "side": "r"}}
+	var fr := {who: v["frames"]}
+	var lines_pool: Array = prof["lines"]
+	var L: Array = [[who, lines_pool[randi() % lines_pool.size()]]]
+	if not Scenes.seen("talk:" + nm):
+		Scenes.mark("talk:" + nm)
+		L.append([who, prof["story"]])
+	if nm in Meta.npc_thanks:
+		Meta.npc_thanks.erase(nm)
+		L.append([who, "Ты сделал то, о чём я просил! Спасибо. Правда спасибо."])
+	if Lore.SAGAS.has(nm):
+		var sg: Dictionary = Lore.SAGAS[nm]
+		if Lore.saga_done(nm):
+			L.append([who, sg["final"]])
+	var act := _npc_active(v)
+	var offer := _npc_offer(v)
+	var choices: Array = []
+	if not act.is_empty():
+		L.append([who, "Помнишь, ты обещал? " + Quests.desc(act) + ". Я жду."])
+		choices = [{"t": "Скоро сделаю", "lines": [["player", "Не волнуйся. Сделаю в ближайшую вылазку."]]},
+			{"t": "Прости, не смогу", "lines": [["player", "Прости. Сейчас не смогу."], [who, "Ну… ничего. Я понимаю."]],
+				"do": func():
+					Meta.npc_quests.erase(act)
+					Meta.save()}]
+	elif not offer.is_empty():
+		var ask := "У меня просьба. " + Quests.desc(offer) + ". Награжу: " + Quests.reward_text(Quests.reward(offer)) + "."
+		if offer.has("saga"):
+			ask = str(offer["text"]) + " " + Quests.desc(offer) + "."
+		L.append([who, ask])
+		var can := Meta.npc_quests.size() < 3
+		choices = [{"t": "Помогу" if can else "Помогу (но обещаний уже 3)", "lines": [["player", "Помогу."], [who, "Спасибо! Я буду ждать." if can else "Ты и так всем обещал… Освободись — приходи."]],
+			"do": func():
+				if can:
+					Meta.npc_quests.append(offer)
+					Meta.save()
+					Sound.play("levelup", -6.0)},
+			{"t": "Не сейчас", "lines": [["player", "Не сейчас. Может, потом."]]}]
+	if not choices.is_empty():
+		var last: Array = L.pop_back()
+		L.append({"who": last[0], "text": last[1], "choices": choices})
+	_dialog(L, {"cast": cast, "frames": fr})
+
+
+## Командир Ворон: сюжетная линия целиком через разговор.
+func _voron_dialog() -> void:
+	var st := Meta.story_cur()
+	var idx := Meta.story_step
+	var L: Array = []
+	if st.is_empty():
+		L = [["voron", "Первые Врата закрыты. Но я слышу, как где-то тлеют малые… Отдыхай, охотник. Пока."]]
+		_dialog(L)
+		return
+	var sc: Dictionary = Scenes.STORY_SCENES[idx] if idx < Scenes.STORY_SCENES.size() else {}
+	if not Meta.story_taken:
+		L = (sc.get("give", [["voron", st["text"]]]) as Array).duplicate()
+		var last: Array = L.pop_back()
+		L.append({"who": last[0], "text": last[1], "choices": [
+			{"t": "Берусь: «%s»" % st["title"], "lines": [["player", "Берусь."], ["voron", "Цель: %s. Награда: %s." % [Meta.story_goal_text(st), Meta.cost_text(st["reward"])]]],
+				"do": func():
+					Meta.story_taken = true
+					Meta.save()
+					Sound.play("levelup", -6.0)},
+			{"t": "Расскажи, как всё началось", "lines": Scenes.get_scene("prologue").slice(0, 4)},
+			{"t": "Позже", "lines": [["voron", "Не тяни. Ночь не ждёт."]]}]})
+	elif Meta.story_ready():
+		L = (sc.get("done", [["voron", "Доклад принят."]]) as Array).duplicate()
+		L.append({"who": "voron", "text": "Награда твоя: %s." % Meta.cost_text(st["reward"]), "do": func():
+			Meta.story_claim()
+			Sound.play("evolve", -2.0)})
+	else:
+		var p := Meta.story_progress(st)
+		L = [["voron", "Задание «%s» ещё в силе. %s — %d из %d." % [st["title"], Meta.story_goal_text(st), int(p[0]), int(p[1])]],
+			{"who": "voron", "text": "Что-то ещё?", "choices": [
+				{"t": "Напомни, в чём дело", "lines": (sc.get("give", []) as Array).duplicate()},
+				{"t": "Ничего, иду", "lines": [["voron", "Иди. Возвращайся живым."]]}]}]
+	_dialog(L)
+
+
+## Жрица Селена: тайны Маяка.
+func _selena_dialog() -> void:
+	var step := int(Meta.stats.get("secret_step", 0))
+	var L: Array = []
+	if not Scenes.seen("secret_intro"):
+		Scenes.mark("secret_intro")
+		L.append_array(Scenes.get_scene("secret_intro"))
+	var tree_choice := {"t": "Древо героев", "lines": [], "do": func(): _after_dialog_panel("shrine")}
+	if step >= Scenes.SECRETS.size():
+		L.append({"who": "selena", "text": "Ты знаешь все тайны Маяка. Береги их — и свет.", "choices": [tree_choice, {"t": "До встречи", "lines": []}]})
+	else:
+		var sc: Dictionary = Scenes.SECRETS[step]
+		var c: Array = sc["c"]
+		var taken := int(Meta.stats.get("secret_taken", -1)) == step
+		if taken and Meta.cond_met(c):
+			L.append_array(sc["done"])
+			L.append({"who": "selena", "text": "Это знание стоит награды: %s." % Meta.cost_text(sc["reward"]), "do": func():
+				Meta.add_reward(sc["reward"])
+				Meta.stats["secret_step"] = step + 1
+				Meta.stats["secret_taken"] = -1
+				Meta.save()
+				Sound.play("evolve", -2.0)})
+		elif taken:
+			L.append({"who": "selena", "text": "Тайна «%s» ждёт. %s" % [sc["title"], Meta.cond_text(c)], "choices": [tree_choice, {"t": "Иду", "lines": []}]})
+		else:
+			var give: Array = (sc["give"] as Array).duplicate()
+			var last: Array = give.pop_back()
+			L.append_array(give)
+			L.append({"who": last[0], "text": last[1], "choices": [
+				{"t": "Узнать тайну «%s»" % sc["title"], "lines": [["selena", "Цель: %s." % Meta.cond_text(c)]], "do": func():
+					Meta.stats["secret_taken"] = step
+					Meta.save()},
+				tree_choice, {"t": "Позже", "lines": []}]})
+	_dialog(L)
+
+
+func _after_dialog_panel(id: String) -> void:
+	# Панель откроется, когда сцена закроется
+	if _dlg != null:
+		_dlg.finished.connect(func(): _open_panel.call_deferred(id), CONNECT_ONE_SHOT)
+
+
+# ================= Гардероб: облики героев =================
+
+## Спрайт облика: готов сразу или дорисовывается порциями (без фриза).
+func _skin_frames(key: String) -> Dictionary:
+	return Pixel.hero_frames_async(key, {})
+
+
+func _fill_wardrobe() -> void:
+	if _wd_hero == "" or not Data.CHARACTERS.has(_wd_hero):
+		_wd_hero = Data.selected_character
+	var hc: Dictionary = Data.CHARACTERS[_wd_hero]
+	_panel_box.add_child(_centered(_label("ГАРДЕРОБ СЕТЫ", 30, Color.WHITE, Color(MAGENTA, 0.7))))
+	_panel_box.add_child(_centered(_wrap("«Тело охотника в Ночи — световая оболочка, сотканная Маяком. Я перешиваю её: цвет, доспех, знаки. Но облик держится, только если ты его заслужил». — Ткачиха Сета", 13, Color(0.85, 0.8, 0.95))))
+	_panel_box.add_child(_centered(_label("Обликов собрано: %d / %d" % [Skins.owned_count(), Skins.total()], 15, GOLD)))
+	# Герои
+	var heroes := HFlowContainer.new()
+	heroes.alignment = FlowContainer.ALIGNMENT_CENTER
+	heroes.custom_minimum_size.x = minf(980.0, _avail())
+	heroes.add_theme_constant_override("h_separation", 6)
+	heroes.add_theme_constant_override("v_separation", 6)
+	for h in Meta.HERO_ORDER:
+		var owned := Meta.hero_unlocked(h)
+		var hb := Button.new()
+		hb.icon = Pixel.portrait(str(Data.CHARACTERS[h]["sprite"]), not owned)
+		hb.expand_icon = true
+		hb.custom_minimum_size = Vector2(54, 54)
+		hb.tooltip_text = str(Data.CHARACTERS[h]["name"]) + ("" if owned else " — не нанят")
+		hb.add_theme_stylebox_override("normal", _sbox(Data.CHARACTERS[h]["color"] if h == _wd_hero else Color(0.3, 0.3, 0.4), PANEL_BG, 3 if h == _wd_hero else 1, 6 if h == _wd_hero else 0))
+		hb.pressed.connect(func():
+			Sound.play("click")
+			_wd_hero = h
+			_wd_skin = Skins.equipped(h)
+			_fill_panel())
+		heroes.add_child(hb)
+	_panel_box.add_child(_centered(heroes))
+	# Предпросмотр и список обликов
+	var row: BoxContainer = HBoxContainer.new() if not _portrait() else VBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	_panel_box.add_child(_centered(row))
+	var prev := VBoxContainer.new()
+	prev.add_theme_constant_override("separation", 4)
+	row.add_child(prev)
+	var stage := PanelContainer.new()
+	stage.add_theme_stylebox_override("panel", _sbox(hc["color"], Color(0.05, 0.03, 0.1, 0.95), 2, 10))
+	stage.custom_minimum_size = Vector2(220, 270)
+	prev.add_child(stage)
+	var pic := TextureRect.new()
+	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	pic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	pic.custom_minimum_size = Vector2(216, 266)
+	stage.add_child(pic)
+	var glow := TextureRect.new()
+	glow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	glow.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	glow.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	glow.custom_minimum_size = pic.custom_minimum_size
+	var gm := CanvasItemMaterial.new()
+	gm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	glow.material = gm
+	stage.add_child(glow)
+	var sk_now := Skins.get_skin(_wd_hero, _wd_skin)
+	var rar: Dictionary = Skins.RARITY[int(sk_now.get("r", 0))] if not sk_now.is_empty() else {"name": "Базовый", "color": Color(0.8, 0.8, 0.9)}
+	prev.add_child(_centered(_label(str(sk_now.get("name", "Базовый облик")), 18, Color.WHITE)))
+	prev.add_child(_centered(_label(str(rar["name"]).to_upper(), 14, rar["color"])))
+	var dl := _label(str(sk_now.get("desc", "Облик, в котором %s впервые пришёл в Убежище." % hc["name"])), 12, Color(0.8, 0.8, 0.92))
+	dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	dl.custom_minimum_size.x = 220
+	prev.add_child(dl)
+	var list := GridContainer.new()
+	list.columns = maxi(1, mini(2, int((_avail() - (0.0 if _portrait() else 250.0)) / 330.0)))
+	list.add_theme_constant_override("h_separation", 8)
+	list.add_theme_constant_override("v_separation", 8)
+	row.add_child(list)
+	var entries: Array = [{"id": "", "name": "Базовый облик", "r": -1}]
+	entries.append_array(Skins.list_for(_wd_hero))
+	var icons: Array = []
+	for sk in entries:
+		var sid: String = sk["id"]
+		var col: Color = Skins.RARITY[int(sk["r"])]["color"] if int(sk["r"]) >= 0 else Color(0.75, 0.75, 0.85)
+		var own := Skins.owned(_wd_hero, sid)
+		var on := Skins.equipped(_wd_hero) == sid
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _sbox(col if (sid == _wd_skin) else col.darkened(0.55), PANEL_BG, 3 if sid == _wd_skin else 2, 8 if sid == _wd_skin else 0))
+		card.custom_minimum_size = Vector2(minf(320, _avail() - 20.0), 0)
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 8)
+		card.add_child(h)
+		var ic := TextureRect.new()
+		ic.custom_minimum_size = Vector2(56, 56)
+		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		h.add_child(ic)
+		icons.append([ic, Skins.sprite_key(_wd_hero, str(hc["sprite"]), sid), own])
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 1)
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(v)
+		v.add_child(_label(str(sk["name"]) + ("  ✓" if on else ""), 15, Color.WHITE if own else Color(0.8, 0.8, 0.88)))
+		v.add_child(_label(str(Skins.RARITY[int(sk["r"])]["name"]) if int(sk["r"]) >= 0 else "Базовый", 12, col))
+		var btn: Button
+		if own:
+			btn = _small_btn("Надето" if on else "Надеть", col, not on)
+			btn.pressed.connect(func():
+				Skins.equip(_wd_hero, sid)
+				_skin_applied(sid))
+		else:
+			var conds: Array = sk.get("c", [])
+			var ok := Skins.cond_ok(_wd_hero, sk)
+			var ct := _label(("✓ " if ok else "⊘ ") + (Meta.cond_short(conds[0], _wd_hero) if not conds.is_empty() else ""), 12, Color(0.6, 1.0, 0.6) if ok else Color(1.0, 0.65, 0.6))
+			ct.tooltip_text = Meta.cond_text(conds[0], _wd_hero) if not conds.is_empty() else ""
+			ct.mouse_filter = Control.MOUSE_FILTER_PASS
+			v.add_child(ct)
+			var why := Skins.buy_block(_wd_hero, sk)
+			btn = _small_btn("Соткать — " + Meta.cost_text(Skins.cost(sk)), col, why == "")
+			btn.tooltip_text = why
+			btn.custom_minimum_size.x = 0
+			btn.pressed.connect(func():
+				if Skins.buy(_wd_hero, sk):
+					Sound.play("evolve", -4.0, 1.2)
+					_skin_applied(sid))
+		btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		v.add_child(btn)
+		ic.mouse_filter = Control.MOUSE_FILTER_STOP
+		ic.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.pressed:
+				_wd_skin = sid
+				Sound.play("click")
+				_fill_panel())
+		card.tooltip_text = str(sk.get("desc", ""))
+		list.add_child(card)
+	_panel_box.add_child(_centered(_wrap("Нажмите на облик, чтобы примерить. Условие — подвиг, после которого Маяк запоминает образ; цена — материал оболочки.", 12, Color(0.7, 0.7, 0.85))))
+	_add_close()
+	# Анимация примерки и дорисовка иконок без фриза
+	var key := Skins.sprite_key(_wd_hero, str(hc["sprite"]), _wd_skin)
+	_skin_frames(key)   # предпросмотр рисуется первым
+	var tm := Timer.new()
+	tm.wait_time = 0.06
+	tm.autostart = true
+	_panel_box.add_child(tm)
+	var st := {"f": 0}
+	tm.timeout.connect(func():
+		Pixel.pump(30000)
+		for it in icons:
+			var ic2: TextureRect = it[0]
+			if ic2.texture == null:
+				var fr0 := _skin_frames(it[1])
+				if not fr0.is_empty():
+					ic2.texture = Pixel.portrait(it[1], false)
+					ic2.modulate = Color.WHITE if it[2] else Color(0.75, 0.75, 0.8)
+		var fr := _skin_frames(key)
+		if fr.is_empty():
+			return
+		st["n"] = int(st.get("n", 0)) + 1
+		if int(st["n"]) % 2 == 0:
+			st["f"] = (int(st["f"]) + 1) % 6
+		pic.texture = fr["base"][st["f"]]
+		glow.texture = fr["emit"][st["f"]])
+
+
+func _skin_applied(sid: String) -> void:
+	_wd_skin = sid
+	if _wd_hero == Data.selected_character:
+		_set_avatar_sprites()
+		_update_hero_label()
+	if _inside == "hall":
+		_rebuild_tavern_heroes(_avatar.position)
+	_particles(_world, _avatar.position + Vector3(0, 1.0, 0), MAGENTA, 30, Vector3(0.5, 0.8, 0.5), Vector3(0, 2, 0), 1.0, 0.08, true, 2.0)
+	Sound.play("levelup", -6.0, 1.2)
+	var sk := Skins.get_skin(_wd_hero, sid)
+	_toast_text("%s теперь в облике «%s»" % [Data.CHARACTERS[_wd_hero]["name"], sk.get("name", "Базовый облик")])
+	_check_unlocks.call_deferred()
+	_fill_panel()
+
+
 # ================= Достижения =================
 
 func _fill_achievements() -> void:
@@ -2371,7 +2733,7 @@ func _net_tick(delta: float) -> void:
 		if _bd_base:
 			_bd_base.queue_free()
 			_bd_emit.queue_free()
-		_bd_frames = Pixel.frames(Data.CHARACTERS.get(_bd_hero, Data.CHARACTERS["vega"])["sprite"])
+		_bd_frames = Pixel.frames(Meta.hero_sprite(_bd_hero) if Data.CHARACTERS.has(_bd_hero) else "hero")
 		var pair := _sprite_pair(_buddy, _bd_frames)
 		_bd_base = pair[0]
 		_bd_emit = pair[1]
@@ -2531,6 +2893,8 @@ func _make_npc(role: String, pos: Vector3, seed: int, nm: String) -> Dictionary:
 	var frames: Dictionary
 	if role == "robot":
 		frames = Pixel.frames("drone")
+	elif Scenes.BY_NAME.has(nm):
+		frames = Pixel.frames(str(Scenes.CAST[Scenes.BY_NAME[nm]]["sprite"]))
 	else:
 		frames = Pixel.frames("citizen_%s_%d" % [role, seed])
 		# Страховка: если детальный спрайт жителя по какой-то причине вышел пустым —
@@ -2616,7 +2980,109 @@ func _separate(p: Vector3, v: Dictionary) -> Vector3:
 	return p
 
 
+var stuck_n := 0   # счётчик для тестов: сколько раз жители застревали
+
+# ---- Навигация жителей: сетка площади и поиск пути (A*) ----
+# Раньше жители шли к цели «по прямой с обходом» и застревали за зданиями и
+# заборами. Теперь путь ищется по сетке проходимости, а обход соседей — на месте.
+const NAV_CELL := 0.5
+const NAV_R := 23.0
+var _nav: AStarGrid2D
+var _nav_n := -1
+
+
+func _nav_cell(p: Vector3) -> Vector2i:
+	var n := int(NAV_R * 2.0 / NAV_CELL)
+	return Vector2i(clampi(int((p.x + NAV_R) / NAV_CELL), 0, n - 1), clampi(int((p.z + NAV_R) / NAV_CELL), 0, n - 1))
+
+
+func _nav_pos(c: Vector2i) -> Vector3:
+	return Vector3(c.x * NAV_CELL - NAV_R + NAV_CELL * 0.5, 0, c.y * NAV_CELL - NAV_R + NAV_CELL * 0.5)
+
+
+func _obs_hit(o: Array, p: Vector3, r: float) -> bool:
+	var c: Vector3 = o[0]
+	if o.size() == 3:
+		var half: Vector2 = o[1]
+		var lp := Vector2(p.x - c.x, p.z - c.z).rotated(float(o[2]))
+		var q := Vector2(clampf(lp.x, -half.x, half.x), clampf(lp.y, -half.y, half.y))
+		return (lp - q).length() < r
+	return Vector2(p.x - c.x, p.z - c.z).length() < float(o[1]) + r
+
+
+func _nav_build() -> void:
+	_collide(Vector3(999, 0, 999), 0.1)   # собрать список препятствий
+	_nav_n = _obstacles.size()
+	var n := int(NAV_R * 2.0 / NAV_CELL)
+	_nav = AStarGrid2D.new()
+	_nav.region = Rect2i(0, 0, n, n)
+	_nav.cell_size = Vector2(1, 1)
+	_nav.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	_nav.default_compute_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	_nav.default_estimate_heuristic = AStarGrid2D.HEURISTIC_OCTILE
+	_nav.update()
+	var r := 0.36
+	for x in n:
+		for z in n:
+			if _nav_pos(Vector2i(x, z)).length() > 22.3:
+				_nav.set_point_solid(Vector2i(x, z))
+	for o in _obs_all:
+		var c: Vector3 = o[0]
+		if absf(c.x) > NAV_R + 4.0 or absf(c.z) > NAV_R + 4.0:
+			continue
+		var ext: float = ((o[1] as Vector2).length() if o.size() == 3 else float(o[1])) + r
+		var a := _nav_cell(c - Vector3(ext, 0, ext))
+		var b := _nav_cell(c + Vector3(ext, 0, ext))
+		for x in range(a.x, b.x + 1):
+			for z in range(a.y, b.y + 1):
+				if _obs_hit(o, _nav_pos(Vector2i(x, z)), r):
+					_nav.set_point_solid(Vector2i(x, z))
+
+
+## Ближайшая проходимая клетка.
+func _nav_free(c: Vector2i) -> Vector2i:
+	if not _nav.is_point_solid(c):
+		return c
+	for rad in range(1, 8):
+		for dx in range(-rad, rad + 1):
+			for dz in [-rad, rad]:
+				for q in [Vector2i(c.x + dx, c.y + dz), Vector2i(c.x + dz, c.y + dx)]:
+					if _nav.region.has_point(q) and not _nav.is_point_solid(q):
+						return q
+	return c
+
+
+## Следующая точка пути к цели (путь пересчитывается, когда цель заметно сдвинулась).
+func _nav_next(v: Dictionary, pos: Vector3) -> Vector3:
+	var target: Vector3 = v["target"]
+	if absf(pos.x) > NAV_R or absf(pos.z) > NAV_R or absf(target.x) > NAV_R or absf(target.z) > NAV_R:
+		return target
+	if _nav == null or _nav_n != _obstacles.size():
+		_nav_build()
+	var path: Array = v.get("path", [])
+	var pf: Vector3 = v.get("path_for", Vector3.INF)
+	if pf.distance_to(target) > 0.8 or (path.is_empty() and Vector2(pos.x - target.x, pos.z - target.z).length() > 0.6):
+		v["path_for"] = target
+		path = []
+		var from := _nav_free(_nav_cell(pos))
+		var to := _nav_free(_nav_cell(target))
+		var pts := _nav.get_id_path(from, to, true)
+		# Упрощаем: пропускаем точки на одной прямой
+		var last_dir := Vector2i.ZERO
+		for i in range(1, pts.size()):
+			var dd: Vector2i = pts[i] - pts[i - 1]
+			if dd != last_dir and i > 1:
+				path.append(_nav_pos(pts[i - 1]))
+			last_dir = dd
+		path.append(target)
+		v["path"] = path
+	while path.size() > 1 and Vector2(pos.x - path[0].x, pos.z - path[0].z).length() < 0.35:
+		path.pop_front()
+	return path[0] if not path.is_empty() else target
+
+
 func _unstick(v: Dictionary) -> void:
+	stuck_n += 1
 	var node: Node3D = v["node"]
 	var role: String = v["role"]
 	if role in ["merchant", "smith", "monk", "musician", "elder", "trainee", "barkeep", "blacksmith", "priestess", "engineer", "commander"]:
@@ -2687,9 +3153,13 @@ func _update_villagers(delta: float) -> void:
 		if v.get("tchk", Vector3.INF) != v["target"]:
 			v["target"] = _collide(v["target"], 0.45)
 			v["tchk"] = v["target"]
-		var to: Vector3 = v["target"] - node.position
+		var to_goal: Vector3 = v["target"] - node.position
+		to_goal.y = 0
+		var to: Vector3 = _nav_next(v, node.position) - node.position
 		to.y = 0
-		var moving := to.length() > 0.2
+		var moving := to_goal.length() > 0.2
+		if moving and to.length() < 0.05:
+			to = to_goal
 		if moving:
 			var step := minf(to.length(), float(v["speed"]) * delta)
 			var before := node.position
@@ -2701,8 +3171,10 @@ func _update_villagers(delta: float) -> void:
 			# Застрял: за 2 с почти не приблизился к цели — ищет другой путь
 			v["st"] = float(v.get("st", 0.0)) + delta
 			if float(v["st"]) > 2.0:
-				var d_now := to.length()
+				var d_now := to_goal.length()
 				if float(v.get("st_d", 999.0)) - d_now < 0.4:
+					v.erase("path")
+					v.erase("path_for")
 					_unstick(v)
 				v["st_d"] = d_now
 				v["st"] = 0.0
@@ -3056,9 +3528,10 @@ func _quest_card(q: Dictionary, i: int) -> Control:
 	return card
 
 
-const LIB_TABS := [["chronicle", "Летопись"], ["bestiary", "Бестиарий"], ["heroes", "Герои"], ["abilities", "Способности"], ["weapons", "Оружие"],
+const Codex := preload("res://scripts/codex.gd")
+const LIB_TABS := [["world", "Мир"], ["chronicle", "Летопись"], ["bestiary", "Бестиарий"], ["heroes", "Герои"], ["abilities", "Способности"], ["weapons", "Оружие"],
 	["modules", "Модули"], ["aspects", "Аспекты"], ["statuses", "Эффекты"], ["reactions", "Реакции"]]
-var _lib_tab := "chronicle"
+var _lib_tab := "world"
 var _lib_sel := ""
 
 
@@ -3066,6 +3539,9 @@ var _lib_sel := ""
 func _lib_entries(tab: String) -> Array:
 	var out: Array = []
 	match tab:
+		"world":
+			for e in Codex.CODEX:
+				out.append([e["id"], e["t"], Pixel.icon("book"), Codex.is_open(e)])
 		"chronicle":
 			out.append(["prologue", "Слияние и Ночь Врат", Pixel.icon("book"), true])
 			for c in Story.CHAPTERS.size():
@@ -3256,6 +3732,14 @@ func _reactions_of(st: String) -> Array:
 
 func _lib_article(art: VBoxContainer, tab: String, key: String) -> void:
 	match tab:
+		"world":
+			var e := Codex.get_entry(key)
+			_lib_head(art, Pixel.icon("book"), 3.0, e.get("t", ""), e.get("s", ""), Color(0.5, 0.9, 1.0))
+			if not Codex.is_open(e):
+				art.add_child(_para("Запись ещё не открыта: " + Meta.cond_text(e["c"]), Color(0.75, 0.75, 0.9), 15))
+			else:
+				for para in e["p"]:
+					art.add_child(_para(para, Color(0.9, 0.9, 1.0), 15))
 		"chronicle":
 			if key == "prologue":
 				_lib_head(art, Pixel.icon("book"), 3.0, "Летопись Слияния", "как всё началось", Color(0.75, 0.6, 1.0))
@@ -3838,6 +4322,19 @@ func _decor_tavern(root: Node3D, o: Vector3, w: float, d: float, wood: Material,
 	_add(root, _sphere(0.12), cat, Vector3(-7.0, 1.18, -1.3))
 	for s in [-1.0, 1.0]:
 		_add(root, _sphere(0.03), _emat(Color(0.6, 1.0, 0.3), 3.0), Vector3(-6.92, 1.2, -1.3 + s * 0.05))
+	# Гардероб Сеты: шкаф с зеркалом в неоновой раме и манекен в облике
+	var wp := WARDROBE
+	_add(root, _box(1.3, 2.4, 0.6), wood, wp + Vector3(-0.55, 1.2, 0), Vector3(0, 90, 0))
+	_add(root, _box(1.36, 0.12, 0.66), dark, wp + Vector3(-0.55, 2.45, 0), Vector3(0, 90, 0))
+	_add(root, _box(0.03, 1.7, 0.9), _mat(Color(0.65, 0.75, 0.9), 0.05, 0.9, ""), wp + Vector3(-0.23, 1.25, 0))
+	var wframe := _add(root, _box(0.04, 1.84, 1.04), _emat(MAGENTA, 1.6), wp + Vector3(-0.25, 1.25, 0))
+	_cycle.append([wframe.material_override, 0.25])
+	_add(root, _cyl(0.04, 0.04, 1.3, 6), dark, wp + Vector3(0.55, 0.65, 0.9))
+	_add(root, _cyl(0.22, 0.28, 0.6, 8), _mat(Color(0.25, 0.2, 0.4), 0.8, 0.0, ""), wp + Vector3(0.55, 1.45, 0.9))
+	_add(root, _sphere(0.14), _mat(Color(0.8, 0.75, 0.7), 0.8, 0.0, ""), wp + Vector3(0.55, 1.88, 0.9))
+	_add(root, _torus(0.24, 0.3), _emat(CYAN, 2.0), wp + Vector3(0.55, 1.5, 0.9), Vector3(90, 0, 0))
+	_rob(o, wp + Vector3(-0.55, 0, 0), 0.45, 0.75)
+	_label3d(root, "ГАРДЕРОБ СЕТЫ", wp + Vector3(-0.3, 2.85, 0.2), MAGENTA, 20)
 	# Ковры и меню на мелу
 	_rug(root, Vector3(-4.0, 0, 3.4), 2.6, 1.6, Color(0.2, 0.25, 0.45), Color(0.6, 0.45, 0.2))
 	_add(root, _box(1.2, 0.8, 0.05), _mat(Color(0.08, 0.1, 0.08), 0.9, 0.0, ""), Vector3(-0.6, 2.4, bk + 0.05))
@@ -4028,7 +4525,7 @@ func _rebuild_tavern_heroes(prev_pos := Vector3.INF) -> void:
 		var node := Node3D.new()
 		node.position = pos
 		_world.add_child(node)
-		var fr := Pixel.frames(c["sprite"])
+		var fr := Pixel.frames(Meta.hero_sprite(hid) if owned else str(c["sprite"]))
 		var pair := _sprite_pair(node, fr)
 		var lbl_text: String = c["name"] if owned else "Наёмник %s" % c["name"]
 		var lbl := _label3d(node, lbl_text, Vector3(0, 2.2, 0), (c["color"] as Color).lightened(0.25) if owned else Color(1.0, 0.75, 0.6), 26)
@@ -4117,6 +4614,14 @@ func _enter_building(id: String) -> void:
 	bubble.text = ph[randi() % ph.size()]
 	bubble.visible = true
 	npc["bubble_t"] = 3.5
+	# Первый визит — знакомство с хозяином
+	var first := "first_" + id
+	if Scenes.SCENES.has(first) and not Scenes.seen(first) and not _net_client:
+		Scenes.mark(first)
+		Meta.save()
+		get_tree().create_timer(0.6).timeout.connect(func():
+			if _inside == id and _panel_id == "":
+				_dialog(first, {"frames": {str(Scenes.BY_NAME.get(str(info["npc"][1]), "")): npc.get("frames", {})}}))
 
 
 func _exit_building() -> void:
@@ -4149,6 +4654,11 @@ func _interior_interaction() -> String:
 	if nd < 2.6 and nd < best_d:
 		best = "host"
 		best_d = nd
+	if _inside == "hall":
+		var wd := Vector2(p.x - (o.x + WARDROBE.x), p.z - (o.z + WARDROBE.z)).length()
+		if wd < 1.9 and wd < best_d:
+			best = "wardrobe"
+			best_d = wd
 	for h in _tav_heroes:
 		var hd := (h["node"] as Node3D).position.distance_to(p)
 		if hd < 1.7 and hd < best_d:
@@ -4158,6 +4668,8 @@ func _interior_interaction() -> String:
 		_prompt.text = _pk() + "Выйти на площадь"
 	elif best == "host":
 		_prompt.text = _pk() + "%s, %s — %s" % [INTERIORS[_inside]["npc"][1], HOST_TITLES[npc["role"]], HOST_TASK[_inside]]
+	elif best == "wardrobe":
+		_prompt.text = _pk() + "Гардероб Сеты — облики охотников (%d / %d)" % [Skins.owned_count(), Skins.total()]
 	elif best.begins_with("take:"):
 		var c: Dictionary = Data.CHARACTERS[best.substr(5)]
 		_prompt.text = _pk() + "Взять в бой: %s — %s" % [c["name"], c["title"]]
@@ -4170,6 +4682,8 @@ func _interior_interaction() -> String:
 func _interior_act(what: String) -> void:
 	if what == "exit":
 		_exit_building()
+	elif what == "host" and _inside == "shrine":
+		_selena_dialog()
 	elif what == "host":
 		var npc: Dictionary = _rooms[_inside]["npc"]
 		var bubble: Label3D = npc["bubble"]
@@ -4178,6 +4692,15 @@ func _interior_act(what: String) -> void:
 		bubble.visible = true
 		npc["bubble_t"] = 3.0
 		_open_panel(_inside)
+	elif what == "wardrobe":
+		_wd_hero = Data.selected_character
+		_wd_skin = Skins.equipped(_wd_hero)
+		if not Scenes.seen("seta_intro"):
+			Scenes.mark("seta_intro")
+			Meta.save()
+			_dialog("seta_intro", {}, func(): _open_panel("wardrobe"))
+		else:
+			_open_panel("wardrobe")
 	elif what.begins_with("take:"):
 		_take_hero(what.substr(5))
 	elif what.begins_with("hire:"):
@@ -4304,6 +4827,9 @@ func _apply_profile(v: Dictionary, prof: Dictionary) -> void:
 		return
 	v["profile"] = prof
 	(v["name"] as Label3D).text = "%s, %s" % [prof["name"], prof["title"]]
+	# Главные лица сюжета выглядят одинаково на площади и в диалогах
+	if Scenes.BY_NAME.has(str(prof["name"])) and v["role"] != "robot":
+		v["frames"] = Pixel.frames(str(Scenes.CAST[Scenes.BY_NAME[str(prof["name"])]]["sprite"]))
 	var mark := _label3d(v["node"], "!", Vector3(0, 2.35, 0), GOLD, 56)
 	mark.visible = false
 	v["mark"] = mark

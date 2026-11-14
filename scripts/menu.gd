@@ -763,7 +763,7 @@ func _refresh_badge() -> void:
 	Meta.ensure_loaded()
 	_badge_name.text = Meta.nickname
 	var hero: String = Data.selected_character if Data.CHARACTERS.has(Data.selected_character) else "vega"
-	_badge_pic.texture = Pixel.portrait(Data.CHARACTERS[hero]["sprite"])
+	_badge_pic.texture = Pixel.portrait(Meta.hero_sprite(hero))
 
 
 # ---------- Профиль игрока: ник и статистика ----------
@@ -907,7 +907,7 @@ func _fill_profile() -> void:
 		if int(heroes[h]) > best and Data.CHARACTERS.has(h):
 			best = int(heroes[h])
 			fav = h
-	var st := _sprite_stack(Data.CHARACTERS[fav]["sprite"], 150, true)
+	var st := _sprite_stack(Meta.hero_sprite(fav), 150, true)
 	_prof_hero.add_child(st)
 	var t: float = float(s.get("time", 0.0))
 	var rows := [

@@ -14,6 +14,8 @@ const ChestScript := preload("res://scripts/chest.gd")
 const PoiScript := preload("res://scripts/poi.gd")
 const Meta := preload("res://scripts/meta.gd")
 const Arsenal := preload("res://scripts/arsenal.gd")
+const Dialog := preload("res://scripts/dialog.gd")
+const Scenes := preload("res://scripts/scenes.gd")
 
 const MAX_ENEMIES := 320
 
@@ -277,7 +279,11 @@ func _ready() -> void:
 
 	Sound.set_track("battle", true)
 	Fx.text_pop(self, player.position + Vector2(0, -40), "%d. %s" % [level_index + 1, level["name"]], Color(1.0, 0.9, 1.0), 30)
-	if level_index < Story.LEVEL_STORY.size():
+	if level_index < Story.LEVEL_STORY.size() and Net.mode == "" and not Data.coop and not Scenes.seen("brief_%d" % level_index) and DisplayServer.get_name() != "headless":
+		# Первый раз на уровне — брифинг сценой-диалогом (игра на паузе)
+		Scenes.mark("brief_%d" % level_index)
+		get_tree().create_timer(0.7).timeout.connect(func(): Dialog.open(self, "brief_%d" % level_index, {"pause": true}))
+	elif level_index < Story.LEVEL_STORY.size():
 		hud.show_story.call_deferred(Story.CHAPTERS[Data.chapter_of(level_index)]["short"] + "  •  " + str(level["name"]), Story.LEVEL_STORY[level_index]["brief"])
 	Fx.portal(self, player.position, Color(0.3, 0.9, 1.0), 2.0)
 	Fx.ring(self, player.position, 10.0, 160.0, Pixel.hdr(Color(0.3, 0.9, 1.0), 2.0), 0.8, 5.0)
@@ -1980,7 +1986,12 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	shake(10.0)
 	Fx.text_pop(self, center() + Vector2(0, -80), "⚠ " + b.boss_name + " ⚠", Pixel.hdr(b.color, 1.6), 34)
 	hud.show_boss(b.boss_name, b.color)
-	get_tree().create_timer(1.6).timeout.connect(func(): boss_say(b, "intro"))
+	if Scenes.BOSS_TALK.has(kind) and not is_super and Net.mode == "" and not Data.coop and not Scenes.seen("boss_" + kind) and DisplayServer.get_name() != "headless":
+		# Первая встреча с владыкой — короткий разговор
+		Scenes.mark("boss_" + kind)
+		get_tree().create_timer(1.2).timeout.connect(func(): Dialog.open(self, Scenes.BOSS_TALK[kind], {"pause": true}))
+	else:
+		get_tree().create_timer(1.6).timeout.connect(func(): boss_say(b, "intro"))
 
 
 ## Реплика босса над ним (вступление, половина здоровья, гибель).
@@ -2037,6 +2048,7 @@ func arsenal_loot(src: String, pos: Vector2) -> void:
 	Fx.ring(self, pos, 10.0, 150.0, Pixel.hdr(col, 2.0), 0.45, 5.0)
 	Fx.burst(self, pos + Vector2(0, -20), [Pixel.hdr(col, 2.2), Color(col, 0.0)], 24, 260.0, 0.6, 3.0)
 	Sound.play("evolve", -4.0, 1.3)
+	run["parts"] = int(run.get("parts", 0)) + 1
 	var finds: Array = run.get("finds", [])
 	finds.append([f["kind"], f["id"], int(f["n"]), int(f["need"])])
 	run["finds"] = finds

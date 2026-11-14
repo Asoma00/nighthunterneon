@@ -243,6 +243,7 @@ const ACHIEVEMENTS := [
 	{"id": "elite1", "name": "Не такой уж элитный", "t": 0, "c": ["elites", 1]},
 	{"id": "mods6", "name": "Паяльник", "t": 0, "c": ["modules", 6]},
 	{"id": "forge2", "name": "Первая ковка", "t": 0, "c": ["forged", 2]},
+	{"id": "skin1", "name": "Новый облик", "t": 0, "c": ["skins", 1]},
 	# ---- Серебро ----
 	{"id": "kills1000", "name": "Тысяча теней", "t": 1, "c": ["kills", 1000]},
 	{"id": "boss1", "name": "Убийца великанов", "t": 1, "c": ["bosses", 1]},
@@ -268,6 +269,7 @@ const ACHIEVEMENTS := [
 	{"id": "elites100", "name": "Охотник на элиту", "t": 2, "c": ["elites", 100]},
 	{"id": "nodmg90", "name": "Призрак", "t": 2, "c": ["nodmg_best", 90]},
 	{"id": "rank10", "name": "Ветеран убежища", "t": 2, "c": ["rank", 10]},
+	{"id": "skin10", "name": "Модник Убежища", "t": 2, "c": ["skins", 10]},
 	# ---- Легенда ----
 	{"id": "kills50000", "name": "Конец Хора", "t": 3, "c": ["kills", 50000]},
 	{"id": "bosses50", "name": "Палач владык", "t": 3, "c": ["bosses", 50]},
@@ -278,7 +280,9 @@ const ACHIEVEMENTS := [
 	{"id": "heroes_all", "name": "Все на стене", "t": 3, "c": ["heroes", 13]},
 	{"id": "endless30", "name": "Рассвет не наступит", "t": 3, "c": ["endless", 30]},
 	{"id": "nodmg180", "name": "Неприкасаемый", "t": 3, "c": ["nodmg_best", 180]},
-	{"id": "all", "name": "Легенда убежища", "t": 3, "c": ["achievements", 40]},
+	{"id": "secrets", "name": "Хранитель тайн Маяка", "t": 3, "c": ["secrets", 8]},
+	{"id": "skin_all", "name": "Ткач легенд", "t": 3, "c": ["skins", 57]},
+	{"id": "all", "name": "Легенда убежища", "t": 3, "c": ["achievements", 44]},
 ]
 
 

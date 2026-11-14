@@ -242,6 +242,8 @@ func _jobs_for(path: String) -> Array:
 			if k in Pixel.HERO_KEYS and k != str(Data.CHARACTERS.get(Data.selected_character, {}).get("sprite", "")):
 				continue
 			keys.append(k)
+		# Герой в надетом облике
+		keys.append(preload("res://scripts/meta.gd").hero_sprite(Data.selected_character))
 		for id in Data.WEAPONS:
 			jobs.append(Callable(Pixel, "icon").bind(id))
 		for id in Data.PASSIVES:
@@ -253,7 +255,14 @@ func _jobs_for(path: String) -> Array:
 	elif path == "res://hub.tscn":
 		for id in Data.CHARACTERS:
 			keys.append(str(Data.CHARACTERS[id]["sprite"]))
+			var sk: String = preload("res://scripts/meta.gd").hero_sprite(id)
+			if sk != str(Data.CHARACTERS[id]["sprite"]):
+				keys.append(sk)
 			jobs.append(Callable(Pixel, "portrait").bind(str(Data.CHARACTERS[id]["sprite"])))
+		for cid in preload("res://scripts/scenes.gd").CAST:
+			var csp := str(preload("res://scripts/scenes.gd").CAST[cid]["sprite"])
+			if csp.begins_with("citizen_"):
+				keys.append(csp)
 		for k in Pixel.SPECS:
 			if str(k).begins_with("env_") or str(k).begins_with("lamp") or str(k) in ["chest", "drone", "spirit"]:
 				keys.append(k)

@@ -255,51 +255,145 @@ static func frames(key: String, cache_key := "") -> Dictionary:
 		cache_key = key
 	if _cache.has(cache_key):
 		return _cache[cache_key]
-	var spec: Array = SPECS[key] if SPECS.has(key) else ([48, 60, CITIZEN_FRAMES, true, 0.5] if key.begins_with("citizen_") else [18, 24, 8, true])
+	var spec := _spec(key)
 	var w: int = spec[0]
 	var h: int = spec[1]
 	var count: int = spec[2]
-	var volume: bool = spec[3]
-	var result := {"base": [], "emit": [], "flash": [], "size": Vector2(w, h), "k": float(spec[4]) if spec.size() > 4 else 1.0}
-	# Готовые кадры с диска (нарисованы в прошлый запуск этой же сборки)
+	var result := _from_disk(key, cache_key)
+	if not result.is_empty():
+		return result
+	result = _empty_result(spec)
 	var disk := _disk_path(cache_key)
-	if disk != "" and FileAccess.file_exists(disk):
-		var atlas := Image.load_from_file(disk)
-		if atlas != null and atlas.get_width() == w * count and atlas.get_height() == h * 3:
-			for f in count:
-				for row in 3:
-					var fr_img := atlas.get_region(Rect2i(f * w, row * h, w, h))
-					result[["base", "emit", "flash"][row]].append(ImageTexture.create_from_image(fr_img))
-			_cache[cache_key] = result
-			return result
 	var save_atlas: Image = Image.create(w * count, h * 3, false, Image.FORMAT_RGBA8) if disk != "" else null
 	for f in count:
-		var base := blank(w, h)
-		var emit := blank(w, h)
-		_paint(key, base, emit, f)
-		# Неоновые пиксели тоже часть силуэта
-		for x in w:
-			for y in h:
-				var ec := emit.get_pixel(x, y)
-				if ec.a > 0.3 and base.get_pixel(x, y).a < 0.5:
-					base.set_pixel(x, y, Color(ec.r * 0.35, ec.g * 0.35, ec.b * 0.35, 1.0))
-		if volume:
-			vshade(base, 0.35)
-			shade(base)
-		if not key.begins_with("puddle") and not key.begins_with("decal_"):
-			outline(base, Color(0.08, 0.2, 0.3) if key == "wraith" else OUT)
-		var sil := silhouette(base)
-		result["base"].append(tex(base))
-		result["emit"].append(tex(emit))
-		result["flash"].append(tex(sil))
-		if save_atlas != null:
-			save_atlas.blit_rect(base, Rect2i(0, 0, w, h), Vector2i(f * w, 0))
-			save_atlas.blit_rect(emit, Rect2i(0, 0, w, h), Vector2i(f * w, h))
-			save_atlas.blit_rect(sil, Rect2i(0, 0, w, h), Vector2i(f * w, h * 2))
+		_render_frame(key, spec, f, result, save_atlas)
 	_cache[cache_key] = result
 	if save_atlas != null:
 		save_atlas.save_png(disk)
 	return result
+
+
+## Размеры и параметры спрайта; скины героев («rin~oni») берут параметры базового героя.
+static func _spec(key: String) -> Array:
+	var base := base_key(key)
+	if SPECS.has(base):
+		return SPECS[base]
+	return [48, 60, CITIZEN_FRAMES, true, 0.5] if key.begins_with("citizen_") else [18, 24, 8, true]
+
+
+## «rin~oni» → «rin».
+static func base_key(key: String) -> String:
+	var i := key.find("~")
+	return key if i < 0 else key.substr(0, i)
+
+
+static func _empty_result(spec: Array) -> Dictionary:
+	return {"base": [], "emit": [], "flash": [], "size": Vector2(spec[0], spec[1]), "k": float(spec[4]) if spec.size() > 4 else 1.0}
+
+
+static func _from_disk(key: String, cache_key: String) -> Dictionary:
+	var disk := _disk_path(cache_key)
+	if disk == "" or not FileAccess.file_exists(disk):
+		return {}
+	var spec := _spec(key)
+	var w: int = spec[0]
+	var h: int = spec[1]
+	var count: int = spec[2]
+	var atlas := Image.load_from_file(disk)
+	if atlas == null or atlas.get_width() != w * count or atlas.get_height() != h * 3:
+		return {}
+	var result := _empty_result(spec)
+	for f in count:
+		for row in 3:
+			var fr_img := atlas.get_region(Rect2i(f * w, row * h, w, h))
+			result[["base", "emit", "flash"][row]].append(ImageTexture.create_from_image(fr_img))
+	_cache[cache_key] = result
+	return result
+
+
+## Один кадр спрайта: рисование, объём, обводка — и в результат.
+static func _render_frame(key: String, spec: Array, f: int, result: Dictionary, save_atlas: Image) -> void:
+	var w: int = spec[0]
+	var h: int = spec[1]
+	var volume: bool = spec[3]
+	var base := blank(w, h)
+	var emit := blank(w, h)
+	_paint(key, base, emit, f)
+	# Неоновые пиксели тоже часть силуэта
+	for x in w:
+		for y in h:
+			var ec := emit.get_pixel(x, y)
+			if ec.a > 0.3 and base.get_pixel(x, y).a < 0.5:
+				base.set_pixel(x, y, Color(ec.r * 0.35, ec.g * 0.35, ec.b * 0.35, 1.0))
+	if volume:
+		vshade(base, 0.35)
+		shade(base)
+	if not key.begins_with("puddle") and not key.begins_with("decal_"):
+		outline(base, Color(0.08, 0.2, 0.3) if key == "wraith" else OUT)
+	var sil := silhouette(base)
+	result["base"].append(tex(base))
+	result["emit"].append(tex(emit))
+	result["flash"].append(tex(sil))
+	if save_atlas != null:
+		save_atlas.blit_rect(base, Rect2i(0, 0, w, h), Vector2i(f * w, 0))
+		save_atlas.blit_rect(emit, Rect2i(0, 0, w, h), Vector2i(f * w, h))
+		save_atlas.blit_rect(sil, Rect2i(0, 0, w, h), Vector2i(f * w, h * 2))
+
+
+# ---------- Порционная отрисовка (без фризов) ----------
+# Перерисовка героя целиком (35 кадров) занимает 50–250 мс — в бою это заметный рывок
+# при каждом новом модуле. Такие спрайты рисуются по нескольку кадров за кадр игры,
+# а до готовности герой показывается в прежнем виде.
+static var _jobs := {}
+
+
+## Кадры героя с модулями без фриза: {} — ещё рисуются (вызывайте pump() каждый кадр).
+static func hero_frames_async(key: String, mods: Dictionary) -> Dictionary:
+	var ck := _mods_key(key, mods)
+	if _cache.has(ck):
+		return _cache[ck]
+	var ready := _from_disk(key, ck)
+	if not ready.is_empty():
+		return ready
+	if not _jobs.has(ck):
+		var spec := _spec(key)
+		var disk := _disk_path(ck)
+		_jobs[ck] = {"key": key, "mods": mods.duplicate(), "f": 0, "spec": spec, "res": _empty_result(spec),
+			"atlas": Image.create(int(spec[0]) * int(spec[2]), int(spec[1]) * 3, false, Image.FORMAT_RGBA8) if disk != "" else null,
+			"disk": disk}
+	return {}
+
+
+## Дорисовать часть отложенных спрайтов, не дольше budget_usec.
+static func pump(budget_usec := 3000) -> void:
+	if _jobs.is_empty():
+		return
+	var t0 := Time.get_ticks_usec()
+	for ck in _jobs.keys():
+		var j: Dictionary = _jobs[ck]
+		_mods = j["mods"]
+		while Time.get_ticks_usec() - t0 < budget_usec and int(j["f"]) < int(j["spec"][2]):
+			_render_frame(j["key"], j["spec"], int(j["f"]), j["res"], j["atlas"])
+			j["f"] = int(j["f"]) + 1
+		_mods = {}
+		if int(j["f"]) >= int(j["spec"][2]):
+			_cache[ck] = j["res"]
+			_jobs.erase(ck)
+			if j["atlas"] != null:
+				(j["atlas"] as Image).save_png(j["disk"])
+		if Time.get_ticks_usec() - t0 >= budget_usec:
+			return
+
+
+static func _mods_key(key: String, mods: Dictionary) -> String:
+	if mods.is_empty():
+		return key
+	var ids: Array = mods.keys()
+	ids.sort()
+	var sig := ""
+	for id in ids:
+		sig += "%s%d," % [id, int(mods[id])]
+	return key + "|m:" + sig
 
 
 # ---------- Кэш спрайтов на диске ----------
@@ -340,12 +434,7 @@ static var _anc := {}
 static func hero_frames(key: String, mods: Dictionary) -> Dictionary:
 	if mods.is_empty():
 		return frames(key)
-	var ids: Array = mods.keys()
-	ids.sort()
-	var sig := ""
-	for id in ids:
-		sig += "%s%d," % [id, int(mods[id])]
-	var ck := key + "|m:" + sig
+	var ck := _mods_key(key, mods)
 	if _cache.has(ck):
 		return _cache[ck]
 	_mods = mods
@@ -519,7 +608,7 @@ static func _paint(key: String, b: Image, e: Image, f: int) -> void:
 		_citizen_extras(b, e, look(key), f)
 		_hero_detail(b, e, look(key))
 		return
-	if key in HERO_KEYS:
+	if base_key(key) in HERO_KEYS:
 		_paint_hero48(key, b, e, f)
 		return
 	if key in BEAST_KEYS:
@@ -2674,6 +2763,10 @@ static var _gen_looks := {}
 static func look(key: String) -> Dictionary:
 	if LOOKS.has(key):
 		return LOOKS[key]
+	if key.find("~") >= 0:
+		if not _gen_looks.has(key):
+			_gen_looks[key] = preload("res://scripts/skins.gd").look_for(key, LOOKS)
+		return _gen_looks[key]
 	if not _gen_looks.has(key):
 		var parts := key.split("_")
 		_gen_looks[key] = citizen_look(parts[1] if parts.size() > 2 else "walker", int(parts[-1]))
@@ -3002,6 +3095,7 @@ static func _limb(im: Image, a: Vector2, c: Vector2, w: int, col: Color) -> void
 
 static func _paint_hero_rig(key: String, b: Image, e: Image, f: int) -> void:
 	var L: Dictionary = look(key)
+	key = base_key(key)
 	var weapon: String = L["weapon"]
 	var melee := weapon in ["katana", "hammer", "scythe", "blade", "mace"]
 	var P := _rig_pose(f, melee)
@@ -3020,6 +3114,8 @@ static func _paint_hero_rig(key: String, b: Image, e: Image, f: int) -> void:
 	var st: String = P["state"]
 	var k: int = P["k"]
 
+	if L.has("fx") and "wings" in L["fx"]:
+		_fx_wings(b, e, L, cx, sh_y, f)
 	# --- Спина: плащ / шарф / колчан / роба ---
 	var back: String = L["back"]
 	var bc: Color = L["back_c"]
@@ -3231,6 +3327,101 @@ static func _paint_hero_rig(key: String, b: Image, e: Image, f: int) -> void:
 	_hero_weapon(weapon, L, b, e, hand, dir, st, k, f, hand_b)
 	_anc = {"cx": cx, "sh": sh_y, "hip": hip_y, "tw": tw, "hand": hand, "tip": _weapon_tip(weapon, hand, dir, st),
 		"hx": hx, "hy": hy, "ff": ff, "fb": fb, "sway": sway, "st": st}
+	if L.has("fx") and not (L["fx"] as Array).is_empty():
+		_skin_fx(b, e, L, f, cx, sh_y, hip_y, tw, hx, hy, sway)
+
+
+# ---------- Знаки обликов (скинов) ----------
+
+static func _fx_wings(b: Image, e: Image, L: Dictionary, cx: float, sh_y: float, f: int) -> void:
+	var flap := sin(f * 0.9) * 1.5
+	var c: Color = L["back_c"]
+	var n: Color = L["neon2"]
+	for side in [-1.0, 1.0]:
+		var root := Vector2(cx - 1.0, sh_y + 2.0)
+		var tip := root + Vector2(-9.0 + side * 2.0, -7.0 - flap + side * 1.5)
+		var low := root + Vector2(-7.0 + side * 1.0, 6.0 - flap * 0.5)
+		spoly(b, PackedVector2Array([root, tip, low]), c.darkened(0.15 if side < 0 else 0.0))
+		sline(e, int(root.x), int(root.y), int(tip.x), int(tip.y), Color(n, 0.85))
+		for i in 3:
+			var p := tip.lerp(low, 0.25 + i * 0.25)
+			sline(e, int(root.x), int(root.y), int(p.x), int(p.y), Color(n, 0.35))
+
+
+static func _skin_fx(b: Image, e: Image, L: Dictionary, f: int, cx: float, sh_y: float, hip_y: float, tw: float, hx: float, hy: float, sway: float) -> void:
+	var neon: Color = L["neon"]
+	var neon2: Color = L["neon2"]
+	var trim: Color = L["trim"]
+	for fx in L["fx"]:
+		match str(fx):
+			"halo":
+				var pulse := 0.75 + 0.25 * sin(f * 0.7)
+				for i in 14:
+					var a := TAU * i / 14.0
+					spx(e, int(round(hx + cos(a) * 4.5)), int(round(hy - 7.5 + sin(a) * 1.3)), Color(neon2, pulse))
+			"crown":
+				srect(b, int(hx - 3), int(hy - 6), 7, 2, Color(1.0, 0.8, 0.3))
+				for i in 3:
+					spx(b, int(hx - 3 + i * 3), int(hy - 7), Color(1.0, 0.85, 0.35))
+				spx(e, int(hx), int(hy - 6), neon)
+				spx(e, int(hx - 3), int(hy - 7), Color(neon2, 0.9))
+				spx(e, int(hx + 3), int(hy - 7), Color(neon2, 0.9))
+			"horns":
+				for side in [-1, 1]:
+					sline(b, int(hx + side * 2), int(hy - 4), int(hx + side * 5), int(hy - 8), Color(0.85, 0.8, 0.75))
+					spx(e, int(hx + side * 5), int(hy - 8), neon)
+			"mask":
+				srect(b, int(hx - 1), int(hy), 6, 4, trim.darkened(0.1))
+				srect(e, int(hx), int(hy + 1), 4, 1, neon)
+				spx(b, int(hx + 2), int(hy + 3), Color(0.95, 0.95, 0.9))
+			"eyes":
+				var on := f % 6 != 0
+				if on:
+					for i in 3:
+						spx(e, int(hx - 1 + i * 2), int(hy - 2), neon)
+					spx(e, int(hx), int(hy + 2), neon2)
+			"antenna":
+				sline(b, int(hx - 1), int(hy - 4), int(hx - 3 - sway * 0.5), int(hy - 11), Color(0.5, 0.5, 0.58))
+				sline(b, int(hx + 2), int(hy - 4), int(hx + 4), int(hy - 10), Color(0.5, 0.5, 0.58))
+				spx(e, int(hx - 3 - sway * 0.5), int(hy - 11), neon if f % 4 < 2 else neon2)
+				spx(e, int(hx + 4), int(hy - 10), neon2 if f % 4 < 2 else neon)
+			"ears":
+				var ec: Color = L["head_c"]
+				for side in [-1, 1]:
+					spoly(b, PackedVector2Array([Vector2(hx + side * 1.5, hy - 3), Vector2(hx + side * 4.5, hy - 9), Vector2(hx + side * 4.5, hy - 2)]), ec)
+					spx(e, int(hx + side * 4), int(hy - 7), Color(neon, 0.8))
+			"visor":
+				srect(e, int(hx - 2), int(hy), 7, 1, neon)
+				spx(e, int(hx + 4 - (f % 7)), int(hy), Color.WHITE)
+			"flames":
+				for side in [-1, 1]:
+					var fx0: float = cx + side * (tw - 0.5)
+					for i in 3:
+						var hgt := 2.0 + float((f * 3 + i * 5 + (side + 1) * 7) % 5)
+						sline(e, int(fx0 + i - 1), int(sh_y), int(fx0 + i - 1 + sway * 0.3), int(sh_y - hgt), [neon, neon2, Color(1, 1, 1, 0.8)][i])
+			"stars":
+				for i in 3:
+					var a := TAU * i / 3.0 + f * 0.35
+					spx(e, int(round(cx + cos(a) * 11.0)), int(round(sh_y + 4 + sin(a) * 4.0)), Color(neon2, 0.95))
+					spx(e, int(round(cx + cos(a + 0.2) * 11.0)), int(round(sh_y + 4 + sin(a + 0.2) * 4.0)), Color(neon2, 0.4))
+			"petals":
+				for i in 4:
+					var px0 := int((f * 2 + i * 9) % 26) - 4
+					var py0 := int((f * 3 + i * 11) % 30)
+					spx(e, int(cx - 12 + px0), int(sh_y - 8 + py0), Color(1.0, 0.6, 0.8, 0.9))
+			"runes":
+				for i in 4:
+					var a := TAU * i / 4.0 - f * 0.3
+					var rp := Vector2(cx + cos(a) * 10.0, hip_y + 4 + sin(a) * 2.5)
+					spx(e, int(rp.x), int(rp.y), Color(neon, 0.9))
+					spx(e, int(rp.x) + 1, int(rp.y) - 1, Color(neon, 0.5))
+			"glitch":
+				var r := RandomNumberGenerator.new()
+				r.seed = f * 977 + 31
+				var gy := int(sh_y) + r.randi_range(-6, 14)
+				sline(e, int(cx - tw - 3), gy, int(cx + tw + 3), gy, Color(neon, 0.8))
+				for i in 6:
+					spx(e, int(cx) + r.randi_range(-7, 7), int(sh_y) + r.randi_range(-10, 16), neon2 if i % 2 == 0 else neon)
 
 
 static func _hero_weapon(weapon: String, L: Dictionary, b: Image, e: Image, h: Vector2, dir: Vector2, st: String, k: int, f: int, hb := Vector2.ZERO) -> void:

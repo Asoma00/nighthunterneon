@@ -26,6 +26,8 @@ var _revive := 0.0
 var _marker: Node2D
 var char_id := "vega"
 var char_data: Dictionary
+var sprite_key := ""     # спрайт с надетым обликом (скином)
+var _mod_wait := false   # спрайт с модулями ещё дорисовывается (без фриза)
 
 var radius := 14.0
 var base_speed := 210.0
@@ -209,7 +211,8 @@ func setup(id: String) -> void:
 func _ready() -> void:
 	if char_data.is_empty():
 		setup(char_id)
-	_frames = Pixel.frames(char_data["sprite"])
+	sprite_key = str(char_data["sprite"]) if remote else preload("res://scripts/meta.gd").hero_sprite(char_id)
+	_frames = Pixel.frames(sprite_key)
 	var size: Vector2 = _frames["size"]
 
 	_shadow = Sprite2D.new()
@@ -512,6 +515,12 @@ func _downed_tick(delta: float) -> void:
 
 
 func _process(delta: float) -> void:
+	if _mod_wait:
+		Pixel.pump(2500)
+		var fr := Pixel.hero_frames_async(sprite_key if sprite_key != "" else str(char_data["sprite"]), _mod_tiers())
+		if not fr.is_empty():
+			_frames = fr
+			_mod_wait = false
 	# Клиент: свой герой считается здесь же, эффекты показываются и у хоста
 	var loc: bool = not puppet and main.net_mode == "client"
 	if loc:
@@ -2270,10 +2279,15 @@ func _mod_tiers() -> Dictionary:
 
 
 func _refresh_mod_frames() -> void:
-	var spr: String = char_data["sprite"]
-	if not (spr in Pixel.HERO_KEYS):
+	var spr := sprite_key if sprite_key != "" else str(char_data["sprite"])
+	if not (Pixel.base_key(spr) in Pixel.HERO_KEYS):
 		return
-	_frames = Pixel.hero_frames(spr, _mod_tiers())
+	# Перерисовка героя с модулями идёт порциями по кадрам — без фриза;
+	# пока она не готова, герой виден в прежнем облике.
+	var fr := Pixel.hero_frames_async(spr, _mod_tiers())
+	_mod_wait = fr.is_empty()
+	if not _mod_wait:
+		_frames = fr
 
 
 func _update_gear(vis: bool) -> void:

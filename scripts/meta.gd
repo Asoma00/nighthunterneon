@@ -87,6 +87,9 @@ static var wparts := {}             # найденные части оружия
 static var mparts := {}             # части чертежей модулей: id -> число
 static var mods_open: Array = []    # открытые модули
 static var achieved: Array = []     # полученные достижения
+static var skins_owned: Array = []  # облики героев: "hero:id"
+static var skin_on := {}            # надетый облик: hero -> id
+static var dialogs_seen: Array = [] # просмотренные диалоги-сцены
 const PARTS_NEED := 3
 
 # ---------- Деревья прокачки ----------
@@ -264,6 +267,9 @@ static func reset() -> void:
 	mparts = {}
 	mods_open = []
 	achieved = []
+	skins_owned = []
+	skin_on = {}
+	dialogs_seen = []
 
 
 static func ensure_loaded() -> void:
@@ -324,6 +330,9 @@ static func ensure_loaded() -> void:
 	mparts = cfg.get_value("meta", "mparts", {})
 	mods_open = cfg.get_value("meta", "mods_open", [])
 	achieved = cfg.get_value("meta", "achieved", [])
+	skins_owned = cfg.get_value("meta", "skins_owned", [])
+	skin_on = cfg.get_value("meta", "skin_on", {})
+	dialogs_seen = cfg.get_value("meta", "dialogs_seen", [])
 	if not cfg.has_section_key("meta", "forged"):
 		preload("res://scripts/arsenal.gd").migrate(total_runs > 0)
 	if not cfg.has_section_key("meta", "rank_xp") and total_runs > 0:
@@ -378,6 +387,9 @@ static func save() -> void:
 	cfg.set_value("meta", "mparts", mparts)
 	cfg.set_value("meta", "mods_open", mods_open)
 	cfg.set_value("meta", "achieved", achieved)
+	cfg.set_value("meta", "skins_owned", skins_owned)
+	cfg.set_value("meta", "skin_on", skin_on)
+	cfg.set_value("meta", "dialogs_seen", dialogs_seen)
 	cfg.set_value("meta", "saved_at", Time.get_datetime_string_from_system(false, true))
 	cfg.save(slot_path(current_slot()))
 
@@ -633,6 +645,10 @@ static func stat_value(kind: String, hero := "") -> int:
 			return preload("res://scripts/lore.gd").rank()
 		"achievements":
 			return achieved.size()
+		"skins":
+			return skins_owned.size()
+		"secrets":
+			return int(stats.get("secret_step", 0))
 	return 0
 
 
@@ -710,6 +726,10 @@ static func cond_text(c: Array, hero := "", with_progress := true) -> String:
 			t = "Достигните ранга охотника %d" % v
 		"achievements":
 			t = "Получите достижений: %d" % v
+		"skins":
+			t = "Соберите обликов: %d" % v
+		"secrets":
+			t = "Узнайте тайн Маяка у Селены: %d" % v
 	if with_progress:
 		t += "  (%d / %d)" % [mini(stat_value(c[0], hero), v), v]
 	return t
@@ -723,7 +743,7 @@ static func cond_short(c: Array, hero := "") -> String:
 		"hq": "личное задание", "quests": "задания", "caches": "тайники", "puzzles": "загадки", "beacons": "маяки",
 		"events": "события", "elites": "элита", "nodmg_best": "без урона, с", "fusions": "слияния",
 		"chests": "сундуки", "wins": "победы", "forged": "оружие", "modules": "модули", "heroes": "герои", "rank": "ранг",
-		"achievements": "достижения"}
+		"achievements": "достижения", "skins": "облики", "secrets": "тайны"}
 	return "%s %d/%d" % [names.get(str(c[0]), str(c[0])), mini(stat_value(c[0], hero), int(c[1])), int(c[1])]
 
 
@@ -785,6 +805,14 @@ static func rescue(id: String) -> void:
 
 
 ## Оружие героя недоступно в бою, пока его не соберут (у открытых героев — всегда доступно).
+## Ключ спрайта героя с надетым обликом.
+static func hero_sprite(h: String) -> String:
+	var D = preload("res://scripts/data.gd")
+	var base := str(D.CHARACTERS.get(h, D.CHARACTERS["vega"])["sprite"])
+	var Sk = preload("res://scripts/skins.gd")
+	return Sk.sprite_key(h, base, Sk.equipped(h))
+
+
 static func weapon_available(w: String) -> bool:
 	return preload("res://scripts/arsenal.gd").is_forged(w)
 
@@ -864,6 +892,7 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 	ensure_loaded()
 	var extra := _settle_run(run, victory)
 	var first := 0
+	var first_clear := victory and level >= 0 and level >= levels_cleared
 	if victory and level >= 0:
 		if level >= levels_cleared:
 			levels_cleared = level + 1
@@ -878,6 +907,7 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 		"followers": 0,
 		"endless": endless_min * 25,
 	}
+	var after_scene := level if first_clear else -1
 	var total := 0
 	for k in r:
 		total += r[k]
@@ -902,6 +932,7 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 	r.merge(extra)
 	r["prog"] = preload("res://scripts/lore.gd").settle(run, victory)
 	r["unlocks"] = preload("res://scripts/arsenal.gd").refresh()
+	r["after_scene"] = after_scene
 	stats.erase("buff")   # благословение убежища действует одну вылазку
 	last_reward = r
 	save()
