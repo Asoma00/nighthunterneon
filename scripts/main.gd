@@ -13,6 +13,7 @@ const BossScript := preload("res://scripts/boss.gd")
 const ChestScript := preload("res://scripts/chest.gd")
 const PoiScript := preload("res://scripts/poi.gd")
 const Meta := preload("res://scripts/meta.gd")
+const Arsenal := preload("res://scripts/arsenal.gd")
 
 const MAX_ENEMIES := 320
 
@@ -1518,6 +1519,7 @@ func on_enemy_killed(enemy: Node2D) -> void:
 		combo_pop(enemy.position + Vector2(0, -90), "ЗОЛОТОЙ ГОБЛИН ПОЙМАН!", Pixel.hdr(Color(1.0, 0.85, 0.3), 1.6))
 	if enemy.is_elite and not enemy.is_boss:
 		run["elites"] = int(run["elites"]) + 1
+		arsenal_loot("elite", enemy.position)
 		drop_material(enemy.position, "scrap", rng.randi_range(3, 5))
 		if rng.randf() < 0.35:
 			drop_material(enemy.position + Vector2(20, 10), "chips", 1)
@@ -2015,9 +2017,35 @@ func _barks(delta: float) -> void:
 		return
 
 
+## Находка в бою: часть оружия или чертежа модуля (см. arsenal.gd).
+func arsenal_loot(src: String, pos: Vector2) -> void:
+	if net_mode == "client":
+		return
+	var f: Dictionary = Arsenal.roll(src, rng)
+	if f.is_empty():
+		return
+	var weapon: bool = f["kind"] == "w"
+	var nm: String = Data.WEAPONS[f["id"]]["name"] if weapon else Data.PASSIVES[f["id"]]["name"]
+	var full: bool = int(f["n"]) >= int(f["need"])
+	var txt := ""
+	if weapon:
+		txt = ("ВСЕ ЧАСТИ «%s»! СКУЙТЕ В КУЗНИЦЕ" if full else "ЧАСТЬ ОРУЖИЯ «%s» %d/%d") % ([nm] if full else [nm, int(f["n"]), int(f["need"])])
+	else:
+		txt = ("ЧЕРТЁЖ «%s» СОБРАН — МОДУЛЬ ОТКРОЕТСЯ" if full else "ЧАСТЬ ЧЕРТЕЖА «%s» %d/%d") % ([nm] if full else [nm, int(f["n"]), int(f["need"])])
+	var col := Color(1.0, 0.6, 0.25) if weapon else Color(0.4, 0.85, 1.0)
+	Fx.text_pop(self, pos + Vector2(0, -110), txt, Pixel.hdr(col, 1.6), 22)
+	Fx.ring(self, pos, 10.0, 150.0, Pixel.hdr(col, 2.0), 0.45, 5.0)
+	Fx.burst(self, pos + Vector2(0, -20), [Pixel.hdr(col, 2.2), Color(col, 0.0)], 24, 260.0, 0.6, 3.0)
+	Sound.play("evolve", -4.0, 1.3)
+	var finds: Array = run.get("finds", [])
+	finds.append([f["kind"], f["id"], int(f["n"]), int(f["need"])])
+	run["finds"] = finds
+
+
 func on_boss_killed(b: Node2D) -> void:
 	boss = null
 	bosses_killed += 1
+	arsenal_loot("boss", b.position)
 	hud.hide_boss()
 	drop_chest(b.position)
 	for i in 12:
@@ -2161,6 +2189,7 @@ func _fusion_choices(player: Node2D) -> Array:
 func open_chest(opener: Node2D = null) -> void:
 	run["chests"] = int(run.get("chests", 0)) + 1
 	var player: Node2D = opener if opener != null else self.player
+	arsenal_loot("chest", player.position)
 	Sound.play("chest", 0.0)
 	var rewards: Array = []
 	# Аспекты теперь выбираются при повышении уровня оружия, не в сундуке
@@ -2356,6 +2385,8 @@ func _build_choices(player: Node2D) -> Array:
 		var pk: String = Data.PASSIVES[id]["kind"]
 		if lvl == 0 and player.module_count(pk) >= Data.module_cap(pk):
 			continue
+		if lvl == 0 and not Meta.module_available(id):
+			continue   # модуль ещё не открыт
 		if lvl < Data.MAX_PASSIVE_LEVEL:
 			var p: Dictionary = Data.PASSIVES[id]
 			var evo_for := ""
@@ -2364,7 +2395,7 @@ func _build_choices(player: Node2D) -> Array:
 					evo_for = Data.WEAPONS[wid]["name"]
 			pool.append({"type": "passive", "id": id, "new": lvl == 0, "level": lvl + 1,
 				"title": p["name"], "desc": p["desc"],
-				"hint": "Действует только на героя" if p["kind"] == "hero" else "Только на оружие  •  аспект «%s»" % Data.ASPECTS[id]["name"]})
+				"hint": "Действует только на героя" if p["kind"] == "hero" else ("Только на оружие  •  аспект «%s»" % Data.ASPECTS[id]["name"] if Data.ASPECTS.has(id) else "Только на оружие")})
 	# Взвешенный случайный порядок: модули с узлом «Знакомый сигнал» выпадают вдвое чаще
 	for c in pool:
 		var w := 2.0 if (c["type"] == "passive" and Meta.has_node("m:" + str(c["id"]), "favor")) else 1.0

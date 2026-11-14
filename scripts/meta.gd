@@ -82,6 +82,11 @@ static var perks := {}              # навыки охотника: id -> ур�
 static var mastery := {}            # опыт мастерства героев: id -> опыт
 static var memories: Array = []     # найденные осколки памяти: "глава:номер"
 static var sagas := {}              # саги жителей: имя -> пройдено этапов
+static var forged: Array = ["bolt"]   # выкованное оружие (см. arsenal.gd)
+static var wparts := {}             # найденные части оружия без героя: id -> число
+static var mparts := {}             # части чертежей модулей: id -> число
+static var mods_open: Array = []    # открытые модули
+static var achieved: Array = []     # полученные достижения
 const PARTS_NEED := 3
 
 # ---------- Деревья прокачки ----------
@@ -254,6 +259,11 @@ static func reset() -> void:
 	mastery = {}
 	memories = []
 	sagas = {}
+	forged = ["bolt"]
+	wparts = {}
+	mparts = {}
+	mods_open = []
+	achieved = []
 
 
 static func ensure_loaded() -> void:
@@ -309,6 +319,13 @@ static func ensure_loaded() -> void:
 	mastery = cfg.get_value("meta", "mastery", {})
 	memories = cfg.get_value("meta", "memories", [])
 	sagas = cfg.get_value("meta", "sagas", {})
+	forged = cfg.get_value("meta", "forged", ["bolt"])
+	wparts = cfg.get_value("meta", "wparts", {})
+	mparts = cfg.get_value("meta", "mparts", {})
+	mods_open = cfg.get_value("meta", "mods_open", [])
+	achieved = cfg.get_value("meta", "achieved", [])
+	if not cfg.has_section_key("meta", "forged"):
+		preload("res://scripts/arsenal.gd").migrate(total_runs > 0)
 	if not cfg.has_section_key("meta", "rank_xp") and total_runs > 0:
 		# Старое сохранение: ранг и мастерство — по уже пройденному пути
 		rank_xp = int(stats.get("kills", 0)) / 4 + int(float(stats.get("time", 0.0)) / 60.0) * 25 + int(stats.get("bosses", 0)) * 120
@@ -356,6 +373,11 @@ static func save() -> void:
 	cfg.set_value("meta", "mastery", mastery)
 	cfg.set_value("meta", "memories", memories)
 	cfg.set_value("meta", "sagas", sagas)
+	cfg.set_value("meta", "forged", forged)
+	cfg.set_value("meta", "wparts", wparts)
+	cfg.set_value("meta", "mparts", mparts)
+	cfg.set_value("meta", "mods_open", mods_open)
+	cfg.set_value("meta", "achieved", achieved)
 	cfg.set_value("meta", "saved_at", Time.get_datetime_string_from_system(false, true))
 	cfg.save(slot_path(current_slot()))
 
@@ -599,8 +621,18 @@ static func stat_value(kind: String, hero := "") -> int:
 			return int(stats.get("mused", {}).get(hero, 0))
 		"hq":
 			return int(stats.get("hq", {}).get(hero, 0))
-		"quests", "caches", "puzzles", "beacons", "events", "elites", "nodmg_best", "fusions":
+		"quests", "caches", "puzzles", "beacons", "events", "elites", "nodmg_best", "fusions", "chests", "wins":
 			return int(stats.get(kind, 0))
+		"forged":
+			return preload("res://scripts/arsenal.gd").forged_count()
+		"modules":
+			return preload("res://scripts/arsenal.gd").modules_count()
+		"heroes":
+			return heroes_owned.size()
+		"rank":
+			return preload("res://scripts/lore.gd").rank()
+		"achievements":
+			return achieved.size()
 	return 0
 
 
@@ -664,6 +696,20 @@ static func cond_text(c: Array, hero := "", with_progress := true) -> String:
 			t = "Продержитесь без урона %d с" % v
 		"fusions":
 			t = "Совершите слияний оружия: %d" % v
+		"chests":
+			t = "Откройте сундуков: %d" % v
+		"wins":
+			t = "Победных вылазок: %d" % v
+		"forged":
+			t = "Выкуйте оружия: %d" % v
+		"modules":
+			t = "Откройте модулей: %d" % v
+		"heroes":
+			t = "Откройте героев: %d" % v
+		"rank":
+			t = "Достигните ранга охотника %d" % v
+		"achievements":
+			t = "Получите достижений: %d" % v
 	if with_progress:
 		t += "  (%d / %d)" % [mini(stat_value(c[0], hero), v), v]
 	return t
@@ -675,7 +721,9 @@ static func cond_short(c: Array, hero := "") -> String:
 		"endless": "бескон., мин", "level": "уровни", "runs": "вылазки", "max_level": "ур. в бою", "hero_runs": "вылазки",
 		"wkills": "убийства", "hkills": "убийства", "wruns": "вылазки", "mused": "вылазки",
 		"hq": "личное задание", "quests": "задания", "caches": "тайники", "puzzles": "загадки", "beacons": "маяки",
-		"events": "события", "elites": "элита", "nodmg_best": "без урона, с", "fusions": "слияния"}
+		"events": "события", "elites": "элита", "nodmg_best": "без урона, с", "fusions": "слияния",
+		"chests": "сундуки", "wins": "победы", "forged": "оружие", "modules": "модули", "heroes": "герои", "rank": "ранг",
+		"achievements": "достижения"}
 	return "%s %d/%d" % [names.get(str(c[0]), str(c[0])), mini(stat_value(c[0], hero), int(c[1])), int(c[1])]
 
 
@@ -695,6 +743,10 @@ static func hero_rescued(id: String) -> bool:
 
 static func parts_have(id: String) -> int:
 	if hero_unlocked(id):
+		return PARTS_NEED
+	# Оружие этих героев (клинки, круг, молния) собирается из добычи в бою — обломки не нужны
+	var D = preload("res://scripts/data.gd")
+	if preload("res://scripts/arsenal.gd").WEAPON_PARTS.has(str(D.CHARACTERS.get(id, {}).get("weapon", ""))):
 		return PARTS_NEED
 	return mini(PARTS_NEED, int(parts.get(id, 0)))
 
@@ -734,13 +786,12 @@ static func rescue(id: String) -> void:
 
 ## Оружие героя недоступно в бою, пока его не соберут (у открытых героев — всегда доступно).
 static func weapon_available(w: String) -> bool:
-	if w in ["bolt", "blades", "aura", "lightning"]:
-		return true   # базовое оружие охотников доступно всем с начала
-	var D = preload("res://scripts/data.gd")
-	for h in D.CHARACTERS:
-		if h != "vega" and str(D.CHARACTERS[h].get("weapon", "")) == w:
-			return parts_have(h) >= PARTS_NEED
-	return true
+	return preload("res://scripts/arsenal.gd").is_forged(w)
+
+
+## Модуль открыт и может выпасть при повышении уровня.
+static func module_available(m: String) -> bool:
+	return preload("res://scripts/arsenal.gd").module_open(m)
 
 
 static func hero_state(id: String) -> String:
@@ -750,6 +801,8 @@ static func hero_state(id: String) -> String:
 		return "lost"
 	if parts_have(id) < PARTS_NEED:
 		return "parts"
+	if not preload("res://scripts/arsenal.gd").is_forged(str(preload("res://scripts/data.gd").CHARACTERS.get(id, {}).get("weapon", ""))):
+		return "forge"
 	var u: Dictionary = HERO_UNLOCK.get(id, {"cost": 99999, "conds": [["level", 99]]})
 	if not conds_met(u["conds"]):
 		return "cond"
@@ -848,6 +901,7 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 	best_time = maxf(best_time, time_alive)
 	r.merge(extra)
 	r["prog"] = preload("res://scripts/lore.gd").settle(run, victory)
+	r["unlocks"] = preload("res://scripts/arsenal.gd").refresh()
 	stats.erase("buff")   # благословение убежища действует одну вылазку
 	last_reward = r
 	save()
@@ -876,6 +930,7 @@ static func _settle_run(run: Dictionary, victory: bool) -> Dictionary:
 		stats[key] = int(stats.get(key, 0)) + int(run.get(key, 0))
 	stats["nodmg_best"] = maxi(int(stats.get("nodmg_best", 0)), int(run.get("nodmg", 0)))
 	stats["fusions"] = int(stats.get("fusions", 0)) + int(run.get("fusions", 0))
+	stats["chests"] = int(stats.get("chests", 0)) + int(run.get("chests", 0))
 	var wk: Dictionary = stats.get("wkills", {})
 	for w in run.get("wkills", {}):
 		wk[w] = int(wk.get(w, 0)) + int(run["wkills"][w])

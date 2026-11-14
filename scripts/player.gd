@@ -65,6 +65,11 @@ var chain_bonus := 0
 var proj_speed := 1.0
 var react_mult := 1.0
 var dot_mult := 1.0
+var extra_pierce := 0        # модуль «Бронебойный сердечник»
+var execute_bonus := 0.0     # модуль «Добивающий чип»
+var titan_bonus := 0.0       # модуль «Гроза титанов»
+var ward_lvl := 0.0          # модуль «Энергощит»
+var _ward_t := 0.0
 var _armor_cd := 0.0
 var _overflow_t := 0.0
 var _spirit_splits := 0
@@ -298,8 +303,12 @@ func _ready() -> void:
 		if _m_pre(mid):
 			add_passive(mid)
 	if _m_hero()["awaken"]:
-		var keys := Data.PASSIVES.keys()
-		add_passive(keys[randi() % keys.size()])
+		var keys: Array = []
+		for mid in Data.PASSIVES:
+			if remote or preload("res://scripts/meta.gd").module_available(mid):
+				keys.append(mid)
+		if not keys.is_empty():
+			add_passive(keys[randi() % keys.size()])
 
 
 ## Клиент: плавно следуем за присланной позицией, только анимация и визуал оружия.
@@ -553,6 +562,7 @@ func _process_body(delta: float) -> void:
 	_flash = maxf(0.0, _flash - delta)
 	_blades_charged = maxf(0.0, _blades_charged - delta)
 	_shield_t = maxf(0.0, _shield_t - delta)
+	_ward_t = maxf(0.0, _ward_t - delta)
 	if regen > 0.0:
 		hp = minf(max_hp, hp + regen * delta)
 	infuse_t = maxf(0.0, infuse_t - delta)
@@ -671,6 +681,8 @@ func stats(id: String) -> Dictionary:
 			s[key] = float(s[key]) * weapon_area
 	if s.has("duration"):
 		s["duration"] = float(s["duration"]) * weapon_status
+	if extra_pierce > 0 and s.has("pierce") and int(s["pierce"]) < 999:
+		s["pierce"] = int(s["pierce"]) + extra_pierce
 	# Мультиядро: +1 к количеству у любого оружия
 	s["extra"] = extra_proj
 	if extra_proj > 0:
@@ -1475,6 +1487,14 @@ func take_damage(amount: float) -> void:
 		return
 	if _invuln > 0.0 or _dead or main.game_over:
 		return
+	if ward_lvl > 0.0 and _ward_t <= 0.0:
+		# Энергощит поглощает удар целиком
+		_ward_t = maxf(5.0, 16.0 - 2.0 * ward_lvl)
+		_invuln = 0.5
+		Fx.ring(main, position + Vector2(0, -20), 10.0, 90.0, Pixel.hdr(Color(0.4, 0.85, 1.0), 2.0), 0.35, 5.0)
+		Fx.text_pop(main, position + Vector2(0, -20), "щит", Color(0.5, 0.9, 1.0), 16)
+		Sound.play("zap", -6.0, 1.4)
+		return
 	if dodge > 0.0 and randf() < dodge:
 		_invuln = 0.3
 		Fx.text_pop(main, position + Vector2(0, -20), "уклон", Color(1.0, 0.6, 0.6), 16)
@@ -1689,6 +1709,21 @@ func add_passive(id: String) -> void:
 		"luck":
 			xp_mult += 0.08 * k
 			chest_bonus += 0.08 * k
+		"shield":
+			ward_lvl += k
+		"dodge":
+			dodge = minf(0.6, dodge + 0.06 * k)
+		"dash":
+			ability_cd *= 1.0 - 0.12 * minf(k, 1.5)
+		"pierce":
+			extra_pierce += 1
+			weapon_dmg += 0.06 * k
+		"execute":
+			execute_bonus += 0.25 * k
+		"giant":
+			titan_bonus += 0.15 * k
+		"toxin":
+			dot_mult += 0.25 * k
 
 
 # ================= Оружие =================

@@ -18,6 +18,7 @@ const PORTAL_POS := Vector3(0, 0, -2.5)
 const BOARD := Vector3(-3.6, 0, -1.0)   # доска заданий у портала
 const Quests := preload("res://scripts/quests.gd")
 const Lore := preload("res://scripts/lore.gd")
+const Arsenal := preload("res://scripts/arsenal.gd")
 
 var _vp: SubViewport
 var _world: Node3D
@@ -118,6 +119,8 @@ func _ready() -> void:
 	if not Meta.last_reward.is_empty():
 		_show_reward(Meta.last_reward)
 		Meta.last_reward = {}
+	if not _net_client:
+		get_tree().create_timer(4.5 if not Meta.last_reward.is_empty() else 1.5).timeout.connect(_check_unlocks)
 	if Meta.just_built != "":
 		var bid := Meta.just_built
 		Meta.just_built = ""
@@ -1127,7 +1130,7 @@ func _process(delta: float) -> void:
 
 func _update_avatar(delta: float) -> void:
 	var dir := Vector2.ZERO
-	if _panel_id == "":
+	if _panel_id == "" and _cine_t <= 0.0:
 		dir = Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	var moving := dir != Vector2.ZERO
 	var pos := _avatar.position + Vector3(dir.x, 0, dir.y) * 6.0 * delta
@@ -1201,15 +1204,17 @@ func _collide(pos: Vector3, r: float) -> Vector3:
 
 
 func _update_camera(delta: float) -> void:
-	_cam_target = _cam_target.lerp(_avatar.position, minf(1.0, delta * 4.0))
+	_cine_t = maxf(0.0, _cine_t - delta)
+	_cam_target = _cam_target.lerp(_cine_focus if _cine_t > 0.0 else _avatar.position, minf(1.0, delta * (2.5 if _cine_t > 0.0 else 4.0)))
 	_shake = move_toward(_shake, 0.0, delta * 2.0)
 	var jitter := Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * _shake * 0.15
-	_camera.position = _cam_target + _cam_off + jitter
+	_cine_zoom = lerpf(_cine_zoom, 0.5 if _cine_t > 0.0 else 1.0, minf(1.0, delta * 2.5))
+	_camera.position = _cam_target + _cam_off * _cine_zoom + jitter
 	_camera.look_at(_cam_target + Vector3(0, 0.8, 0) + jitter)
 
 
 func _update_interaction() -> void:
-	if _panel_id != "":
+	if _panel_id != "" or _cine_t > 0.0:
 		_prompt.visible = false
 		return
 	if _inside != "":
@@ -1541,7 +1546,24 @@ func _show_reward(r: Dictionary) -> void:
 		t += "\n★ Новый ранг охотника: %d — %s. Загляните к Монументу!" % [int(pr["rank"]), Lore.rank_title(int(pr["rank"]))]
 	elif not pr.is_empty():
 		t += "\nОпыт охотника +%d" % int(pr.get("rank_xp", 0))
+	for line in Arsenal.unlock_lines(r.get("unlocks", [])).slice(0, 3):
+		t += "\n" + line
 	_toast_text(t)
+
+
+## Открытия, случившиеся в убежище (герой нанят, оружие выковано…): модули, достижения.
+func _check_unlocks() -> void:
+	if not is_inside_tree() or _net_client:
+		return
+	var list := Arsenal.refresh()
+	if list.is_empty():
+		return
+	Meta.save()
+	var lines := Arsenal.unlock_lines(list)
+	_toast_text("\n".join(lines.slice(0, 4)) + ("\n…и ещё %d — см. Монумент" % (lines.size() - 4) if lines.size() > 4 else ""))
+	Sound.play("evolve", -4.0, 1.2)
+	if _avatar != null:
+		_particles(_world, _avatar.position + Vector3(0, 2.2, 0), GOLD, 30, Vector3(0.6, 0.6, 0.6), Vector3(0, 1.5, 0), 1.0, 0.08, true, 2.5)
 
 
 func _open_panel(id: String) -> void:
@@ -1612,6 +1634,9 @@ func _fill_panel() -> void:
 		return
 	if id == "path":
 		_fill_path()
+		return
+	if id == "ach":
+		_fill_achievements()
 		return
 	if id == "campfire":
 		_fill_campfire()
@@ -1738,6 +1763,7 @@ func _hero_card(hid: String) -> Control:
 					_toast_text("Нанят герой: %s — %s! Подойдите к нему, чтобы взять в бой." % [hc["name"], hc["title"]])
 					if _inside == "hall":
 						_rebuild_tavern_heroes()
+					get_tree().create_timer(3.0).timeout.connect(_check_unlocks)
 				_fill_panel())
 		"expensive":
 			b = _button("%d ◆ — мало" % int(u["cost"]), GOLD.darkened(0.4), false)
@@ -1745,6 +1771,9 @@ func _hero_card(hid: String) -> Control:
 			b = _button("⊘ не найден", Color(0.5, 0.5, 0.6), false)
 		"parts":
 			b = _button("⊘ не готов", Color(0.5, 0.5, 0.6), false)
+		"forge":
+			b = _button("⚒ скуйте оружие", Color(1.0, 0.55, 0.2).darkened(0.3), false)
+			b.tooltip_text = "Все части оружия героя найдены — скуйте его в Рунной кузнице"
 		_:
 			b = _button("⊘ не готов", Color(0.5, 0.5, 0.6), false)
 	b.custom_minimum_size = Vector2(minf(150, _avail()), 40)
@@ -1968,7 +1997,12 @@ func _fill_tree_panel(id: String) -> void:
 		var owned: int = Meta.trees.get(tk, []).size()
 		var total: int = Meta.tree_nodes(tk).size()
 		var locked: bool = id == "shrine" and not Meta.hero_unlocked(key)
-		var b := _button(("%s\n%d/%d" if narrow else "%s %d/%d") % [name_txt, owned, total] if not locked else "%s ⊘" % name_txt, col if tk == _tree_tab else col.darkened(0.5), not locked)
+		var btxt: String = ("%s\n%d/%d" if narrow else "%s %d/%d") % [name_txt, owned, total] if not locked else "%s ⊘" % name_txt
+		if id == "forge" and not Arsenal.is_forged(str(key)):
+			btxt = ("%s\n⚒ сковать" if narrow else "%s  ⚒") % name_txt if Arsenal.weapon_state(str(key)) == "ready" else "%s ⊘" % name_txt
+		elif id == "lab" and not Arsenal.module_open(str(key)):
+			btxt = "%s ⊘" % name_txt
+		var b := _button(btxt, col if tk == _tree_tab else col.darkened(0.5), not locked)
 		if narrow:
 			b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		b.custom_minimum_size = Vector2(minf(150 if narrow else 254, _avail()), 52 if narrow else (50 if id == "shrine" else 36))
@@ -2012,19 +2046,24 @@ func _fill_tree_panel(id: String) -> void:
 	dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	dl.custom_minimum_size = Vector2(minf(500 if narrow else 720, _avail() - (90.0 if narrow else 350.0)), 0)
 	hv.add_child(dl)
-	var tv = preload("res://scripts/tree_view.gd").new()
-	right.add_child(tv)
-	tv.setup(_tree_tab, col, narrow, _avail() if narrow else _avail() - 260.0)
-	tv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	# Подробности узла (наведение / касание): эффект, цена, условия
-	var info_l := _label("Наведите на узел или коснитесь его — здесь появятся эффект и условия открытия.", 13, Color(0.9, 0.85, 1.0))
-	info_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info_l.custom_minimum_size = Vector2(minf(tv.custom_minimum_size.x, _avail()), 36)
-	right.add_child(info_l)
-	tv.info.connect(func(t: String): info_l.text = t)
-	tv.bought.connect(func():
-		_particles(_world, Meta.BUILDINGS[id]["pos"] + Vector3(0, 2.0, 0), col, 30, Vector3(1, 1, 1), Vector3(0, 2, 0), 1.0, 0.1, true, 3.0)
-		_fill_panel.call_deferred())
+	if id == "forge" and not Arsenal.is_forged(key_name):
+		_forge_card(right, key_name, col)
+	elif id == "lab" and not Arsenal.module_open(key_name):
+		_module_lock_card(right, key_name, col)
+	else:
+		var tv = preload("res://scripts/tree_view.gd").new()
+		right.add_child(tv)
+		tv.setup(_tree_tab, col, narrow, _avail() if narrow else _avail() - 260.0)
+		tv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		# Подробности узла (наведение / касание): эффект, цена, условия
+		var info_l := _label("Наведите на узел или коснитесь его — здесь появятся эффект и условия открытия.", 13, Color(0.9, 0.85, 1.0))
+		info_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		info_l.custom_minimum_size = Vector2(minf(tv.custom_minimum_size.x, _avail()), 36)
+		right.add_child(info_l)
+		tv.info.connect(func(t: String): info_l.text = t)
+		tv.bought.connect(func():
+			_particles(_world, Meta.BUILDINGS[id]["pos"] + Vector3(0, 2.0, 0), col, 30, Vector3(1, 1, 1), Vector3(0, 2, 0), 1.0, 0.1, true, 3.0)
+			_fill_panel.call_deferred())
 	var foot := HBoxContainer.new()
 	foot.alignment = BoxContainer.ALIGNMENT_CENTER
 	foot.add_theme_constant_override("separation", 14)
@@ -2048,6 +2087,216 @@ func _fill_tree_panel(id: String) -> void:
 		_close_panel())
 	foot.add_child(close)
 
+
+
+# ================= Ковка оружия и закрытые модули =================
+
+var _cine_t := 0.0
+var _cine_focus := Vector3.ZERO
+var _cine_zoom := 1.0
+
+
+## Полоска частей: ▰▰▱ 2 / 3.
+func _parts_bar(got: int, need: int) -> String:
+	return "▰".repeat(mini(got, need)) + "▱".repeat(maxi(0, need - got)) + "   %d / %d" % [mini(got, need), need]
+
+
+func _forge_card(parent: Control, w: String, col: Color) -> void:
+	var st := Arsenal.weapon_state(w)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	box.custom_minimum_size = Vector2(minf(520.0, _avail() - (0.0 if _portrait() else 300.0)), 0)
+	parent.add_child(box)
+	var head_t := {"ready": "ВСЕ ЧАСТИ НАЙДЕНЫ — ОРУЖИЕ ЖДЁТ КОВКИ", "parts": "ОРУЖИЕ ЕЩЁ НЕ СОБРАНО", "lost": "ОРУЖИЕ НЕ НАЙДЕНО"}
+	box.add_child(_label(head_t.get(st, ""), 18, GOLD if st == "ready" else Color(1.0, 0.65, 0.5)))
+	var got := Arsenal.parts_got(w)
+	var need := Arsenal.parts_need(w)
+	box.add_child(_label("Части: " + _parts_bar(got, need), 20, col.lightened(0.3) if got >= need else Color(0.85, 0.85, 1.0)))
+	var src := Arsenal.weapon_src(w)
+	var where := ""
+	if src == "hero":
+		var h := Arsenal.weapon_hero(w)
+		var hn: String = Data.CHARACTERS[h]["name"]
+		var lvl := int(Meta.HERO_LEVEL.get(h, 0)) + 1
+		if not Meta.hero_rescued(h):
+			where = "Это оружие героя «%s». Сначала найдите его самого — говорят, он томится где-то на уровне %d. Потом в бою ищите обломки оружия." % [hn, lvl]
+		else:
+			where = "Оружие героя «%s». Обломки попадаются в бою — ищите светящиеся осколки на карте." % hn
+	else:
+		where = "Где искать части: %s. Часть выпадает с шансом — просто продолжайте вылазки." % Arsenal.SRC_TEXT.get(src, "")
+	var wl := _label(where, 14, Color(0.8, 0.8, 0.95))
+	wl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	wl.custom_minimum_size.x = box.custom_minimum_size.x
+	box.add_child(wl)
+	var nl := _label("После ковки оружие начнёт попадаться при повышении уровня в бою, и откроется его дерево прокачки.", 13, Color(0.7, 0.7, 0.85))
+	nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	nl.custom_minimum_size.x = box.custom_minimum_size.x
+	box.add_child(nl)
+	var cost := Arsenal.forge_cost(w)
+	var why := Arsenal.forge_block(w)
+	var b := _button("⚒ СКОВАТЬ — " + Meta.cost_text(cost), Color(1.0, 0.55, 0.2), why == "")
+	b.custom_minimum_size.x = minf(420.0, box.custom_minimum_size.x)
+	b.pressed.connect(func():
+		if Arsenal.forge(w):
+			_close_panel()
+			_forge_cinematic(w))
+	box.add_child(b)
+	if why != "":
+		box.add_child(_label("⊘ " + why, 14, Color(1.0, 0.6, 0.6)))
+
+
+func _module_lock_card(parent: Control, m: String, col: Color) -> void:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	box.custom_minimum_size = Vector2(minf(520.0, _avail() - (0.0 if _portrait() else 300.0)), 0)
+	parent.add_child(box)
+	box.add_child(_label("МОДУЛЬ ЗАКРЫТ", 18, Color(1.0, 0.65, 0.5)))
+	var how := _label(Arsenal.module_how(m), 16, col.lightened(0.3))
+	how.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	how.custom_minimum_size.x = box.custom_minimum_size.x
+	box.add_child(how)
+	var u: Array = Arsenal.MODULE_UNLOCK.get(m, ["start"])
+	if str(u[0]) == "parts":
+		box.add_child(_label("Чертёж: " + _parts_bar(int(Meta.mparts.get(m, 0)), int(u[1])), 20, Color(0.85, 0.85, 1.0)))
+	var nl := _label("Пока модуль закрыт, он не выпадает при повышении уровня. Открывается сам, как только условие выполнено, — а прокачка здесь станет доступна сразу после этого.", 13, Color(0.7, 0.7, 0.85))
+	nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	nl.custom_minimum_size.x = box.custom_minimum_size.x
+	box.add_child(nl)
+
+
+## Ковка: молот бьёт по раскалённой заготовке, летят искры, выкованное оружие
+## поднимается над наковальней и вращается в столбе света.
+func _forge_cinematic(w: String) -> void:
+	var wcol: Color = Data.STATUSES[Data.WEAPONS[w]["status"]]["color"]
+	var fire := Color(1.0, 0.5, 0.15)
+	var at: Vector3
+	if _inside == "forge":
+		at = INTERIORS["forge"]["o"] + Vector3(-0.6, 0.85, -2.4)
+	else:
+		at = Meta.BUILDINGS["forge"]["pos"] + Vector3(0, 0.0, 3.2)
+	var root := Node3D.new()
+	root.position = at
+	_world.add_child(root)
+	if _inside != "forge":
+		var iron0 := _mat(Color(0.25, 0.25, 0.3), 0.4, 0.8)
+		_add(root, _box(0.5, 0.6, 0.4), iron0, Vector3(0, -0.55, 0))
+		_add(root, _box(1.1, 0.25, 0.45), iron0, Vector3(0, -0.13, 0))
+	_cine_t = 5.6
+	_cine_focus = at + Vector3(0, 0.3, 0)
+	# Охотник встаёт перед наковальней и смотрит на работу мастера
+	_avatar.position = Vector3(at.x - 1.3, _avatar.position.y, at.z + 1.5)
+	Sound.play("click")
+	# Раскалённая заготовка
+	var hot := _emat(fire, 0.6)
+	var ingot := _add(root, _box(0.46, 0.08, 0.15), hot, Vector3(0, 0.04, 0))
+	var light := _light(root, Vector3(0, 0.6, 0.4), fire, 0.0, 5.0)
+	# Молот: ось справа, рукоять влево, боёк над заготовкой
+	var pivot := Node3D.new()
+	pivot.position = Vector3(0.74, 0.19, 0.0)
+	root.add_child(pivot)
+	_add(pivot, _cyl(0.03, 0.03, 0.66, 6), _mat(Color(0.45, 0.3, 0.18), 0.9, 0.0, ""), Vector3(-0.36, 0, 0), Vector3(0, 0, 90))
+	_add(pivot, _box(0.16, 0.22, 0.16), _mat(Color(0.32, 0.32, 0.38), 0.35, 0.9), Vector3(-0.72, 0, 0))
+	pivot.rotation_degrees.z = -80.0
+	var tw := root.create_tween()
+	tw.tween_property(hot, "emission_energy_multiplier", 4.0, 0.7)
+	tw.parallel().tween_property(light, "light_energy", 2.6, 0.7)
+	for i in 5:
+		var last := i == 4
+		tw.tween_property(pivot, "rotation_degrees:z", 0.0, 0.11 if not last else 0.09).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+		tw.tween_callback(func():
+			_particles(root, Vector3(0, 0.1, 0), Color(1.0, 0.75, 0.3) if not last else wcol, 26 if not last else 60, Vector3(0.12, 0.02, 0.08), Vector3(0, -6.0, 0), 0.6, 0.05, true, 4.0 if not last else 6.0)
+			_shake = 0.35 if not last else 0.9
+			Sound.play("hit", -1.0, 0.55 + 0.05 * i, 0.05)
+			ingot.scale = Vector3(1.0 + 0.06 * (i + 1), 1.0 - 0.08 * (i + 1) * 0.5, 1.0 + 0.03 * (i + 1))
+			light.light_energy = 4.5)
+		tw.tween_property(light, "light_energy", 2.6, 0.15)
+		tw.tween_property(pivot, "rotation_degrees:z", -80.0, 0.3).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	# Оружие рождается из заготовки
+	var spr := Sprite3D.new()
+	spr.texture = Pixel.icon(w)
+	spr.pixel_size = 1.3 / maxf(1.0, float(spr.texture.get_width()))
+	spr.shaded = false
+	spr.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	spr.position = Vector3(0, 0.15, 0)
+	spr.scale = Vector3.ONE * 0.05
+	spr.modulate = Color(1, 1, 1, 0)
+	root.add_child(spr)
+	var lab := _label3d(root, "ВЫКОВАНО: " + str(Data.WEAPONS[w]["name"]).to_upper(), Vector3(0, 2.3, 0), GOLD, 26)
+	lab.visible = false
+	lab.modulate.a = 0.0
+	lab.outline_modulate.a = 0.0
+	tw.tween_callback(func():
+		Sound.play("evolve", -2.0, 0.9)
+		_particles(root, Vector3(0, 0.3, 0), wcol, 50, Vector3(0.3, 0.05, 0.3), Vector3(0, 2.5, 0), 1.4, 0.06, true, 2.5)
+		light.light_color = wcol
+		lab.visible = true
+		ingot.visible = false
+		pivot.visible = false)
+	tw.tween_property(spr, "modulate:a", 1.0, 0.25)
+	tw.parallel().tween_property(spr, "scale", Vector3.ONE, 0.6).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(spr, "position:y", 1.25, 1.1).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(spr, "rotation:y", TAU * 2.0, 1.6).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(light, "light_energy", 5.0, 0.6)
+	tw.parallel().tween_property(lab, "modulate:a", 1.0, 0.5)
+	tw.parallel().tween_property(lab, "outline_modulate:a", 1.0, 0.5)
+	tw.tween_callback(func(): Sound.play("levelup", -4.0))
+	tw.tween_interval(1.3)
+	tw.tween_property(spr, "modulate:a", 0.0, 0.5)
+	tw.parallel().tween_property(lab, "modulate:a", 0.0, 0.5)
+	tw.parallel().tween_property(lab, "outline_modulate:a", 0.0, 0.5)
+	tw.parallel().tween_property(light, "light_energy", 0.0, 0.5)
+	tw.tween_callback(func():
+		root.queue_free()
+		_cine_t = 0.0
+		_toast_text("⚒ Выковано: «%s»! Теперь оно будет попадаться в бою, а в кузнице открылось его дерево." % Data.WEAPONS[w]["name"])
+		_check_unlocks.call_deferred())
+
+
+# ================= Достижения =================
+
+func _fill_achievements() -> void:
+	var done := Meta.achieved.size()
+	_panel_box.add_child(_centered(_label("ДОСТИЖЕНИЯ  %d / %d" % [done, Arsenal.ACHIEVEMENTS.size()], 30, Color.WHITE, Color(GOLD, 0.7))))
+	_panel_box.add_child(_centered(_wrap("От первой крови до легенды убежища. Награда приходит сама, как только условие выполнено.", 13, Color(0.75, 0.75, 0.9))))
+	for t in Arsenal.TIERS.size():
+		var tier: Dictionary = Arsenal.TIERS[t]
+		var n_done := 0
+		var n_all := 0
+		for a in Arsenal.ACHIEVEMENTS:
+			if int(a["t"]) == t:
+				n_all += 1
+				n_done += int(a["id"] in Meta.achieved)
+		_panel_box.add_child(_centered(_label("%s  %d / %d   •   награда %s" % [str(tier["name"]).to_upper(), n_done, n_all, Meta.cost_text(tier["reward"])], 19, tier["color"])))
+		var grid := GridContainer.new()
+		grid.columns = _cols(250)
+		grid.add_theme_constant_override("h_separation", 8)
+		grid.add_theme_constant_override("v_separation", 8)
+		for a in Arsenal.ACHIEVEMENTS:
+			if int(a["t"]) != t:
+				continue
+			var got: bool = a["id"] in Meta.achieved
+			var card := PanelContainer.new()
+			var tc: Color = tier["color"]
+			card.add_theme_stylebox_override("panel", _sbox(tc if got else tc.darkened(0.6), PANEL_BG, 2, 6 if got else 0))
+			card.custom_minimum_size = Vector2(minf(250, _avail()), 0)
+			var v := VBoxContainer.new()
+			v.add_theme_constant_override("separation", 2)
+			card.add_child(v)
+			v.add_child(_label(("★ " if got else "☆ ") + str(a["name"]), 16, tc.lightened(0.3) if got else Color(0.75, 0.75, 0.85)))
+			var c: Array = a["c"]
+			var cl := _label(Meta.cond_text(c, "", not got), 12, Color(0.85, 0.85, 1.0) if not got else Color(0.7, 0.9, 0.7))
+			cl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			cl.custom_minimum_size.x = minf(230, _avail() - 20.0)
+			v.add_child(cl)
+			grid.add_child(card)
+		_panel_box.add_child(_centered(grid))
+	var back := _button("← К ПУТИ ОХОТНИКА", GOLD)
+	back.pressed.connect(func():
+		Sound.play("click")
+		_panel_id = "path"
+		_fill_panel())
+	_panel_box.add_child(_centered(back))
+	_add_close()
 
 
 # ================= Сетевая игра: убежище хоста =================
@@ -3091,6 +3340,13 @@ func _lib_article(art: VBoxContainer, tab: String, key: String) -> void:
 			var w: Dictionary = Data.WEAPONS[key]
 			var st: String = w["status"]
 			_lib_head(art, Pixel.icon(key), 5.0, w["name"], w["desc"], Data.STATUSES[st]["color"])
+			_section(art, "Как получить")
+			var wst := Arsenal.weapon_state(key)
+			if wst == "forged":
+				art.add_child(_para("✓ Выковано — попадается при повышении уровня в бою.", GOLD, 15))
+			else:
+				var wsrc := Arsenal.weapon_src(key)
+				art.add_child(_para("Найдите все части (%d / %d) — %s — и скуйте оружие в Рунной кузнице." % [Arsenal.parts_got(key), Arsenal.parts_need(key), Arsenal.SRC_TEXT.get(wsrc, "")], Color(1.0, 0.7, 0.5), 15))
 			_section(art, "Стихия")
 			_icon_line(art, Pixel.icon("st_" + st), "Удары кладут «%s».  %s" % [Data.STATUSES[st]["name"], Data.synergy_text(st)], Data.STATUSES[st]["color"])
 			if Data.CATALYSTS.has(key):
@@ -3125,6 +3381,7 @@ func _lib_article(art: VBoxContainer, tab: String, key: String) -> void:
 			var hero_kind: bool = p["kind"] == "hero"
 			_lib_head(art, Pixel.icon(key), 5.0, p["name"], "Модуль героя" if hero_kind else "Модуль оружия", Color(0.5, 1.0, 0.7) if hero_kind else Color(1.0, 0.6, 0.3))
 			art.add_child(_para(p["desc"] + " за каждый уровень (до 10)."))
+			art.add_child(_para(("✓ Модуль открыт" if Arsenal.module_open(key) else "⊘ " + Arsenal.module_how(key)), GOLD if Arsenal.module_open(key) else Color(1.0, 0.7, 0.5), 15))
 			art.add_child(_para("Действует только на героя." if hero_kind else "Действует на все ваши оружия.", Color(0.75, 0.75, 0.9), 15))
 			if Data.ASPECTS.has(key) and not hero_kind:
 				var a: Dictionary = Data.ASPECTS[key]
@@ -4422,6 +4679,12 @@ func _fill_path() -> void:
 	bar.add_theme_stylebox_override("background", bg)
 	_panel_box.add_child(_centered(bar))
 	_panel_box.add_child(_centered(_label("опыт ранга %d / %d  •  за вылазку: убийства, минуты, боссы, знамения, загадки" % [int(ro[1]), int(ro[2])], 13, Color(0.75, 0.75, 0.9))))
+	var achb := _button("★ ДОСТИЖЕНИЯ  %d / %d" % [Meta.achieved.size(), Arsenal.ACHIEVEMENTS.size()], GOLD)
+	achb.pressed.connect(func():
+		Sound.play("click")
+		_panel_id = "ach"
+		_fill_panel())
+	_panel_box.add_child(_centered(achb))
 	# --- Навыки ---
 	var pts := Lore.perk_points()
 	_panel_box.add_child(_centered(_label("НАВЫКИ  •  свободных очков: %d" % pts, 20, CYAN if pts > 0 else Color(0.8, 0.8, 0.95))))

@@ -682,6 +682,14 @@ func hit(amount: float, from: Vector2, knockback: float = 160.0, status := "") -
 			amount *= float(wm.get("elite", 1.0))
 		if hp < max_hp * 0.3:
 			amount *= float(wm.get("execute", 1.0))
+	# Модули «Добивающий чип» и «Гроза титанов»
+	if Data.WEAPONS.has(src):
+		var ex = atk.get("execute_bonus")
+		if ex != null and float(ex) > 0.0 and hp < max_hp * 0.3:
+			amount *= 1.0 + float(ex)
+		var tb = atk.get("titan_bonus")
+		if tb != null and float(tb) > 0.0 and (is_elite or is_boss):
+			amount *= 1.0 + float(tb)
 	# Последний рубеж героя: при малом здоровье бьёт сильнее
 	if atk.get("laststand") == true and atk.hp < atk.max_hp * 0.3:
 		amount *= 1.3

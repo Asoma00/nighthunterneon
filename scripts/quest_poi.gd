@@ -296,6 +296,7 @@ func _tick_cache(delta: float) -> void:
 	if _hold >= 1.2:
 		Sound.play("chest", 0.0)
 		main.run["caches"] = int(main.run["caches"]) + 1
+		main.arsenal_loot("cache", position)
 		main.drop_material(position, "scrap", randi_range(4, 7))
 		if randf() < 0.6:
 			main.drop_material(position + Vector2(24, 0), "chips", randi_range(1, 2))
@@ -533,6 +534,7 @@ func _solve() -> void:
 	Sound.play("evolve", 0.0)
 	main.screen_flash(0.25)
 	main.run["puzzles"] = int(main.run["puzzles"]) + 1
+	main.arsenal_loot("puzzle", position)
 	main.drop_material(position, "cores", 1)
 	main.drop_material(position + Vector2(30, 0), "chips", 2)
 	main.drop_chest(position + Vector2(0, 70))
@@ -724,6 +726,7 @@ func _sim_press(i: int) -> void:
 
 func _solve_extra(k: String) -> void:
 	main.run["puzzles"] = int(main.run["puzzles"]) + 1
+	main.arsenal_loot("puzzle", position)
 	main.run[k] = int(main.run.get(k, 0)) + 1
 	Sound.play("evolve", 0.0)
 	main.screen_flash(0.25)
@@ -938,7 +941,7 @@ func _tick_part(_delta: float) -> void:
 		Sound.play("evolve", -2.0)
 		var txt := "Найден обломок: «%s»" % Data.WEAPONS[w]["name"]
 		if n >= Meta.PARTS_NEED:
-			txt = "Оружие «%s» собрано!" % Data.WEAPONS[w]["name"]
+			txt = "Все части «%s»! Скуйте его в кузнице" % Data.WEAPONS[w]["name"]
 		main.combo_pop(position + Vector2(0, -120), txt, Pixel.hdr(color(), 1.4))
 		Fx.ring(main, position, 10.0, 160.0, Pixel.hdr(color(), 2.0), 0.4, 5.0)
 		_done()

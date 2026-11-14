@@ -19,7 +19,8 @@ const WHITE := Color(1, 1, 1)
 
 const IDS := ["bolt", "blades", "aura", "lightning", "katana", "quake", "drones", "railbow", "sunbeam",
 	"spirits", "ball", "flask", "shuriken", "hp", "speed", "magnet", "regen", "armor", "vamp", "luck",
-	"damage", "cooldown", "area", "crit", "multi", "duration"]
+	"damage", "cooldown", "area", "crit", "multi", "duration",
+	"shield", "dodge", "dash", "pierce", "execute", "giant", "toxin"]
 
 
 static func has(id: String) -> bool:
@@ -822,4 +823,124 @@ static func draw(id: String) -> Image:
 				line(st, c.x - 2, c.y, c.x + 2, c.y, Color(0.7, 1.0, 1.0))
 				line(st, c.x, c.y - 2, c.x, c.y + 2, Color(0.7, 1.0, 1.0))
 			_neon(im, g, st)
+		"shield":
+			# Энергощит: шестиугольник силового поля с ядром
+			var hx := _l()
+			var hp6: Array = []
+			for i in 6:
+				var a := TAU * i / 6.0 + PI / 6.0
+				hp6.append(18.0 + cos(a) * 14.0)
+				hp6.append(18.0 + sin(a) * 14.0)
+			poly(hx, _pts(hp6), Color(0.2, 0.45, 0.75, 0.55))
+			_put(im, hx, 0.3, 0.2)
+			var edge := _l()
+			for i in 6:
+				var a0 := TAU * i / 6.0 + PI / 6.0
+				var a1 := TAU * (i + 1) / 6.0 + PI / 6.0
+				_tl(edge, Vector2(18 + cos(a0) * 14.0, 18 + sin(a0) * 14.0), Vector2(18 + cos(a1) * 14.0, 18 + sin(a1) * 14.0), 1.6, Color(0.45, 0.9, 1.0))
+			_neon(im, g, edge)
+			var core := _l()
+			ellipse(core, 18, 18, 5, 5, Color(0.7, 0.95, 1.0))
+			_tl(core, Vector2(11, 18), Vector2(25, 18), 1.0, Color(0.5, 0.9, 1.0))
+			_tl(core, Vector2(18, 11), Vector2(18, 25), 1.0, Color(0.5, 0.9, 1.0))
+			_neon(im, g, core)
+		"dodge":
+			# Фазовый сдвиг: силуэт и два смещённых «призрака»
+			for k in 3:
+				var gh := _l()
+				var ox := 6 + k * 7
+				var c := Color(0.9, 0.4, 1.0, 0.35 + 0.3 * k)
+				ellipse(gh, ox + 6, 9, 3.5, 3.5, c)
+				poly(gh, _pts([ox + 2, 14, ox + 10, 14, ox + 11, 25, ox + 8, 32, ox + 4, 32, ox + 1, 25]), c)
+				if k < 2:
+					_flat(im, gh)
+				else:
+					_put(im, gh, 0.35, 0.3)
+			var tr := _l()
+			for y in [12, 20, 28]:
+				_tl(tr, Vector2(3, y), Vector2(14, y), 1.0, Color(0.95, 0.6, 1.0))
+			_neon(im, g, tr)
+		"dash":
+			# Импульсный привод: турбина с реактивной струёй
+			var body := _l()
+			poly(body, _pts([14, 10, 30, 13, 30, 23, 14, 26]), METAL)
+			_put(im, body, 0.35, 0.4)
+			var ring := _l()
+			_ring(ring, 14, 18, 8.5, 6.0, METAL_D)
+			_put(im, ring)
+			var jet := _l()
+			poly(jet, _pts([8, 13, 2, 18, 8, 23, 6, 18]), Color(1.0, 0.6, 0.2))
+			poly(jet, _pts([9, 15, 5, 18, 9, 21]), Color(1.0, 0.95, 0.6))
+			_neon(im, g, jet)
+			var glow := _l()
+			ellipse(glow, 14, 18, 4, 4, CYAN)
+			_tl(glow, Vector2(20, 16), Vector2(28, 16), 1.0, CYAN)
+			_tl(glow, Vector2(20, 20), Vector2(28, 20), 1.0, CYAN)
+			_neon(im, g, glow)
+		"pierce":
+			# Бронебойный сердечник: стрела насквозь через бронеплиту
+			var pl := _l()
+			poly(pl, _pts([15, 4, 22, 4, 22, 32, 15, 32]), METAL_D)
+			_put(im, pl, 0.3, 0.45)
+			var cr := _l()
+			_tl(cr, Vector2(15, 14), Vector2(22, 22), 1.0, Color(0.12, 0.1, 0.16))
+			_tl(cr, Vector2(22, 13), Vector2(16, 21), 1.0, Color(0.12, 0.1, 0.16))
+			_flat(im, cr)
+			var ar := _l()
+			_tl(ar, Vector2(3, 18), Vector2(27, 18), 2.2, STEEL)
+			poly(ar, _pts([27, 13, 34, 18, 27, 23]), Color(1.0, 0.75, 0.35))
+			poly(ar, _pts([3, 14, 7, 18, 3, 22, 1, 18]), PINK)
+			_put(im, ar, 0.4, 0.3)
+			var tip := _l()
+			poly(tip, _pts([28, 15, 33, 18, 28, 21]), Color(1.0, 0.9, 0.6))
+			_neon(im, g, tip)
+		"execute":
+			# Добивающий чип: прицел и полоска здоровья у самого края
+			var hb := _l()
+			rect(hb, 5, 27, 26, 5, Color(0.15, 0.1, 0.18))
+			rect(hb, 6, 28, 6, 3, Color(1.0, 0.25, 0.3))
+			_put(im, hb, 0.25, 0.2)
+			var ch := _l()
+			_ring(ch, 18, 14, 10.0, 8.2, Color(1.0, 0.3, 0.35))
+			_tl(ch, Vector2(18, 1), Vector2(18, 8), 1.2, Color(1.0, 0.3, 0.35))
+			_tl(ch, Vector2(18, 20), Vector2(18, 26), 1.2, Color(1.0, 0.3, 0.35))
+			_tl(ch, Vector2(5, 14), Vector2(12, 14), 1.2, Color(1.0, 0.3, 0.35))
+			_tl(ch, Vector2(24, 14), Vector2(31, 14), 1.2, Color(1.0, 0.3, 0.35))
+			_neon(im, g, ch)
+			var sk := _l()
+			ellipse(sk, 18, 13, 3.5, 3.2, WHITE)
+			rect(sk, 16, 15, 4, 2, WHITE)
+			px(sk, 17, 13, OUT)
+			px(sk, 19, 13, OUT)
+			_put(im, sk, 0.2, 0.3)
+		"giant":
+			# Гроза титанов: корона, расколотая молнией
+			var cw := _l()
+			poly(cw, _pts([4, 26, 4, 12, 11, 19, 18, 8, 25, 19, 32, 12, 32, 26]), GOLD)
+			_put(im, cw, 0.4, 0.4)
+			var band := _l()
+			rect(band, 4, 26, 28, 5, Color(0.75, 0.5, 0.2))
+			for x in [9, 18, 27]:
+				ellipse(band, x, 28.5, 1.6, 1.6, Color(1.0, 0.3, 0.4))
+			_put(im, band)
+			var bolt := _l()
+			poly(bolt, _pts([20, 2, 13, 17, 18, 17, 14, 34, 24, 14, 19, 14, 23, 2]), Color(0.6, 0.9, 1.0))
+			_neon(im, g, bolt)
+		"toxin":
+			# Стихийный реактор: колба с тремя стихиями
+			var fl := _l()
+			poly(fl, _pts([14, 3, 22, 3, 22, 12, 31, 30, 29, 33, 7, 33, 5, 30, 14, 12]), Color(0.6, 0.75, 0.85, 0.5))
+			_put(im, fl, 0.35, 0.15)
+			var liq := _l()
+			poly(liq, _pts([10, 22, 26, 22, 30, 30, 28, 32, 8, 32, 6, 30]), Color(0.45, 1.0, 0.4))
+			_neon(im, g, liq)
+			var bub := _l()
+			ellipse(bub, 13, 27, 2.0, 2.0, Color(1.0, 0.55, 0.2))
+			ellipse(bub, 20, 26, 1.6, 1.6, Color(1.0, 0.3, 0.4))
+			ellipse(bub, 24, 29, 1.4, 1.4, Color(0.5, 0.8, 1.0))
+			ellipse(bub, 17, 16, 1.2, 1.2, Color(0.6, 1.0, 0.5))
+			_neon(im, g, bub)
+			var cap := _l()
+			rect(cap, 13, 1, 10, 3, WOOD)
+			_put(im, cap)
 	return _finish(im, g)

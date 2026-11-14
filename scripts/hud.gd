@@ -1156,6 +1156,9 @@ func show_game_over(victory: bool, time_alive: float, kills: int, level: int, re
 		var prog: Array = main.Lore.summary_lines(main.reward.get("prog", {}))
 		if not prog.is_empty():
 			_over_stats.text += "\n\n— ПУТЬ ОХОТНИКА —\n" + "\n".join(prog)
+		var unl: Array = main.Arsenal.unlock_lines(main.reward.get("unlocks", []))
+		if not unl.is_empty():
+			_over_stats.text += "\n\n— АРСЕНАЛ И ДОСТИЖЕНИЯ —\n" + "\n".join(unl)
 	_fit_over()
 	_over_root.visible = true
 	_over_root.modulate.a = 0.0
