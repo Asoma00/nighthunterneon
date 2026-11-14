@@ -10,6 +10,7 @@ const STAGES := [3.8, 3.8, 4.8]
 
 static var shown := false
 static var to_menu := false     # меню после заставки — зажигается неоном
+static var handoff: Texture2D   # последний кадр заставки: меню растворяет его поверх себя
 var _t := 0.0
 var _all_t := 0.0
 var _stage := -1
@@ -65,10 +66,15 @@ func _process(delta: float) -> void:
 			_icon.rotation = (1.0 - k) * -0.6
 		if _stage == 2 and _t > 1.0 and _t - delta <= 1.0:
 			_flash = 0.6
-		if _t >= dur - 0.45 and _logo.leaving < 0.0:
+		var last := _stage >= STAGES.size() - 1
+		if not last and _t >= dur - 0.45 and _logo.leaving < 0.0:
 			_logo.leave()
 		if _t >= dur and not _done:
-			_next()
+			# последний логотип не гаснет: меню проступает прямо сквозь него
+			if last:
+				_finish()
+			else:
+				_next()
 	queue_redraw()
 	if is_instance_valid(_glints):
 		_glints.queue_redraw()
@@ -94,9 +100,9 @@ func _next() -> void:
 		0:
 			_logo.setup("GODOT", "engine", int(big), true)
 		1:
-			_logo.setup("CLAUDE", "", int(big * 1.05), true)
+			_logo.setup("CLAUDE", "code", int(big * 1.05), true)
 		2:
-			_logo.setup("CPA4KA", "", int(big * 1.2), true)
+			_logo.setup("CPA4KA", "games", int(big * 1.2), true)
 	_logo.play()
 	_flash = 0.35
 	_refl_tex = _logo.view_texture()
@@ -107,9 +113,13 @@ func _finish() -> void:
 		return
 	_done = true
 	to_menu = true
-	var tw := create_tween()
-	tw.tween_property(self, "modulate", Color(0, 0, 0, 1), 0.4)
-	tw.tween_callback(func(): get_tree().change_scene_to_file(MENU))
+	# Бесшовный переход: запомнить текущий кадр — меню откроется под ним
+	# и растворит его неоновой волной от центра, без чёрного экрана.
+	handoff = null
+	var img := get_viewport().get_texture().get_image()
+	if img != null and not img.is_empty():
+		handoff = ImageTexture.create_from_image(img)
+	get_tree().change_scene_to_file.call_deferred(MENU)
 
 
 # ---------------- Синтвейв-фон ----------------

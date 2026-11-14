@@ -844,6 +844,11 @@ func _sync_mirrors() -> void:
 	if camera == null:
 		return
 	var cc := camera.get_screen_center_position()
+	if not cc.is_finite():
+		camera.reset_smoothing()
+		cc = camera.get_screen_center_position()
+		if not cc.is_finite():
+			return
 	_mirror_root.position = _plane.position - Vector3(cc.x, 0.0, cc.y) * PLANE_TEXEL
 	_frame += 1
 	_cull_c = [cc]
@@ -939,7 +944,7 @@ func _sync_mirrors() -> void:
 
 
 func _particles3d(pos: Vector3, colors: Array, amount: int, extents: Vector3, gravity: Vector3,
-		life: float, size: Vector2, vel := Vector2(0, 0), parent: Node3D = null, fixed_y := false) -> GPUParticles3D:
+		life: float, size: Vector2, vel := Vector2(0, 0), parent: Node3D = null, fixed_y := false, tex: Texture2D = null) -> GPUParticles3D:
 	var p := CPUParticles3D.new()
 	var q := QuadMesh.new()
 	q.size = size
@@ -949,6 +954,14 @@ func _particles3d(pos: Vector3, colors: Array, amount: int, extents: Vector3, gr
 	mm.vertex_color_use_as_albedo = true
 	mm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	if tex != null:
+		# Мягкие клубы (туман): текстура-облако и обычное смешивание, без квадратных краёв
+		mm.albedo_texture = tex
+		mm.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
+		mm.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+		mm.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		p.angle_min = 0.0
+		p.angle_max = 360.0
 	if fixed_y:
 		mm.billboard_mode = BaseMaterial3D.BILLBOARD_FIXED_Y
 		mm.billboard_keep_scale = true
@@ -971,6 +984,30 @@ func _particles3d(pos: Vector3, colors: Array, amount: int, extents: Vector3, gr
 	return g
 
 
+## Текстура-облако для тумана: мягкий круг, изъеденный шумом.
+var _cloud: Texture2D
+
+
+func _cloud_tex() -> Texture2D:
+	if _cloud != null:
+		return _cloud
+	var n := FastNoiseLite.new()
+	n.seed = 7
+	n.frequency = 0.045
+	n.fractal_octaves = 4
+	var sz := 128
+	var im := Image.create(sz, sz, false, Image.FORMAT_RGBA8)
+	for y in sz:
+		for x in sz:
+			var d := Vector2(x - sz / 2.0, y - sz / 2.0).length() / (sz / 2.0)
+			var fall := clampf(1.0 - d, 0.0, 1.0)
+			fall = fall * fall * (3.0 - 2.0 * fall)
+			var v := 0.55 + 0.45 * n.get_noise_2d(x, y)
+			im.set_pixel(x, y, Color(1, 1, 1, clampf(fall * v * 1.25, 0.0, 1.0)))
+	_cloud = ImageTexture.create_from_image(im)
+	return _cloud
+
+
 ## Погода привязана к миру, а не к камере: поле разбито на клетки 4×4,
 ## каждая клетка — свой источник дождя; при движении клетки «переползают» вперёд.
 const WEATHER_CELL := 900.0
@@ -979,6 +1016,7 @@ var _env: Environment
 var _moon: DirectionalLight3D
 ## Погода вылазки: ясно, неоновый дождь, гроза, снег, туман, пепел — каждый раз своя.
 var weather := "clear"
+static var force_weather := ""   # для проверок: принудительная погода
 const WEATHERS := {
 	"clear": {"name": "Ясная ночь", "w": 3.0},
 	"rain": {"name": "Неоновый дождь", "w": 2.0},
@@ -1024,6 +1062,8 @@ func _pick_weather() -> void:
 		if r <= 0.0:
 			weather = k
 			break
+	if force_weather != "":
+		weather = force_weather
 	# Свет и воздух под погоду
 	if _env == null or _moon == null:
 		return
@@ -1042,6 +1082,15 @@ func _pick_weather() -> void:
 			_env.ambient_light_color = Color(0.45, 0.45, 0.6)
 			_env.ambient_light_energy = 0.75
 			_moon.light_energy = 0.2
+			# Настоящий туман в воздухе: густеет с расстоянием и у земли
+			if Settings.weather_enabled():
+				_env.fog_enabled = true
+				_env.fog_light_color = Color(0.3, 0.28, 0.42)
+				_env.fog_light_energy = 1.0
+				_env.fog_density = 0.035
+				_env.fog_sky_affect = 0.0
+				_env.fog_height = 0.8
+				_env.fog_height_density = 0.25
 			if _plane and _plane.material_override:
 				(_plane.material_override as ShaderMaterial).set_shader_parameter("fog_start", 0.62)
 				(_plane.material_override as ShaderMaterial).set_shader_parameter("fog_color", Color(0.16, 0.14, 0.22))
@@ -1087,9 +1136,12 @@ func _setup_weather() -> void:
 					_particles3d(Vector3(0, 7, 0), [Color(1, 1, 1, 0.0), Color(0.95, 0.97, 1.0, 0.9), Color(0.9, 0.95, 1.0, 0.0)],
 						70, Vector3(half, 0.5, half), Vector3(0.6, -1.4, 0.3), 5.0, Vector2(0.07, 0.07), Vector2(0.1, 0.5), root)
 				"fog":
-					# Низкие клубы тумана
-					_particles3d(Vector3(0, 0.6, 0), [Color(0.5, 0.5, 0.65, 0.0), Color(0.55, 0.55, 0.7, 0.12), Color(0.5, 0.5, 0.65, 0.0)],
-						14, Vector3(half, 0.4, half), Vector3(0.15, 0.0, 0.05), 9.0, Vector2(2.6, 1.2), Vector2(0.05, 0.2), root)
+					# Низкие клубы тумана: мягкие облака разной высоты медленно плывут
+					var cloud := _cloud_tex()
+					_particles3d(Vector3(0, 0.35, 0), [Color(0.62, 0.6, 0.78, 0.0), Color(0.62, 0.6, 0.78, 0.2), Color(0.58, 0.56, 0.74, 0.16), Color(0.6, 0.58, 0.76, 0.0)],
+						16, Vector3(half, 0.25, half), Vector3(0.12, 0.0, 0.04), 14.0, Vector2(5.5, 3.2), Vector2(0.03, 0.12), root, false, cloud)
+					_particles3d(Vector3(0, 1.4, 0), [Color(0.55, 0.55, 0.72, 0.0), Color(0.55, 0.55, 0.72, 0.1), Color(0.55, 0.55, 0.72, 0.0)],
+						8, Vector3(half, 0.6, half), Vector3(0.18, 0.0, 0.06), 18.0, Vector2(8.0, 4.0), Vector2(0.02, 0.1), root, false, cloud)
 				"ash":
 					# Пепел и тлеющие искры
 					_particles3d(Vector3(0, 7, 0), [Color(0.5, 0.45, 0.45, 0.0), Color(0.55, 0.5, 0.5, 0.6), Color(0.4, 0.35, 0.35, 0.0)],
@@ -1208,6 +1260,9 @@ func shake(amount: float) -> void:
 
 func _update_shake(delta: float) -> void:
 	_shake = clampf(move_toward(_shake, 0.0, delta * 40.0), 0.0, 30.0)
+	# Плавная камера Godot расходится, если speed*delta > 2 (кадр дольше ~0.28 с):
+	# на долгом кадре ограничиваем скорость, чтобы она не «улетала» в бесконечность.
+	camera.position_smoothing_speed = minf(7.0, 1.0 / maxf(delta, 0.001))
 	# Защита: после долгого зависания плавная камера может «улететь» — возвращаем её
 	if not camera.get_screen_center_position().is_finite():
 		camera.reset_smoothing()

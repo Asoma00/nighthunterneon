@@ -50,6 +50,7 @@ var _shadow: Sprite2D
 var _body: Sprite2D
 var _emit: Sprite2D
 var _hp_bar: Node2D
+var _hp_bar3: Node3D
 var _t := 0.0
 var _flash := 0.0
 var _knock := Vector2.ZERO
@@ -178,11 +179,15 @@ func _ready() -> void:
 		add_child(light)
 		main.mirror_light(light, self, 1.5 if is_boss else 1.0)
 	if is_elite:
-		_hp_bar = preload("res://scripts/drawer.gd").new()
-		_hp_bar.draw_fn = _draw_hp
-		_hp_bar.material = Pixel.mat_unshaded()
-		_hp_bar.z_index = 10
-		add_child(_hp_bar)
+		# Полоса здоровья — объёмная, висит над головой (раньше рисовалась на полу)
+		var hh: float = _frames["size"].y * _k * Pixel.PX * Pixel.STAND * 0.01 + 0.25
+		_hp_bar3 = preload("res://scripts/hp_bar3d.gd").attach(main, self, hh, 0.85 if not is_boss else 1.3, Color(1.0, 0.5, 0.1))
+		if _hp_bar3 == null:
+			_hp_bar = preload("res://scripts/drawer.gd").new()
+			_hp_bar.draw_fn = _draw_hp
+			_hp_bar.material = Pixel.mat_unshaded()
+			_hp_bar.z_index = 10
+			add_child(_hp_bar)
 
 	Fx.portal(main, position, color, 3.0 if is_boss else (2.2 if is_elite else 1.0))
 	_set_spawn_visual(0.0)

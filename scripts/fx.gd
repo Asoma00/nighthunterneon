@@ -328,6 +328,19 @@ static func number(main: Node, pos: Vector2, value: float, color := Color.WHITE,
 	if main.fx_numbers >= int(MAX_NUMBERS * Settings.fx_k()):
 		return
 	main.fx_numbers += 1
+	if _can3d(main):
+		# Объёмная цифра: стоит над полем, а не лежит на нём
+		var l3 := _label3d(main, pos + Vector2(randf_range(-8, 8), 0), str(int(round(value))), color, size * 3, 0.95)
+		l3.scale = Vector3.ONE * 1.5
+		var t3 := l3.create_tween().set_parallel(true)
+		t3.tween_property(l3, "scale", Vector3.ONE, 0.15)
+		t3.tween_property(l3, "position:y", l3.position.y + 0.35, 0.6).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		t3.tween_property(l3, "modulate:a", 0.0, 0.3).set_delay(0.35)
+		t3.tween_property(l3, "outline_modulate:a", 0.0, 0.3).set_delay(0.35)
+		t3.chain().tween_callback(func():
+			main.fx_numbers -= 1
+			l3.queue_free())
+		return
 	var l := Label.new()
 	l.text = str(int(round(value)))
 	l.add_theme_font_size_override("font_size", size)
@@ -355,6 +368,18 @@ static func number(main: Node, pos: Vector2, value: float, color := Color.WHITE,
 static func text_pop(main: Node, pos: Vector2, text: String, color: Color, size := 28) -> void:
 	if _net(main, "text_pop", [pos, text, color, size]):
 		return
+	if _can3d(main):
+		# Объёмная надпись над полем боя
+		var l3 := _label3d(main, pos + Vector2(0, 50), text, color, size * 3, 1.5)
+		l3.scale = Vector3.ONE * 0.3
+		var t3 := l3.create_tween()
+		t3.tween_property(l3, "scale", Vector3.ONE * 1.15, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		t3.tween_property(l3, "scale", Vector3.ONE, 0.1)
+		t3.tween_property(l3, "position:y", l3.position.y + 0.3, 0.7)
+		t3.parallel().tween_property(l3, "modulate:a", 0.0, 0.5).set_delay(0.2)
+		t3.parallel().tween_property(l3, "outline_modulate:a", 0.0, 0.5).set_delay(0.2)
+		t3.tween_callback(l3.queue_free)
+		return
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", size)
@@ -375,6 +400,29 @@ static func text_pop(main: Node, pos: Vector2, text: String, color: Color, size 
 	tw.tween_property(l, "position:y", l.position.y - 30, 0.7)
 	tw.parallel().tween_property(l, "modulate:a", 0.0, 0.5).set_delay(0.2)
 	tw.tween_callback(l.queue_free)
+
+
+## Надписи и цифры боя — объёмные (Label3D над полем), когда есть 3D-сцена.
+static func _can3d(main: Node) -> bool:
+	return main.get("_mirror_root") != null and is_instance_valid(main.get("_mirror_root")) and main.has_method("_bl")
+
+
+static func _label3d(main: Node, pos: Vector2, text: String, color: Color, font: int, h: float) -> Label3D:
+	var l := Label3D.new()
+	l.text = text
+	l.font_size = font
+	l.outline_size = maxi(10, font / 4)
+	l.pixel_size = 0.0042
+	l.modulate = color
+	l.outline_modulate = Color(0.05, 0.02, 0.1)
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.no_depth_test = true
+	l.render_priority = 20
+	l.outline_render_priority = 19
+	l.shaded = false
+	l.position = main._bl(pos, h)
+	main.get("_mirror_root").add_child(l)
+	return l
 
 
 static func ring(main: Node, pos: Vector2, r0: float, r1: float, color: Color, duration: float, width := 3.0) -> void:
