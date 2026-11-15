@@ -192,10 +192,10 @@ func _build() -> void:
 	if Settings.get("coop_split") != null:
 		# Игровой пункт, а не графика: профиль графики не сбрасываем
 		grid.add_child(_row_label("Один экран (2–5)"))
-		var sp_opt := _option(["Свои камеры — делить экран", "Одна общая камера"])
-		sp_opt.selected = 1 if Settings.coop_split == "shared" else 0
+		var sp_opt := _option(["Свои камеры — делить экран", "Свои камеры — фиксированно", "Одна общая камера"])
+		sp_opt.selected = ["dynamic", "fixed", "shared"].find(Settings.coop_split) if Settings.coop_split in ["dynamic", "fixed", "shared"] else 0
 		sp_opt.item_selected.connect(func(i: int):
-			Settings.coop_split = "shared" if i == 1 else "dynamic"
+			Settings.coop_split = ["dynamic", "fixed", "shared"][i]
 			Settings.save_settings()
 			if Settings.has_signal("coop_split_changed"):
 				Settings.emit_signal("coop_split_changed"))

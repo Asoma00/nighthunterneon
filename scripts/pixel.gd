@@ -4130,10 +4130,10 @@ static var _outlines := {}
 
 ## Белое кольцо в 1 пиксель вокруг силуэта кадра (без нижней кромки — чтобы ноги стояли
 ## на той же строке, что и у самого героя). Красится modulate в цвет игрока.
-static func ring_outline(tex: Texture2D) -> Texture2D:
+static func ring_outline(tex: Texture2D, thick := 1) -> Texture2D:
 	if tex == null:
 		return null
-	var key := tex.get_rid()
+	var key := str(tex.get_rid()) + ":" + str(thick)
 	if _outlines.has(key):
 		return _outlines[key]
 	var src := tex.get_image()
@@ -4151,8 +4151,9 @@ static func ring_outline(tex: Texture2D) -> Texture2D:
 	var sil := Image.create(w, h, false, Image.FORMAT_RGBA8)
 	sil.blit_rect_mask(white, src, rect, Vector2i.ZERO)
 	var ring := Image.create(w, h, false, Image.FORMAT_RGBA8)
-	for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1), Vector2i(1, -1), Vector2i(-1, -1)]:
-		ring.blend_rect(sil, rect, o)
+	for t in range(1, thick + 1):
+		for o in [Vector2i(t, 0), Vector2i(-t, 0), Vector2i(0, -t), Vector2i(t, -t), Vector2i(-t, -t)]:
+			ring.blend_rect(sil, rect, o)
 	var clear := Image.create(w, h, false, Image.FORMAT_RGBA8)
 	ring.blit_rect_mask(clear, sil, rect, Vector2i.ZERO)
 	var t := ImageTexture.create_from_image(ring)

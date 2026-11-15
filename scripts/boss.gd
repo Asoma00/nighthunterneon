@@ -69,14 +69,44 @@ const ABILITIES := {
 }
 
 
+const BOSS_SCALE := 1.4          # боссы крупнее обычного
+const OUTLINE_COL := Color(1.0, 0.08, 0.06)
+var _outline: Sprite2D
+
+
 func _ready() -> void:
 	is_boss = true
+	size_mult *= BOSS_SCALE
+	radius *= 1.25
 	super._ready()
 	_tele_node = preload("res://scripts/drawer.gd").new()
 	_tele_node.draw_fn = _draw_telegraph
 	_tele_node.material = Pixel.mat_add()
-	_tele_node.z_index = -3
+	_tele_node.z_index = 3   # знаки атак — поверх луж и прочих эффектов на земле
 	add_child(_tele_node)
+	# Яркая красная обводка — босса видно сквозь любые эффекты
+	if _body != null:
+		_outline = Sprite2D.new()
+		_outline.material = Pixel.mat_unshaded()
+		_outline.modulate = Pixel.hdr(OUTLINE_COL, 2.6)
+		_outline.offset = _body.offset
+		add_child(_outline)
+		main.mirror(_outline, self, true)
+		_sync_outline()
+
+
+func _sync_outline() -> void:
+	if _outline == null or _body == null:
+		return
+	_outline.visible = _body.visible and not dead
+	var t := Pixel.ring_outline(_body.texture, 2)
+	if _outline.texture != t:
+		_outline.texture = t
+	_outline.flip_h = _body.flip_h
+	_outline.scale = _body.scale
+	_outline.position = _body.position
+	_outline.offset = _body.offset
+	_outline.modulate.a = 0.75 + 0.25 * sin(_t * 6.0)
 
 
 func can_be_hit() -> bool:
@@ -117,6 +147,7 @@ func _process(delta: float) -> void:
 	super._process(delta)
 	if not dead and _body != null and _spawn <= 0.0:
 		_pose_body(delta)
+	_sync_outline()
 
 
 ## Поза меняет силуэт: присед перед ударом, наклон в рывке, подъём при заклинании,
@@ -383,7 +414,7 @@ func _enter_phase(want: int) -> void:
 	var c := color.lerp(Color(1.0, 0.25, 0.2), 0.25 * (phase - 1))
 	Fx.text_pop(main, position + Vector2(0, -120), "ФАЗА %d — %s" % [phase, pname.to_upper()], Pixel.hdr(c, 1.6), 30)
 	Fx.text_pop(main, position + Vector2(0, -80), "НЕУЯЗВИМ", Pixel.hdr(Color(0.6, 0.85, 1.0), 1.4), 20)
-	Fx.ring(main, position, 10.0, 420.0, Pixel.hdr(c, 2.2), 0.7, 10.0)
+	_bring(position, 10.0, 420.0, Pixel.hdr(c, 2.2), 0.7, 10.0)
 	Fx.light_flash(main, position, c, 4.0, 8.0, 0.8)
 	main.shake(14.0)
 	main.screen_flash(0.3)
@@ -479,7 +510,7 @@ func _use(ab: String, dir: Vector2) -> void:
 			_charge(dir, 0.7)
 		"shield":
 			_shield_t = 4.0
-			Fx.ring(main, position, 20.0, 120.0, Pixel.hdr(Color(0.5, 0.8, 1.0), 2.0), 0.5, 6.0)
+			_bring(position, 20.0, 120.0, Pixel.hdr(Color(0.5, 0.8, 1.0), 2.0), 0.5, 6.0)
 			Sound.play("ability", -2.0, 0.5)
 		"pull":
 			_pull_t = 2.2
@@ -527,7 +558,7 @@ func _tick_marks(delta: float) -> void:
 					main.spawn_enemy("spider", p + Vector2(randf_range(-20, 20), randf_range(-20, 20)))
 				Fx.burst(main, p, [Pixel.hdr(Color(1.0, 0.4, 0.8), 1.5), Color(0.5, 0.2, 0.4, 0.0)], 14, 140.0, 0.5, 4.0)
 			else:
-				Fx.ring(main, p, 10.0, m["r"] * 1.2, Pixel.hdr(color, 2.0), 0.4, 6.0)
+				_bring(p, 10.0, m["r"] * 1.2, Pixel.hdr(color, 2.0), 0.4, 6.0)
 				Fx.burst(main, p, [Pixel.hdr(Color(1.0, 0.6, 0.3), 2.0), Color(0.4, 0.2, 0.2, 0.0)], 18, 200.0, 0.6, 5.0)
 				Sound.play("boom", -8.0, 1.2, 0.2, 0.08)
 				for pl in main.players:
@@ -575,7 +606,7 @@ func _tick_pull(delta: float) -> void:
 		if d.length() > 90.0:
 			p.position += d.normalized() * 150.0 * delta
 	if randf() < 0.4:
-		Fx.ring(main, position, 300.0, 20.0, Color(color, 0.5), 0.5, 3.0)
+		_bring(position, 300.0, 20.0, Color(color, 0.5), 0.5, 3.0)
 
 
 func _fire(angle: float, spd: float, col: Color, homing := false) -> Node2D:
@@ -593,7 +624,7 @@ func _fire(angle: float, spd: float, col: Color, homing := false) -> Node2D:
 
 func _slam(_enraged := false) -> void:
 	main.shake(12.0)
-	Fx.ring(main, position, 10.0, 260.0, Pixel.hdr(Color(1.0, 0.5, 0.15), 2.0), 0.5, 8.0)
+	_bring(position, 10.0, 260.0, Pixel.hdr(Color(1.0, 0.5, 0.15), 2.0), 0.5, 8.0)
 	Fx.burst(main, position, [Color(0.6, 0.5, 0.45, 0.9), Color(0.3, 0.25, 0.2, 0.0)], 30, 300.0, 0.8, 6.0, false)
 	Sound.play("boom", 2.0, 0.7)
 	var n: int = [10, 10, 14, 18][phase]
@@ -604,13 +635,28 @@ func _slam(_enraged := false) -> void:
 			p.take_damage(damage)
 
 
+## Яркая красная кромка знаков атак — видно поверх любых эффектов.
+func _oarc(canvas: Node2D, c: Vector2, r: float) -> void:
+	canvas.draw_arc(c, r + 3.0, 0.0, TAU, 48, Pixel.hdr(OUTLINE_COL, 2.4), 3.0)
+
+
+func _oline(canvas: Node2D, from: Vector2, to: Vector2, w: float) -> void:
+	var n := (to - from).normalized().orthogonal() * (w * 0.5 + 2.0)
+	var oc := Pixel.hdr(OUTLINE_COL, 2.4)
+	canvas.draw_line(from + n, to + n, oc, 3.0)
+	canvas.draw_line(from - n, to - n, oc, 3.0)
+	canvas.draw_line(to + n, to - n, oc, 3.0)
+
+
 func _draw_telegraph(canvas: Node2D) -> void:
 	var a := 0.3 + 0.5 * absf(sin(_t * 20.0))
 	if _telegraph > 0.0:
 		canvas.draw_line(Vector2.ZERO, _charge_dir * 420.0, Color(1.0, 0.2, 0.15, a), 26.0)
 		canvas.draw_line(Vector2.ZERO, _charge_dir * 420.0, Color(1.5, 0.5, 0.3, a), 4.0)
+		_oline(canvas, Vector2.ZERO, _charge_dir * 420.0, 26.0)
 	if _beam_warn > 0.0:
 		canvas.draw_line(Vector2.ZERO, _beam_dir * 760.0, Color(1.0, 0.2, 0.3, a * 0.6), 8.0)
+		_oline(canvas, Vector2.ZERO, _beam_dir * 760.0, 8.0)
 	elif _beam_t > 0.0:
 		var w := 60.0 + 10.0 * sin(_t * 40.0)
 		canvas.draw_line(Vector2.ZERO, _beam_dir * 760.0, Color(color, 0.35), w)
@@ -623,12 +669,14 @@ func _draw_telegraph(canvas: Node2D) -> void:
 		canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0, 0.55))
 		canvas.draw_arc(Vector2.ZERO, 150.0 - 90.0 * pk, 0.0, TAU, 40, Color(pc, 0.4 + 0.5 * pk), 5.0)
 		canvas.draw_circle(Vector2.ZERO, 60.0 + 20.0 * pk, Color(pc, 0.12 + 0.18 * pk))
+		_oarc(canvas, Vector2.ZERO, 150.0 - 90.0 * pk)
 		canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		if _pend == "teleport" and _pend_dest != Vector2.ZERO:
 			var dp := _pend_dest - position
 			canvas.draw_set_transform(dp, 0.0, Vector2(1.0, 0.55))
 			canvas.draw_arc(Vector2.ZERO, 40.0 + 50.0 * pk, 0.0, TAU, 32, Color(pc, 0.8), 4.0)
 			canvas.draw_circle(Vector2.ZERO, 90.0 * pk, Color(pc, 0.2))
+			_oarc(canvas, Vector2.ZERO, 40.0 + 50.0 * pk)
 			canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if _shield_t > 0.0:
 		canvas.draw_arc(Vector2(0, -40), 70.0 + 4.0 * sin(_t * 10.0), 0.0, TAU, 32, Color(0.5, 0.8, 1.0, 0.7), 4.0)
@@ -645,9 +693,17 @@ func _draw_telegraph(canvas: Node2D) -> void:
 		canvas.draw_set_transform(p, 0.0, Vector2(1.0, 0.6))
 		canvas.draw_arc(Vector2.ZERO, float(m["r"]), 0.0, TAU, 32, Color(col, 0.8), 3.0)
 		canvas.draw_circle(Vector2.ZERO, float(m["r"]) * k, Color(col, 0.25))
+		_oarc(canvas, Vector2.ZERO, float(m["r"]))
 		canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 func _die() -> void:
 	super._die()
 	main.on_boss_killed(self)
+
+
+
+## Круг атаки босса: сам круг и яркая красная кромка, чтобы читался поверх всего.
+func _bring(at: Vector2, r0: float, r1: float, col: Color, dur: float, w: float) -> void:
+	Fx.ring(main, at, r0, r1, col, dur, w)
+	Fx.ring(main, at, r0 + 4.0, r1 + 6.0, Pixel.hdr(OUTLINE_COL, 2.2), dur, maxf(2.0, w * 0.4))

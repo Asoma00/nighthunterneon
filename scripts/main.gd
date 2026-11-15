@@ -1350,6 +1350,8 @@ func _setup_post() -> void:
 # ---------- Главный цикл ----------
 
 func _process(delta: float) -> void:
+	if net_mode == "" and coop:
+		_boss_camera()
 	if net_mode == "":
 		_leash()
 	if _split_on:
@@ -3517,6 +3519,9 @@ const SPLIT_MAX := 5
 const SPLIT_R := 0.72            # где на экране держится отошедший герой (доля полуэкрана)
 const PLANE_LAYER := 20          # слои плоскостей пола: 20 — основная, 19, 18… — виды 1, 2…
 var _split_on := false
+var _boss_lock := false         # бой с боссом: на время — одна общая камера
+var split_active := false        # экран сейчас поделён (у кого-то своя камера)
+var split_cards: Array = []      # где рисовать худ каждого игрока (точки экрана) при делении
 var _vc: Array = []              # центры видов (мировые px), по игроку
 var _views: Array = []           # i ≥ 1: {"vp3", "cam3", "vp2", "cam2", "plane", "mat"}
 var _split_layer: CanvasLayer
@@ -3529,11 +3534,14 @@ uniform sampler2D v2 : source_color, filter_linear;
 uniform sampler2D v3 : source_color, filter_linear;
 uniform sampler2D v4 : source_color, filter_linear;
 uniform int n = 2;
+uniform int layout = 0;          // 0 — деление по героям (Вороной), 1 — фиксированные прямоугольники
 uniform vec2 site[5];
 uniform vec2 cpos[5];
+uniform vec4 rects[5];
+uniform vec4 pcol[5] : source_color;
+uniform float amt_r[5];
 uniform int src[5];
 uniform vec2 scr = vec2(1280.0, 720.0);
-uniform vec4 line_col : source_color = vec4(0.55, 0.95, 1.0, 1.0);
 vec4 view(int k, vec2 uv) {
 	if (k == 1) { return texture(v1, uv); }
 	if (k == 2) { return texture(v2, uv); }
@@ -3544,36 +3552,64 @@ vec4 view(int k, vec2 uv) {
 void fragment() {
 	vec2 p = SCREEN_UV * scr;
 	int a = 0;
-	int b = 0;
-	float da = 1e9;
-	float db = 1e9;
-	for (int i = 0; i < 5; i++) {
-		if (i >= n) { break; }
-		float d = distance(p, site[i]);
-		if (d < da) { db = da; b = a; da = d; a = i; }
-		else if (d < db) { db = d; b = i; }
+	float edge = 1e9;
+	float amt = 0.0;
+	if (layout == 1) {
+		for (int i = 0; i < 5; i++) {
+			if (i >= n) { break; }
+			vec4 r = rects[i];
+			if (p.x >= r.x && p.y >= r.y && p.x < r.x + r.z && p.y < r.y + r.w) { a = i; }
+		}
+		vec4 r = rects[a];
+		edge = min(min(p.x - r.x, r.x + r.z - p.x), min(p.y - r.y, r.y + r.w - p.y));
+		amt = 1.0;
+	} else {
+		int b = 0;
+		float da = 1e9;
+		float db = 1e9;
+		for (int i = 0; i < 5; i++) {
+			if (i >= n) { break; }
+			float d = distance(p, site[i]);
+			if (d < da) { db = da; b = a; da = d; a = i; }
+			else if (d < db) { db = d; b = i; }
+		}
+		// Расстояние до линии раздела (серединный перпендикуляр двух ближайших героев)
+		float sep = max(distance(site[a], site[b]), 1.0);
+		edge = (db * db - da * da) / (2.0 * sep);
+		amt = clamp(distance(cpos[a], cpos[b]) / 260.0, 0.0, 1.0);
+		// Рамка по краю экрана — своего цвета, когда у игрока своя камера
+		float scr_edge = min(min(p.x, scr.x - p.x), min(p.y, scr.y - p.y));
+		if (scr_edge < edge && amt_r[a] > amt) {
+			edge = scr_edge;
+			amt = amt_r[a];
+		}
 	}
 	int k = src[a];
 	vec4 c = k == 0 ? vec4(0.0) : vec4(view(k, SCREEN_UV).rgb, 1.0);
-	// Расстояние до линии раздела (серединный перпендикуляр двух ближайших героев)
-	float sep = max(distance(site[a], site[b]), 1.0);
-	float edge = (db * db - da * da) / (2.0 * sep);
-	float amt = clamp(distance(cpos[a], cpos[b]) / 260.0, 0.0, 1.0);
-	float w = 1.0 + 2.5 * amt;
-	float core = 1.0 - smoothstep(w * 0.4, w, edge);
-	float glow = (1.0 - smoothstep(w, w * 6.0, edge)) * 0.35;
-	float la = (core + glow) * amt;
+	// Граница — цвета игрока, чья это часть экрана
+	float w = 1.5 + 2.5 * amt;
+	float core = 1.0 - smoothstep(w * 0.5, w, edge);
+	float glow = (1.0 - smoothstep(w, w * 5.0, edge)) * 0.4;
+	float la = clamp((core + glow) * amt, 0.0, 1.0);
 	if (la > 0.002) {
-		vec3 lc = mix(line_col.rgb * 0.6, vec3(1.0), core * 0.6);
-		c = vec4(mix(c.rgb, lc, clamp(la, 0.0, 1.0)), max(c.a, clamp(la, 0.0, 1.0)));
+		vec3 lc = mix(pcol[a].rgb * 1.3, vec3(1.0), core * 0.35);
+		c = vec4(mix(c.rgb, lc, la), max(c.a, la));
 	}
 	COLOR = c;
 }
 """
 
 
+func _split_wanted() -> bool:
+	return coop and net_mode == "" and players.size() >= 2 and str(Settings.get("coop_split")) != "shared"
+
+
+func _split_fixed() -> bool:
+	return str(Settings.get("coop_split")) == "fixed"
+
+
 func _on_split_changed() -> void:
-	var want: bool = coop and net_mode == "" and players.size() >= 2 and str(Settings.get("coop_split")) != "shared"
+	var want: bool = _split_wanted() and not _boss_lock
 	if want and not _split_on:
 		_split_setup()
 	elif not want and _split_on:
@@ -3639,6 +3675,8 @@ func _split_setup() -> void:
 
 func _split_teardown() -> void:
 	_split_on = false
+	split_active = false
+	split_cards = []
 	for v in _views:
 		for key in ["vp2", "vp3", "plane"]:
 			if is_instance_valid(v[key]):
@@ -3679,8 +3717,56 @@ func _split_centers(delta: float) -> void:
 		var l := u.length()
 		var s := u if l <= SPLIT_R else u * (SPLIT_R / l)
 		var want: Vector2 = p.position - s * h
+		if _split_fixed():
+			# Фиксированные части экрана: герой — в середине своей части
+			want = p.position - _region_world_off(i)
 		# Пока все рядом — центры видов совпадают точно (никакой лишней границы)
 		_vc[i] = want if _vc[i].distance_to(want) < 0.5 else _vc[i].lerp(want, k)
+
+
+## Фиксированные части экрана (в единицах окна): 2 — пополам, 3 — половина и две
+## четверти, 4 — четверти, 5 — две сверху и три снизу. Вертикальный экран — поперёк.
+func split_rects() -> Array:
+	var vs := get_viewport().get_visible_rect().size
+	var n := players.size()
+	var land: Array = []
+	match n:
+		2:
+			land = [Rect2(0, 0, 0.5, 1), Rect2(0.5, 0, 0.5, 1)]
+		3:
+			land = [Rect2(0, 0, 0.5, 1), Rect2(0.5, 0, 0.5, 0.5), Rect2(0.5, 0.5, 0.5, 0.5)]
+		4:
+			land = [Rect2(0, 0, 0.5, 0.5), Rect2(0.5, 0, 0.5, 0.5), Rect2(0, 0.5, 0.5, 0.5), Rect2(0.5, 0.5, 0.5, 0.5)]
+		_:
+			land = [Rect2(0, 0, 0.5, 0.5), Rect2(0.5, 0, 0.5, 0.5), Rect2(0, 0.5, 1.0 / 3.0, 0.5),
+				Rect2(1.0 / 3.0, 0.5, 1.0 / 3.0, 0.5), Rect2(2.0 / 3.0, 0.5, 1.0 / 3.0, 0.5)]
+	var out: Array = []
+	for r in land:
+		var rr: Rect2 = r
+		if vs.y > vs.x:
+			rr = Rect2(rr.position.y, rr.position.x, rr.size.y, rr.size.x)
+		out.append(Rect2(rr.position * vs, rr.size * vs))
+	return out
+
+
+## Сдвиг камеры по земле (мировые px), чтобы точка земли из середины части экрана
+## оказалась в середине всего кадра.
+func _region_world_off(i: int) -> Vector2:
+	var rs := split_rects()
+	if i >= rs.size():
+		return Vector2.ZERO
+	var vs := get_viewport().get_visible_rect().size
+	var a := _ground_at(vs / 2.0)
+	var b := _ground_at((rs[i] as Rect2).get_center())
+	return Vector2(b.x - a.x, b.z - a.z) / PLANE_TEXEL
+
+
+func _ground_at(sp: Vector2) -> Vector3:
+	var o := _cam3d.project_ray_origin(sp)
+	var d := _cam3d.project_ray_normal(sp)
+	if absf(d.y) < 0.001:
+		return o
+	return o + d * (-o.y / d.y)
 
 
 ## Поздняя синхронизация: доп. виды смотрят в общий 3D-мир со сдвигом своей камеры.
@@ -3706,7 +3792,7 @@ func _split_sync(cc: Vector2) -> void:
 			sp = Vector2(-100000.0, -100000.0)
 		sites.append(sp)
 		cpos.append(ci)
-		var own := off.length() > 1.0
+		var own := off.length() > 1.0 or _split_fixed()
 		src.append(i if (own and i > 0) else 0)
 		if i == 0:
 			continue
@@ -3738,10 +3824,50 @@ func _split_sync(cc: Vector2) -> void:
 		(v["cam3"] as Camera3D).keep_aspect = _cam3d.keep_aspect
 		pl.mesh = _plane.mesh
 		pl.position = _plane.position + d3
+	# Насколько у каждого своя камера (для рамки по краю экрана)
+	var amt_r: Array = []
+	var any := 0.0
+	for i in cpos.size():
+		var m := 0.0
+		for j in cpos.size():
+			if j != i:
+				m = maxf(m, (cpos[i] as Vector2).distance_to(cpos[j]))
+		amt_r.append(clampf(m / 260.0, 0.0, 1.0))
+		any = maxf(any, amt_r[i])
+	var fixed := _split_fixed()
+	split_active = fixed or any > 0.3
+	var rects_px: Array = []
+	var cards: Array = []
+	if fixed:
+		for r in split_rects():
+			var rr: Rect2 = r
+			rects_px.append(Color(rr.position.x * to_px.x, rr.position.y * to_px.y, rr.size.x * to_px.x, rr.size.y * to_px.y))
+			cards.append(Vector2(rr.get_center().x, rr.end.y - 64.0))
+	else:
+		# Худ игрока — от героя в сторону края экрана: так он остаётся в его части
+		var mid := vs / 2.0
+		for i in sites.size():
+			var sp: Vector2 = (sites[i] as Vector2) / to_px
+			var dir := sp - mid
+			dir = dir.normalized() if dir.length() > 10.0 else Vector2.DOWN
+			cards.append(sp + dir * 120.0 + Vector2(0, 30.0))
+	split_cards = cards
+	var pcol: Array = []
+	for p in players:
+		pcol.append(p.player_color())
 	while sites.size() < SPLIT_MAX:
 		sites.append(Vector2(-100000.0, -100000.0))
 		cpos.append(Vector2.ZERO)
 		src.append(0)
+		amt_r.append(0.0)
+	while rects_px.size() < SPLIT_MAX:
+		rects_px.append(Color(-10, -10, 0, 0))
+	while pcol.size() < SPLIT_MAX:
+		pcol.append(Color.WHITE)
+	_split_mat.set_shader_parameter("layout", 1 if fixed else 0)
+	_split_mat.set_shader_parameter("rects", PackedColorArray(rects_px))
+	_split_mat.set_shader_parameter("pcol", PackedColorArray(pcol))
+	_split_mat.set_shader_parameter("amt_r", PackedFloat32Array(amt_r))
 	_split_mat.set_shader_parameter("n", players.size())
 	_split_mat.set_shader_parameter("site", PackedVector2Array(sites))
 	_split_mat.set_shader_parameter("cpos", PackedVector2Array(cpos))
@@ -3759,3 +3885,44 @@ func extra_view_centers() -> Array:
 		if _vc[i].distance_to(c0) > 1.0:
 			out.append(_vc[i])
 	return out
+
+
+
+## Бой с боссом при своих камерах: экран собирается в одну общую камеру, а весь отряд
+## переносится к тому, кто ближе к боссу. После победы камеры снова расходятся.
+func _boss_camera() -> void:
+	var boss_on: bool = boss != null and is_instance_valid(boss) and not boss.dead
+	if boss_on and not _boss_lock and _split_wanted():
+		_boss_lock = true
+		if _split_on:
+			_split_teardown()
+		_gather_to_boss()
+	elif _boss_lock and not boss_on:
+		_boss_lock = false
+		if _split_wanted() and not _split_on:
+			_split_setup()
+
+
+func _gather_to_boss() -> void:
+	var anchor: Node2D = null
+	var bd := INF
+	for p in players:
+		if p._dead or p.get("gone"):
+			continue
+		var d: float = p.position.distance_to(boss.position)
+		if d < bd:
+			bd = d
+			anchor = p
+	if anchor == null:
+		return
+	var k := 0
+	for p in players:
+		if p == anchor or p.get("gone"):
+			continue
+		var to: Vector2 = anchor.position + Vector2.RIGHT.rotated(TAU * k / maxf(players.size() - 1, 1) + 0.6) * 85.0
+		Fx.portal(self, p.position, p.player_color(), 0.8)
+		p.position = to
+		Fx.portal(self, to, p.player_color(), 0.8)
+		k += 1
+	camera.reset_smoothing()
+	Fx.text_pop(self, anchor.position + Vector2(0, -110), "БОСС! ОТРЯД — К ИГРОКУ %d" % (anchor.pid + 1), Pixel.hdr(Color(1.0, 0.35, 0.3), 1.6), 26)

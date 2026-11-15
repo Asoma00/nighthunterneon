@@ -36,6 +36,7 @@ var _boss_name: Label
 var _ability_icon: TextureRect
 # Второй игрок (кооператив)
 var _p2_hp: ProgressBar
+var _coop_hud: Array = []     # обычный худ отряда (прячется, когда у каждого своя камера)
 var _p2_hp_label: Label
 var _p2_xp: ProgressBar
 var _p2_weapons: Container
@@ -459,6 +460,8 @@ func _process(delta: float) -> void:
 		_update_p2(delta)
 	if main.coop and not _party.is_empty():
 		_update_party(delta)
+	if main.coop:
+		_update_split_hud(delta)
 	_level_label.text = "УР %d" % p.level
 	if main.endless:
 		_time_label.text = "∞ %s  •  мин %d" % [_fmt_time(main.time_alive), main.endless_min]
@@ -612,6 +615,7 @@ func _build_hud() -> void:
 	_hp_bar.offset_bottom = -18
 	_hp_bar.value = 100
 	root.add_child(_hp_bar)
+	_coop_hud.append(_hp_bar)
 	# Индикатор способности
 	var ab := PanelContainer.new()
 	ab.add_theme_stylebox_override("panel", _neon_box(GOLD, PANEL_BG, 2, 6, 8))
@@ -628,6 +632,7 @@ func _build_hud() -> void:
 	ab.offset_bottom = -16
 	ab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(ab)
+	_coop_hud.append(ab)
 	var abv := VBoxContainer.new()
 	abv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ab.add_child(abv)
@@ -721,6 +726,7 @@ func _build_p2(root: Control) -> void:
 	_p2_hp.offset_top = -40
 	_p2_hp.offset_bottom = -18
 	root.add_child(_p2_hp)
+	_coop_hud.append(_p2_hp)
 	_p2_hp_label = _label("100 / 100", 15, Color.WHITE)
 	_p2_hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_p2_hp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -736,6 +742,7 @@ func _build_p2(root: Control) -> void:
 	_p2_xp.offset_top = -14
 	_p2_xp.offset_bottom = -8
 	root.add_child(_p2_xp)
+	_coop_hud.append(_p2_xp)
 	# Оружие второго игрока — справа сверху
 	var flow := HFlowContainer.new()
 	flow.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
@@ -748,6 +755,7 @@ func _build_p2(root: Control) -> void:
 	_p2_weapons = flow
 	_p2_weapons.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(_p2_weapons)
+	_coop_hud.append(_p2_weapons)
 	# Способность второго игрока — справа снизу
 	var ab := PanelContainer.new()
 	ab.add_theme_stylebox_override("panel", _neon_box(c2, PANEL_BG, 2, 6, 8))
@@ -758,6 +766,7 @@ func _build_p2(root: Control) -> void:
 	ab.offset_bottom = -16
 	ab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(ab)
+	_coop_hud.append(ab)
 	var abv := VBoxContainer.new()
 	abv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ab.add_child(abv)
@@ -936,6 +945,7 @@ func _build_party(root: Control) -> void:
 	col.add_theme_constant_override("separation", 4)
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(col)
+	_coop_hud.append(col)
 	for p in main.players:
 		if p == _me():
 			continue
@@ -1734,3 +1744,98 @@ func _unhandled_input(event: InputEvent) -> void:
 		if idx >= 0 and idx < cards.size():
 			cards[idx].pressed.emit()
 			get_viewport().set_input_as_handled()
+
+
+
+# ---------- Свои камеры: худ каждого игрока — в его части экрана ----------
+
+var _pcards: Array = []
+var _pcards_root: Control
+
+
+func _update_split_hud(delta: float) -> void:
+	var on: bool = main.get("split_active") == true and not main.split_cards.is_empty()
+	for n in _coop_hud:
+		if is_instance_valid(n):
+			n.visible = not on
+	if not on:
+		if _pcards_root:
+			_pcards_root.visible = false
+		return
+	if _pcards_root == null:
+		_build_pcards()
+	_pcards_root.visible = true
+	var vs := get_viewport().get_visible_rect().size
+	var cards: Array = main.split_cards
+	for d in _pcards:
+		var p: Node2D = d["p"]
+		var panel: Control = d["panel"]
+		if not is_instance_valid(p) or p.pid >= cards.size():
+			panel.visible = false
+			continue
+		panel.visible = not p.get("gone")
+		var sz := panel.get_combined_minimum_size()
+		var at: Vector2 = cards[p.pid]
+		var want := Vector2(at.x - sz.x / 2.0, at.y - sz.y / 2.0)
+		want.x = clampf(want.x, 8.0, vs.x - sz.x - 8.0)
+		want.y = clampf(want.y, 70.0, vs.y - sz.y - 8.0)
+		panel.position = panel.position.lerp(want, minf(1.0, delta * 12.0)) if panel.position != Vector2.ZERO else want
+		d["hp"].max_value = p.max_hp
+		d["hp"].value = lerpf(d["hp"].value, p.hp, minf(1.0, delta * 10.0))
+		var st := "ПАЛ — НУЖНА ПОМОЩЬ" if p._dead else ("выбирает улучшение" if p.choosing else "%d / %d" % [int(ceil(p.hp)), int(p.max_hp)])
+		d["hp_l"].text = "УР %d  •  %s" % [p.level, st]
+		d["xp"].max_value = p.xp_to_next
+		d["xp"].value = p.xp
+		var cd: float = p.ability_left
+		d["ab"].text = ("%.0f" % ceil(cd)) if cd > 0.0 else _party_hint(p)
+		d["ic"].modulate = Color(1, 1, 1) if cd <= 0.0 else Color(0.5, 0.5, 0.6)
+		if p.ward_lvl > 0.0 and not p._dead:
+			d["sh"].visible = true
+			d["sh"].text = "◈ЩИТ" if p.ward_ready() else "◇%d" % int(ceil(p._ward_t))
+		else:
+			d["sh"].visible = false
+
+
+func _build_pcards() -> void:
+	_pcards_root = Control.new()
+	_pcards_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_pcards_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_pcards_root)
+	move_child(_pcards_root, 1)   # под окнами выбора, паузы и итогов
+	for p in main.players:
+		var pc: Color = p.player_color()
+		var panel := PanelContainer.new()
+		var pst := _neon_box(pc, Color(0.03, 0.02, 0.07, 0.82), 2, 6, 6)
+		pst.set_content_margin_all(5)
+		panel.add_theme_stylebox_override("panel", pst)
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_pcards_root.add_child(panel)
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 2)
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.add_child(v)
+		var head := HBoxContainer.new()
+		head.add_theme_constant_override("separation", 6)
+		head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(head)
+		var ic := _icon_rect(Pixel.icon("ab_" + p.char_id), 22)
+		head.add_child(ic)
+		var name_l := _label("P%d  %s" % [p.pid + 1, p.char_data["name"]], 13, pc, Color(pc, 0.5))
+		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		head.add_child(name_l)
+		var sh := _label("", 12, Color(0.55, 0.9, 1.0))
+		head.add_child(sh)
+		var ab_l := _label("", 12, GOLD)
+		head.add_child(ab_l)
+		var hp := _bar(Color(0.9, 0.12, 0.3), pc)
+		hp.custom_minimum_size = Vector2(196, 15)
+		v.add_child(hp)
+		var hp_l := _label("", 12, Color.WHITE)
+		hp_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		hp_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		_full_rect(hp_l)
+		hp.add_child(hp_l)
+		var xp := _bar(CYAN.darkened(0.15), CYAN)
+		xp.custom_minimum_size = Vector2(196, 4)
+		v.add_child(xp)
+		_pcards.append({"p": p, "panel": panel, "hp": hp, "hp_l": hp_l, "xp": xp, "ab": ab_l, "ic": ic, "sh": sh})

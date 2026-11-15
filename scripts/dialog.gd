@@ -186,11 +186,13 @@ func _build() -> void:
 	_root.add_child(_choices)
 	# Пропустить
 	var skip := Button.new()
-	skip.text = "Пропустить ⏭"
+	skip.text = "Пропустить ⏭" if Input.get_connected_joypads().is_empty() else "Пропустить ⏭  (держать B)"
 	skip.focus_mode = Control.FOCUS_NONE
 	skip.add_theme_font_size_override("font_size", 16)
 	skip.position = Vector2(vs.x - 190.0, 14.0)
 	skip.custom_minimum_size = Vector2(170, 40)
+	if not Input.get_connected_joypads().is_empty():
+		skip.position.x = vs.x - 290.0
 	var sst := StyleBoxFlat.new()
 	sst.bg_color = Color(0.06, 0.03, 0.12, 0.92)
 	sst.border_color = Color(0.6, 0.55, 0.85)
@@ -212,13 +214,30 @@ func _on_root_input(ev: InputEvent) -> void:
 func _input(ev: InputEvent) -> void:
 	if _closing:
 		return
+	# Геймпад: B / Start — пропуск только удержанием (случайное нажатие не съедает обучение)
+	if ev is InputEventJoypadButton and (ev.button_index == JOY_BUTTON_B or ev.button_index == JOY_BUTTON_START):
+		get_viewport().set_input_as_handled()
+		return
 	if ev.is_action_pressed("pause") or ev.is_action_pressed("ui_cancel"):
 		get_viewport().set_input_as_handled()
 		_skip()
-	elif ev.is_action_pressed("interact") or ev.is_action_pressed("ui_accept") or ev.is_action_pressed("ability"):
-		get_viewport().set_input_as_handled()
-		if not _waiting_choice:
-			_advance()
+		return
+	var adv: bool = ev.is_action_pressed("interact") or ev.is_action_pressed("ui_accept") or ev.is_action_pressed("ability")
+	if ev is InputEventJoypadButton and ev.pressed and ev.button_index in [JOY_BUTTON_A, JOY_BUTTON_X, JOY_BUTTON_Y, JOY_BUTTON_RIGHT_SHOULDER, JOY_BUTTON_LEFT_SHOULDER]:
+		adv = true
+	if not adv:
+		return
+	if _waiting_choice:
+		# Ждём выбора: подтверждение достаётся выбранной кнопке ответа (раньше съедалось здесь,
+		# и с геймпада/клавиатуры ответ было не выбрать)
+		var f := get_viewport().gui_get_focus_owner()
+		if f == null or not _choices.is_ancestor_of(f):
+			get_viewport().set_input_as_handled()
+			if _choices.get_child_count() > 0:
+				(_choices.get_child(0) as Button).grab_focus()
+		return
+	get_viewport().set_input_as_handled()
+	_advance()
 
 
 func _advance() -> void:
@@ -366,8 +385,25 @@ func _pick(ch: Dictionary) -> void:
 	_next()
 
 
+var _skip_hold := 0.0
+
+
 func _process(delta: float) -> void:
 	_input_lock = maxf(0.0, _input_lock - delta)
+	# Удержание B / Start на геймпаде — пропустить сцену
+	var held := false
+	for j in Input.get_connected_joypads():
+		if Input.is_joy_button_pressed(j, JOY_BUTTON_B) or Input.is_joy_button_pressed(j, JOY_BUTTON_START):
+			held = true
+	_skip_hold = (_skip_hold + delta) if held else 0.0
+	if _skip_hold > 0.7 and not _closing and not opts.get("no_skip", false):
+		_skip_hold = 0.0
+		_skip()
+	if _choices.visible:
+		# Выбор ответа: фокус всегда на одной из кнопок (крестовина и стик)
+		var fo := get_viewport().gui_get_focus_owner()
+		if (fo == null or not _choices.is_ancestor_of(fo)) and _choices.get_child_count() > 0 and preload("res://scripts/ui_focus.gd").pad_mode:
+			(_choices.get_child(0) as Button).grab_focus()
 	if _typing:
 		_shown += delta * _cps
 		var total := maxi(1, _text.get_total_character_count())

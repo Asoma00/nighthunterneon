@@ -88,8 +88,13 @@ func setup(key: String, color: Color, narrow := false, max_w := 0.0) -> void:
 				Sound.play("hurt", -14.0, 1.6))
 		b.mouse_entered.connect(func():
 			Sound.play("hover", -12.0)
-			info.emit(_info_text(node)))
-		b.focus_entered.connect(func(): info.emit(_info_text(node)))
+			info.emit(_info_text(node))
+			_tip_want(b, node))
+		b.mouse_exited.connect(func(): _tip_hide(b))
+		b.focus_entered.connect(func():
+			info.emit(_info_text(node))
+			_tip_want(b, node))
+		b.focus_exited.connect(func(): _tip_hide(b))
 		add_child(b)
 		_buttons[n["id"]] = b
 	refresh()
@@ -252,3 +257,80 @@ func _draw() -> void:
 					var col := Color(1.0, 0.8, 0.3, 0.9) if owned else Color(0.4, 0.4, 0.55, 0.6)
 					var mid := (from.y + to.y) / 2.0
 					draw_polyline(PackedVector2Array([from, Vector2(from.x, mid), Vector2(to.x, mid), to]), col, 3.0)
+
+
+
+# ---------- Всплывающее описание узла (с небольшой задержкой) ----------
+const TIP_DELAY := 0.35
+var _tip: PanelContainer
+var _tip_l: Label
+var _tip_for: Control = null
+var _tip_node: Dictionary = {}
+var _tip_t := 0.0
+
+
+func _tip_want(b: Control, n: Dictionary) -> void:
+	_tip_for = b
+	_tip_node = n
+	_tip_t = TIP_DELAY
+	if _tip:
+		_tip.visible = false
+
+
+func _tip_hide(b: Control) -> void:
+	if _tip_for == b:
+		_tip_for = null
+		if _tip:
+			_tip.visible = false
+
+
+func _process(delta: float) -> void:
+	if _tip_for == null or not is_instance_valid(_tip_for) or not _tip_for.is_visible_in_tree():
+		if _tip:
+			_tip.visible = false
+		return
+	if _tip_t > 0.0:
+		_tip_t -= delta
+		if _tip_t > 0.0:
+			return
+		_show_tip()
+	elif _tip and _tip.visible:
+		_place_tip()
+
+
+func _show_tip() -> void:
+	if _tip == null:
+		_tip = PanelContainer.new()
+		_tip.top_level = true
+		_tip.z_index = 100
+		_tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var st := _box(accent, Color(0.04, 0.02, 0.09, 0.97), 14)
+		st.set_content_margin_all(12)
+		_tip.add_theme_stylebox_override("panel", st)
+		_tip_l = Label.new()
+		_tip_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_tip_l.custom_minimum_size = Vector2(320, 0)
+		_tip_l.add_theme_font_size_override("font_size", 14)
+		_tip_l.add_theme_color_override("font_color", Color(0.92, 0.9, 1.0))
+		_tip_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_tip.add_child(_tip_l)
+		add_child(_tip)
+	_tip_l.text = _info_text(_tip_node)
+	_tip.size = Vector2.ZERO
+	_tip.reset_size()
+	_tip.visible = true
+	_place_tip()
+
+
+## Справа от узла, а если не помещается — слева; не выходит за край экрана.
+func _place_tip() -> void:
+	var r := _tip_for.get_global_rect()
+	var vs := get_viewport_rect().size
+	var sz := _tip.get_combined_minimum_size()
+	var pos := Vector2(r.end.x + 10.0, r.position.y)
+	if pos.x + sz.x > vs.x - 8.0:
+		pos.x = r.position.x - sz.x - 10.0
+	if pos.x < 8.0:
+		pos = Vector2(clampf(r.position.x, 8.0, vs.x - sz.x - 8.0), r.end.y + 8.0)
+	pos.y = clampf(pos.y, 8.0, vs.y - sz.y - 8.0)
+	_tip.global_position = pos

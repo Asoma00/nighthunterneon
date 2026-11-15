@@ -1081,6 +1081,40 @@ func on_weapon_hit(src: String, e: Node2D, amount: float, crit: bool) -> void:
 	if crit and k > 0.0 and randf() < k:
 		Fx.explosion(main, e.position + Vector2(0, -15), Color(1.0, 0.3, 0.35), Color(1.0, 0.8, 0.4), 55.0 * area_mult)
 		main.damage_area(e.position, 55.0 * area_mult, amount * 0.45, e)
+	k = aspect_k(src, "pierce")
+	if k > 0.0 and not e.dead and randf() < 0.35 * k:
+		# Прорыв: удар уходит дальше по линии «герой → цель»
+		var dir: Vector2 = (e.position - position).normalized()
+		var best: Node2D = null
+		var bd := 230.0
+		for n in main.nearest_enemies_to(e.position, 5, 230.0, e):
+			var to: Vector2 = n.position - e.position
+			if to.normalized().dot(dir) > 0.6 and to.length() < bd:
+				bd = to.length()
+				best = n
+		if best != null:
+			main.beam3d(PackedVector3Array([main.to3d(e.position, 0.45), main.to3d(best.position, 0.45)]), Color(0.85, 0.95, 1.0), 0.03, 0.12, 0.02)
+			best.hit(amount * 0.6, e.position, 40.0)
+	k = aspect_k(src, "execute")
+	if k > 0.0 and not e.dead and not e.is_boss and e.hp > 0.0 and e.hp / maxf(e.max_hp, 1.0) < 0.15 * k:
+		Fx.text_pop(main, e.position + Vector2(0, -40), "КАЗНЬ", Pixel.hdr(Color(1.0, 0.25, 0.3), 1.6), 16)
+		e.hit(e.hp + 1.0, position, 60.0)
+	k = aspect_k(src, "giant")
+	if k > 0.0 and not e.dead and (e.is_boss or e.is_elite):
+		e.hit(amount * 0.35 * k, e.position, 0.0)
+		if e.is_boss:
+			_giant_hits += 1
+			if _giant_hits % 5 == 0 and e.get("_shield_t") != null and float(e.get("_shield_t")) > 0.0:
+				e.set("_shield_t", maxf(0.0, float(e.get("_shield_t")) - 1.5))
+				Fx.ring(main, e.position + Vector2(0, -40), 20.0, 90.0, Pixel.hdr(Color(1.0, 0.55, 0.15), 2.0), 0.3, 4.0)
+	k = aspect_k(src, "toxin")
+	if k > 0.0 and not e.dead and randf() < 0.3 * k:
+		for st in ["burn", "bleed", "poison"]:
+			if e.statuses.has(st):
+				for n in main.nearest_enemies_to(e.position, 2, 160.0, e):
+					n.apply_status(st)
+					main.beam3d(PackedVector3Array([main.to3d(e.position, 0.3), main.to3d(n.position, 0.3)]), Data.STATUSES[st]["color"], 0.02, 0.15, 0.06)
+				break
 	k = aspect_k(src, "multi")
 	if k > 0.0 and randf() < 0.4 * k:
 		var others: Array = main.nearest_enemies_to(e.position, 1, 230.0, e)
@@ -1121,6 +1155,7 @@ func set_source(id: String) -> void:
 
 
 var laststand := false
+var _giant_hits := 0
 var revive_charges := 0   # навык «Второе дыхание»
 
 

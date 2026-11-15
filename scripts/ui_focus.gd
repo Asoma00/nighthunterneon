@@ -9,6 +9,8 @@ static var _kb_nav_t := -10.0  # когда последний раз нажат
 
 static func on_input(event: InputEvent) -> void:
 	_touch_scroll(event)
+	if event is InputEventJoypadMotion and event.axis == JOY_AXIS_RIGHT_Y:
+		_rs_val = event.axis_value
 	if event is InputEventJoypadMotion and _stick_nav(event):
 		return
 	if event is InputEventJoypadButton and event.pressed:
@@ -66,6 +68,8 @@ static func _collect(n: Node, out: Array) -> void:
 
 ## Вызывать каждый кадр, пока открыто окно root. state хранит номер кнопки.
 static func keep(root: Control, state: Dictionary) -> void:
+	if root != null and root.is_visible_in_tree():
+		_pad_scroll(root, state)
 	# Клавиатура: нажали клавишу ходьбы или ENTER, пока окно открыто — включаем выбор кнопок
 	if not pad_mode and Time.get_ticks_msec() / 1000.0 - _kb_nav_t < 0.12:
 		pad_mode = true
@@ -80,6 +84,10 @@ static func keep(root: Control, state: Dictionary) -> void:
 		return
 	if f != null and list.has(f):
 		state["idx"] = list.find(f)
+		# Выбор ушёл за край списка — список докручивается до него (геймпад, клавиатура)
+		if state.get("last_f") != f:
+			state["last_f"] = f
+			_reveal(f)
 		return
 	# Фокус на любом другом элементе этого окна (неактивная кнопка выбранного героя,
 	# поле ввода, слайдер) — не отбираем, иначе навигация «застревает»
@@ -199,6 +207,7 @@ static func _touch_scroll(event: InputEvent) -> void:
 ## движение стика за мёртвой зоной, и выбор перескакивал через карточку (1 → 3).
 ## Здесь — нажатие на пороге 0.6 и отпускание ниже 0.35, остальное гасится.
 static var _stick := {}
+static var _rs_val := 0.0
 
 
 static func _stick_nav(ev: InputEventJoypadMotion) -> bool:
@@ -235,3 +244,63 @@ static func _stick_nav(ev: InputEventJoypadMotion) -> bool:
 			a.strength = 1.0 if pressed else 0.0
 			Input.parse_input_event(a)
 	return true
+
+
+
+## Прокрутить все списки-предки так, чтобы элемент был виден целиком (с запасом).
+static func _reveal(c: Control) -> void:
+	var n := c.get_parent()
+	while n != null:
+		if n is ScrollContainer:
+			var sc := n as ScrollContainer
+			var r := c.get_global_rect()
+			var sr := sc.get_global_rect()
+			var pad := 24.0
+			if r.position.y < sr.position.y + pad:
+				sc.scroll_vertical -= int(sr.position.y + pad - r.position.y)
+			elif r.end.y > sr.end.y - pad:
+				sc.scroll_vertical += int(r.end.y - (sr.end.y - pad))
+			if sc.horizontal_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED:
+				if r.position.x < sr.position.x:
+					sc.scroll_horizontal -= int(sr.position.x - r.position.x)
+				elif r.end.x > sr.end.x:
+					sc.scroll_horizontal += int(r.end.x - sr.end.x)
+		n = n.get_parent()
+
+
+## Правый стик геймпада — плавная прокрутка списка (того, где выбор, или самого большого
+## в окне): так читаются и длинные тексты без кнопок.
+static func _pad_scroll(root: Control, state: Dictionary) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	var dt := clampf(now - float(state.get("ps_t", now)), 0.0, 0.1)
+	state["ps_t"] = now
+	var v := _rs_val
+	for j in Input.get_connected_joypads():
+		var a := Input.get_joy_axis(j, JOY_AXIS_RIGHT_Y)
+		if absf(a) > absf(v):
+			v = a
+	if absf(v) < 0.2 or dt <= 0.0:
+		return
+	var sc: ScrollContainer = null
+	var f := root.get_viewport().gui_get_focus_owner()
+	if f != null and root.is_ancestor_of(f):
+		var n := f.get_parent()
+		while n != null and n != root.get_parent():
+			if n is ScrollContainer and (n as ScrollContainer).get_v_scroll_bar().max_value > (n as ScrollContainer).size.y + 4.0:
+				sc = n
+				break
+			n = n.get_parent()
+	if sc == null:
+		var best := 0.0
+		for n in root.find_children("*", "ScrollContainer", true, false):
+			var c := n as ScrollContainer
+			if not c.is_visible_in_tree():
+				continue
+			var area := c.size.x * c.size.y
+			if area > best and c.get_v_scroll_bar().max_value > c.size.y + 4.0:
+				best = area
+				sc = c
+	if sc == null:
+		return
+	var sgn := signf(v)
+	sc.scroll_vertical += int(sgn * pow((absf(v) - 0.2) / 0.8, 1.5) * 1400.0 * dt + sgn)

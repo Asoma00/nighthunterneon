@@ -1192,7 +1192,7 @@ func _process(delta: float) -> void:
 
 func _update_avatar(delta: float) -> void:
 	var dir := Vector2.ZERO
-	if _panel_id == "" and _cine_t <= 0.0:
+	if _panel_id == "" and _cine_t <= 0.0 and not (_dlg != null and is_instance_valid(_dlg)):
 		if _p1_input != null:
 			_p1_input.poll()
 			dir = _p1_input.vector()   # отряд: Игрок 1 — только своим устройством
@@ -2222,6 +2222,7 @@ func _fill_tree_panel(id: String) -> void:
 		info_l.custom_minimum_size = Vector2(minf(tv.custom_minimum_size.x, _avail()), 36)
 		right.add_child(info_l)
 		tv.info.connect(func(t: String): info_l.text = t)
+		info_l.visible = false   # описание узла — во всплывающем окне у самого узла
 		tv.bought.connect(func():
 			_particles(_world, Meta.BUILDINGS[id]["pos"] + Vector3(0, 2.0, 0), col, 30, Vector3(1, 1, 1), Vector3(0, 2, 0), 1.0, 0.1, true, 3.0)
 			_fill_panel.call_deferred())
@@ -6358,21 +6359,46 @@ uniform sampler2D v2 : source_color, filter_nearest;
 uniform sampler2D v3 : source_color, filter_nearest;
 uniform sampler2D v4 : source_color, filter_nearest;
 uniform int n = 1;
+uniform int layout = 0;
 uniform vec2 site[5];
 uniform vec2 cpos[5];
+uniform vec4 rects[5];
+uniform vec4 pcol[5] : source_color;
+uniform float amt_r[5];
 uniform int src[5];
 uniform vec2 scr = vec2(1280.0, 720.0);
 void fragment() {
 	vec2 p = UV * scr;
 	int a = 0;
-	int b = 0;
-	float da = 1e9;
-	float db = 1e9;
-	for (int i = 0; i < 5; i++) {
-		if (i >= n) { break; }
-		float d = distance(p, site[i]);
-		if (d < da) { db = da; b = a; da = d; a = i; }
-		else if (d < db) { db = d; b = i; }
+	float edge = 1e9;
+	float amt = 0.0;
+	if (layout == 1) {
+		for (int i = 0; i < 5; i++) {
+			if (i >= n) { break; }
+			vec4 r = rects[i];
+			if (p.x >= r.x && p.y >= r.y && p.x < r.x + r.z && p.y < r.y + r.w) { a = i; }
+		}
+		vec4 r = rects[a];
+		edge = min(min(p.x - r.x, r.x + r.z - p.x), min(p.y - r.y, r.y + r.w - p.y));
+		amt = 1.0;
+	} else if (n > 1) {
+		int b = 0;
+		float da = 1e9;
+		float db = 1e9;
+		for (int i = 0; i < 5; i++) {
+			if (i >= n) { break; }
+			float d = distance(p, site[i]);
+			if (d < da) { db = da; b = a; da = d; a = i; }
+			else if (d < db) { db = d; b = i; }
+		}
+		float sep = max(distance(site[a], site[b]), 1.0);
+		edge = (db * db - da * da) / (2.0 * sep);
+		amt = clamp(distance(cpos[a], cpos[b]) / 2.5, 0.0, 1.0);
+		float scr_edge = min(min(p.x, scr.x - p.x), min(p.y, scr.y - p.y));
+		if (scr_edge < edge && amt_r[a] > amt) {
+			edge = scr_edge;
+			amt = amt_r[a];
+		}
 	}
 	int k = src[a];
 	vec4 c = texture(TEXTURE, UV);
@@ -6380,16 +6406,12 @@ void fragment() {
 	else if (k == 2) { c = texture(v2, UV); }
 	else if (k == 3) { c = texture(v3, UV); }
 	else if (k == 4) { c = texture(v4, UV); }
-	if (n > 1) {
-		float sep = max(distance(site[a], site[b]), 1.0);
-		float edge = (db * db - da * da) / (2.0 * sep) / scr.y * 720.0;
-		float amt = clamp(distance(cpos[a], cpos[b]) / 2.5, 0.0, 1.0);
-		float w = 1.0 + 2.5 * amt;
-		float core = 1.0 - smoothstep(w * 0.4, w, edge);
-		float glow = (1.0 - smoothstep(w, w * 6.0, edge)) * 0.35;
-		float la = clamp((core + glow) * amt, 0.0, 1.0);
-		c.rgb = mix(c.rgb, mix(vec3(0.33, 0.57, 0.6), vec3(1.0), core * 0.6), la);
-	}
+	float px = scr.y / 720.0;
+	float w = (1.5 + 2.5 * amt) * px;
+	float core = 1.0 - smoothstep(w * 0.5, w, edge);
+	float glow = (1.0 - smoothstep(w, w * 5.0, edge)) * 0.4;
+	float la = clamp((core + glow) * amt, 0.0, 1.0);
+	c.rgb = mix(c.rgb, mix(pcol[a].rgb * 1.3, vec3(1.0), core * 0.35), la);
 	COLOR = c;
 }
 """
@@ -6397,6 +6419,42 @@ void fragment() {
 
 func _hsplit_mode() -> bool:
 	return _hsplit
+
+
+func _hsplit_fixed() -> bool:
+	return str(Settings.get("coop_split")) == "fixed"
+
+
+## Фиксированные части кадра (в пикселях картинки убежища) — как в бою.
+func _hrects() -> Array:
+	var vs := Vector2(_vp.size)
+	var n := Data.coop_heroes.size()
+	var land: Array = []
+	match n:
+		2:
+			land = [Rect2(0, 0, 0.5, 1), Rect2(0.5, 0, 0.5, 1)]
+		3:
+			land = [Rect2(0, 0, 0.5, 1), Rect2(0.5, 0, 0.5, 0.5), Rect2(0.5, 0.5, 0.5, 0.5)]
+		4:
+			land = [Rect2(0, 0, 0.5, 0.5), Rect2(0.5, 0, 0.5, 0.5), Rect2(0, 0.5, 0.5, 0.5), Rect2(0.5, 0.5, 0.5, 0.5)]
+		_:
+			land = [Rect2(0, 0, 0.5, 0.5), Rect2(0.5, 0, 0.5, 0.5), Rect2(0, 0.5, 1.0 / 3.0, 0.5),
+				Rect2(1.0 / 3.0, 0.5, 1.0 / 3.0, 0.5), Rect2(2.0 / 3.0, 0.5, 1.0 / 3.0, 0.5)]
+	var out: Array = []
+	for r in land:
+		var rr: Rect2 = r
+		if vs.y > vs.x:
+			rr = Rect2(rr.position.y, rr.position.x, rr.size.y, rr.size.x)
+		out.append(Rect2(rr.position * vs, rr.size * vs))
+	return out
+
+
+func _hground(sp: Vector2) -> Vector3:
+	var o := _camera.project_ray_origin(sp)
+	var d := _camera.project_ray_normal(sp)
+	if absf(d.y) < 0.001:
+		return o
+	return o + d * (-o.y / d.y)
 
 
 func _party_positions() -> Array:
@@ -6492,6 +6550,12 @@ func _hsplit_centers() -> void:
 		var l := u.length()
 		var sv := u if l <= HSPLIT_R else u * (HSPLIT_R / l)
 		_hvc[i] = q - Vector3(sv.x * h.x, 0, sv.y * h.y)
+		if _hsplit_fixed():
+			var rs := _hrects()
+			var vs := Vector2(_vp.size)
+			var a := _hground(vs / 2.0)
+			var b := _hground((rs[i] as Rect2).get_center())
+			_hvc[i] = q - Vector3(b.x - a.x, 0, b.z - a.z)
 
 
 func _hsplit_sync(delta: float) -> void:
@@ -6511,7 +6575,7 @@ func _hsplit_sync(delta: float) -> void:
 		var want: Vector3 = (_hvc[i] - _hvc[0] + c0) if active else c0
 		_hcam[i] = want if i == 0 else (_hcam[i] as Vector3).lerp(want, minf(1.0, delta * 4.0))
 		var off: Vector3 = _hcam[i] - c0
-		var own := active and i > 0 and off.length() > 0.05
+		var own := active and i > 0 and (off.length() > 0.05 or _hsplit_fixed())
 		cpos.append(Vector2(_hcam[i].x, _hcam[i].z))
 		src.append(i if own else 0)
 		var cam: Camera3D = _camera
@@ -6530,10 +6594,35 @@ func _hsplit_sync(delta: float) -> void:
 		var pp: Vector3 = ps[i] + Vector3(0, 0.6, 0)
 		var sp: Vector2 = (cam.unproject_position(pp) if not cam.is_position_behind(pp) else sz / 2.0)
 		sites.append(sp)
+	var amt_r: Array = []
+	for i in cpos.size():
+		var m := 0.0
+		for j in cpos.size():
+			if j != i:
+				m = maxf(m, (cpos[i] as Vector2).distance_to(cpos[j]))
+		amt_r.append(clampf(m / 2.5, 0.0, 1.0) if active else 0.0)
+	var fixed := active and _hsplit_fixed()
+	var rects: Array = []
+	if fixed:
+		for r in _hrects():
+			var rr: Rect2 = r
+			rects.append(Color(rr.position.x, rr.position.y, rr.size.x, rr.size.y))
+	var pcol: Array = []
+	for i in ps.size():
+		pcol.append(PARTY_COLORS[i])
 	while sites.size() < 5:
 		sites.append(Vector2(-100000, -100000))
 		cpos.append(Vector2.ZERO)
 		src.append(0)
+		amt_r.append(0.0)
+	while rects.size() < 5:
+		rects.append(Color(-10, -10, 0, 0))
+	while pcol.size() < 5:
+		pcol.append(Color.WHITE)
+	_hsplit_mat.set_shader_parameter("layout", 1 if fixed else 0)
+	_hsplit_mat.set_shader_parameter("rects", PackedColorArray(rects))
+	_hsplit_mat.set_shader_parameter("pcol", PackedColorArray(pcol))
+	_hsplit_mat.set_shader_parameter("amt_r", PackedFloat32Array(amt_r))
 	_hsplit_mat.set_shader_parameter("n", ps.size() if active else 1)
 	_hsplit_mat.set_shader_parameter("site", PackedVector2Array(sites))
 	_hsplit_mat.set_shader_parameter("cpos", PackedVector2Array(cpos))
