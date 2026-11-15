@@ -4121,3 +4121,42 @@ static func _paint_boss(key: String, b: Image, e: Image, f: int) -> void:
 				var q := Vector2(cx + cos(ang) * (38 + sp * 6), cy + 4 + sin(ang) * 14)
 				var col: Color = els[i % 3]
 				poly(e, PackedVector2Array([q + Vector2(0, -4), q + Vector2(3, 0), q + Vector2(0, 4), q + Vector2(-3, 0)]), Color(col, 0.8))
+
+
+# ---------- Обводка героя цветом игрока (кооператив) ----------
+
+static var _outlines := {}
+
+
+## Белое кольцо в 1 пиксель вокруг силуэта кадра (без нижней кромки — чтобы ноги стояли
+## на той же строке, что и у самого героя). Красится modulate в цвет игрока.
+static func ring_outline(tex: Texture2D) -> Texture2D:
+	if tex == null:
+		return null
+	var key := tex.get_rid()
+	if _outlines.has(key):
+		return _outlines[key]
+	var src := tex.get_image()
+	if src == null:
+		return null
+	if src.is_compressed():
+		src.decompress()
+	src = src.duplicate()
+	src.convert(Image.FORMAT_RGBA8)
+	var w := src.get_width()
+	var h := src.get_height()
+	var rect := Rect2i(0, 0, w, h)
+	var white := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	white.fill(Color.WHITE)
+	var sil := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	sil.blit_rect_mask(white, src, rect, Vector2i.ZERO)
+	var ring := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1), Vector2i(1, -1), Vector2i(-1, -1)]:
+		ring.blend_rect(sil, rect, o)
+	var clear := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	ring.blit_rect_mask(clear, sil, rect, Vector2i.ZERO)
+	var t := ImageTexture.create_from_image(ring)
+	if _outlines.size() > 600:
+		_outlines.clear()
+	_outlines[key] = t
+	return t

@@ -9,6 +9,8 @@ static var _kb_nav_t := -10.0  # когда последний раз нажат
 
 static func on_input(event: InputEvent) -> void:
 	_touch_scroll(event)
+	if event is InputEventJoypadMotion and _stick_nav(event):
+		return
 	if event is InputEventJoypadButton and event.pressed:
 		pad_mode = true
 	elif event is InputEventJoypadMotion and absf(event.axis_value) > 0.6:
@@ -190,3 +192,46 @@ static func _touch_scroll(event: InputEvent) -> void:
 	if _sc.horizontal_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED:
 		_sc.scroll_horizontal = int(round(_sc_base.x - dpos.x))
 	vp.set_input_as_handled()
+
+
+
+## Левый стик в меню: один наклон — ровно один шаг. Godot шлёт «нажато» на каждое
+## движение стика за мёртвой зоной, и выбор перескакивал через карточку (1 → 3).
+## Здесь — нажатие на пороге 0.6 и отпускание ниже 0.35, остальное гасится.
+static var _stick := {}
+
+
+static func _stick_nav(ev: InputEventJoypadMotion) -> bool:
+	if ev.axis != JOY_AXIS_LEFT_X and ev.axis != JOY_AXIS_LEFT_Y:
+		return false
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return false
+	var vp := tree.root
+	var f := vp.gui_get_focus_owner()
+	if f == null or not f.is_visible_in_tree():
+		return false
+	vp.set_input_as_handled()
+	var key := "%d:%d" % [ev.device, ev.axis]
+	var held: int = int(_stick.get(key, 0))
+	var v := ev.axis_value
+	var want := held
+	if held == 0 and absf(v) > 0.6:
+		want = 1 if v > 0.0 else -1
+	elif held != 0 and absf(v) < 0.35:
+		want = 0
+	elif held != 0 and signf(v) != float(held) and absf(v) > 0.6:
+		want = 1 if v > 0.0 else -1
+	if want == held:
+		return true
+	_stick[key] = want
+	if want != 0:
+		pad_mode = true
+		var act := ("ui_right" if want > 0 else "ui_left") if ev.axis == JOY_AXIS_LEFT_X else ("ui_down" if want > 0 else "ui_up")
+		for pressed in [true, false]:
+			var a := InputEventAction.new()
+			a.action = act
+			a.pressed = pressed
+			a.strength = 1.0 if pressed else 0.0
+			Input.parse_input_event(a)
+	return true

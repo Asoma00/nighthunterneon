@@ -249,11 +249,14 @@ func _ready() -> void:
 				p.net_pos = p.position
 	if net_mode != "":
 		Net.main = self
-		# Ники над героями в сетевой игре
+	if coop:
+		# Подписи над героями: в сети — ники, на одном экране — «ИГРОК N» цветом игрока
 		for i in players.size():
-			var nk: String = Meta.nickname if i == my_idx else str(Net.run_info(i).get("nick", ""))
-			if nk == "":
-				nk = "Игрок %d" % (i + 1)
+			var nk: String = "ИГРОК %d" % (i + 1)
+			if net_mode != "":
+				nk = Meta.nickname if i == my_idx else str(Net.run_info(i).get("nick", ""))
+				if nk == "":
+					nk = "Игрок %d" % (i + 1)
 			var l := Label3D.new()
 			l.text = nk
 			l.billboard = BaseMaterial3D.BILLBOARD_ENABLED

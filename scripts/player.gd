@@ -137,6 +137,7 @@ var _shield_t := 0.0
 var _frames: Dictionary
 var _shadow: Sprite2D
 var _body: Sprite2D
+var _outline: Sprite2D
 var _emit: Sprite2D
 var _halo: Sprite2D
 var _gear: Node3D
@@ -299,6 +300,16 @@ func _ready() -> void:
 	add_child(_light)
 	main.mirror(_body, self, false)
 	main.mirror(_emit, self, true)
+	if main.coop:
+		# Обводка цветом игрока — своего героя видно в любой толпе и на любой половине экрана
+		_outline = Sprite2D.new()
+		_outline.scale = _body.scale
+		_outline.offset = _body.offset
+		_outline.material = Pixel.mat_unshaded()
+		_outline.modulate = Pixel.hdr(player_color(), 1.7)
+		add_child(_outline)
+		_sync_outline()
+		main.mirror(_outline, self, true)
 	main.mirror_light(_light, self, 1.4)
 
 	_blade_tex = Pixel.frames("blade")["emit"][0]
@@ -485,6 +496,19 @@ func player_color() -> Color:
 	return PLAYER_COLORS[clampi(pid, 0, PLAYER_COLORS.size() - 1)]
 
 
+func _sync_outline() -> void:
+	if _outline == null:
+		return
+	_outline.visible = _body.visible and not _dead
+	if not _outline.visible:
+		return
+	var t := Pixel.ring_outline(_body.texture)
+	if _outline.texture != t:
+		_outline.texture = t
+	_outline.flip_h = _body.flip_h
+	_outline.scale = _body.scale
+
+
 ## Кольцо игрока на полу, а у павшего — круг воскрешения.
 func _draw_marker(c: Node2D) -> void:
 	var col := player_color()
@@ -574,6 +598,7 @@ func _process_body(delta: float) -> void:
 	if puppet:
 		_puppet_tick(delta)
 		return
+	_tick_vortices(delta)
 	main.attacker = self
 	if _dead:
 		if main.coop and not main.game_over:
@@ -1362,6 +1387,7 @@ func _animate(delta: float) -> void:
 	var bsc := Vector2(Pixel.PX * (1.0 - sq * 0.6), Pixel.PX * Pixel.STAND * (1.0 + sq)) * float(_frames.get("k", 1.0))
 	_body.scale = bsc
 	_emit.scale = bsc
+	_sync_outline()
 	var pulse := 0.5 + 0.5 * sin(_anim_t * 3.0)
 	_light.energy = 1.15 + 0.15 * pulse
 	_update_gear(vis)
@@ -2094,46 +2120,119 @@ func _vortex(s: Dictionary, idx := 0) -> void:
 			center += Vector2.RIGHT.rotated(randf() * TAU) * r * 0.9
 	var dur: float = float(s["duration"])
 	var col := evo_tint("vortex", Color(0.7, 0.35, 1.0)) if evolved.has("vortex") else Color(0.7, 0.35, 1.0)
-	_vortex_fx(center, r, dur, col)
 	Sound.play("ability", -12.0, 0.55, 0.05)
-	var steps := int(dur / 0.1)
-	for k in steps:
-		_later(0.1 * k, func():
-			if _dead:
-				return
-			_src = "vortex"
-			main.attacker = self
-			# Сходящиеся кольца — видно, куда тянет
-			if k % 4 == 0:
-				Fx.ring(main, center, r, 12.0, Pixel.hdr(col, 1.8), 0.4, 3.0)
-			for e in main.get_enemies():
-				if not e.can_be_hit():
-					continue
-				var d: Vector2 = center - e.position
-				var dist := d.length()
-				if dist > r + e.radius:
-					continue
-				# Притяжение: сильнее у края, у центра враги кружат
-				var pull: float = float(s["pull"]) * (0.4 if e.is_boss else 1.0) * clampf(dist / r + 0.35, 0.35, 1.0)
-				e._knock = d.normalized().rotated(0.6) * pull
-				if k % 5 == 0:
-					e.hit(float(s["damage"]) * damage_mult, center, 0.0, "burn"))
-	_later(dur, func():
-		if _dead:
+	# Оптимизация: воронки, легшие друг на друга, сливаются в одну — в 1,5 раза сильнее
+	for v in _vortices:
+		if v["done"]:
+			continue
+		var d: float = (v["c"] as Vector2).distance_to(center)
+		if d < (float(v["r"]) + r) * 0.55:
+			v["c"] = (v["c"] as Vector2).lerp(center, 0.3)
+			v["r"] = maxf(float(v["r"]), r) * 1.12
+			v["pow"] = 1.5   # слившиеся воронки — одна, в 1,5 раза сильнее одиночной
+			var el := float(v["dur"]) - float(v["left"])
+			v["left"] = maxf(float(v["left"]), dur)
+			v["dur"] = el + float(v["left"])
+			v["s"] = s
+			if is_instance_valid(v["mi"]):
+				var mi: MeshInstance3D = v["mi"]
+				mi.position = main._bl(v["c"], 0.03)
+				(mi.mesh as PlaneMesh).size = Vector2.ONE * float(v["r"]) * 2.0 * 0.01
+				var tw := mi.create_tween()
+				tw.tween_property(mi, "scale", Vector3.ONE * 1.18, 0.12)
+				tw.tween_property(mi, "scale", Vector3.ONE, 0.18)
+			Fx.ring(main, v["c"], 10.0, float(v["r"]), Pixel.hdr(col, 2.2), 0.35, 5.0)
 			return
-		_src = "vortex"
-		main.attacker = self
-		var charged := 0
-		for e in main.get_enemies():
-			if e.can_be_hit() and e.position.distance_to(center) < r and e.statuses.has("shock"):
-				charged += 1
-		var br: float = r * (1.0 + minf(0.08 * charged, 0.6))
-		var dmg: float = float(s["blast"]) * damage_mult * (1.0 + minf(0.06 * charged, 0.5))
-		Fx.explosion(main, center, Color(1.0, 0.45, 0.9), col, br)
-		main.damage_area(center, br, dmg, null, "burn")
-		main.shake(4.0)
-		if charged >= 3:
-			main.combo_pop(center + Vector2(0, -40), "ГРАВИ-РАЗРЯД ×%d" % charged, Color(0.7, 0.9, 1.0)))
+	var mi = _vortex_fx(center, r)
+	_vortices.append({"c": center, "r": r, "pow": 1.0, "left": dur, "dur": dur, "tick": 0.0, "k": 0,
+		"s": s, "col": col, "mi": mi, "done": false})
+
+
+var _vortices: Array = []
+
+
+## Все воронки героя — одним проходом раз в 0.1 с (раньше — по таймеру на каждый такт).
+func _tick_vortices(delta: float) -> void:
+	if _vortices.is_empty():
+		return
+	var i := _vortices.size() - 1
+	while i >= 0:
+		var v: Dictionary = _vortices[i]
+		v["left"] = float(v["left"]) - delta
+		var mi = v["mi"]
+		if mi != null and is_instance_valid(mi):
+			var m: ShaderMaterial = mi.material_override
+			var el := float(v["dur"]) - float(v["left"])
+			m.set_shader_parameter("t", el * 1.6)
+			mi.rotation.y = -TAU * 1.5 * el / maxf(float(v["dur"]), 0.1)
+			mi.position = main._bl(v["c"], 0.03)
+		if _dead:
+			_end_vortex(v, false)
+			_vortices.remove_at(i)
+			i -= 1
+			continue
+		v["tick"] = float(v["tick"]) - delta
+		if float(v["tick"]) <= 0.0 and float(v["left"]) > 0.0:
+			v["tick"] = 0.1
+			_vortex_pulse(v)
+		if float(v["left"]) <= 0.0:
+			_end_vortex(v, true)
+			_vortices.remove_at(i)
+		i -= 1
+
+
+func _vortex_pulse(v: Dictionary) -> void:
+	var s: Dictionary = v["s"]
+	var k: int = int(v["k"])
+	v["k"] = k + 1
+	var center: Vector2 = v["c"]
+	var r: float = v["r"]
+	var pw: float = v["pow"]
+	_src = "vortex"
+	main.attacker = self
+	if k % 4 == 0:
+		Fx.ring(main, center, r, 12.0, Pixel.hdr(v["col"], 1.8), 0.4, 3.0)
+	for e in main.get_enemies():
+		if not e.can_be_hit():
+			continue
+		var d: Vector2 = center - e.position
+		var dist := d.length()
+		if dist > r + e.radius:
+			continue
+		# Притяжение: сильнее у края, у центра враги кружат
+		var pull: float = float(s["pull"]) * (0.4 if e.is_boss else 1.0) * clampf(dist / r + 0.35, 0.35, 1.0) * sqrt(pw)
+		e._knock = d.normalized().rotated(0.6) * pull
+		if k % 5 == 0:
+			e.hit(float(s["damage"]) * damage_mult * pw, center, 0.0, "burn")
+
+
+func _end_vortex(v: Dictionary, blast: bool) -> void:
+	v["done"] = true
+	var mi = v["mi"]
+	if mi != null and is_instance_valid(mi):
+		var m: ShaderMaterial = mi.material_override
+		var tw := (mi as Node).create_tween()
+		tw.tween_method(func(x: float): m.set_shader_parameter("fade", x), 1.0, 0.0, 0.25)
+		tw.parallel().tween_property(mi, "scale", Vector3.ONE * 0.05, 0.25)
+		tw.tween_callback(mi.queue_free)
+	if not blast:
+		return
+	var s: Dictionary = v["s"]
+	var center: Vector2 = v["c"]
+	var r: float = v["r"]
+	_src = "vortex"
+	main.attacker = self
+	var charged := 0
+	for e in main.get_enemies():
+		if e.can_be_hit() and e.position.distance_to(center) < r and e.statuses.has("shock"):
+			charged += 1
+	var br: float = r * (1.0 + minf(0.08 * charged, 0.6))
+	var dmg: float = float(s["blast"]) * damage_mult * float(v["pow"]) * (1.0 + minf(0.06 * charged, 0.5))
+	Fx.explosion(main, center, Color(1.0, 0.45, 0.9), v["col"], br)
+	main.damage_area(center, br, dmg, null, "burn")
+	main.shake(4.0)
+	if charged >= 3:
+		main.combo_pop(center + Vector2(0, -40), "ГРАВИ-РАЗРЯД ×%d" % charged, Color(0.7, 0.9, 1.0))
 
 
 const VORTEX_SHADER := """
@@ -2161,14 +2260,15 @@ void fragment() {
 static var _vortex_sh: Shader
 
 
-## Воронка на земле: тёмное ядро, неоновые рукава, вращение; гаснет к схлопыванию.
-func _vortex_fx(center: Vector2, r: float, dur: float, col: Color) -> void:
+## Воронка на земле: тёмное ядро, неоновые рукава, вращение (крутит _tick_vortices).
+func _vortex_fx(center: Vector2, r: float):
 	if main.get("_mirror_root") == null:
-		Fx.portal(main, center, col, r / 90.0)
-		return
+		Fx.portal(main, center, Color(0.7, 0.35, 1.0), r / 90.0)
+		return null
 	if _vortex_sh == null:
 		_vortex_sh = Shader.new()
 		_vortex_sh.code = VORTEX_SHADER
+	var col := evo_tint("vortex", Color(0.7, 0.35, 1.0)) if evolved.has("vortex") else Color(0.7, 0.35, 1.0)
 	var mi := MeshInstance3D.new()
 	var q := PlaneMesh.new()
 	q.size = Vector2.ONE * r * 2.0 * 0.01
@@ -2184,11 +2284,7 @@ func _vortex_fx(center: Vector2, r: float, dur: float, col: Color) -> void:
 	mi.scale = Vector3.ONE * 0.2
 	var tw := mi.create_tween()
 	tw.tween_property(mi, "scale", Vector3.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tw.parallel().tween_method(func(v: float): m.set_shader_parameter("t", v), 0.0, dur * 1.6, dur + 0.3)
-	tw.parallel().tween_property(mi, "rotation:y", -TAU * 1.5, dur + 0.3)
-	tw.tween_method(func(v: float): m.set_shader_parameter("fade", v), 1.0, 0.0, 0.25)
-	tw.parallel().tween_property(mi, "scale", Vector3.ONE * 0.05, 0.25)
-	tw.tween_callback(mi.queue_free)
+	return mi
 
 
 ## Разрядник-дробовик: веер осколков в ближайшего врага, дальность короткая.

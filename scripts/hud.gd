@@ -430,7 +430,9 @@ func _process(delta: float) -> void:
 		UiFocus.keep(modal, _focus)
 	_lvl_t += delta
 	# Кооператив: улучшение выбирает тот, чья очередь, своим устройством
-	if modal == _levelup_root and main.coop and main._chooser != null and main._chooser.input != null and _lvl_t > 0.35:
+	# (на одном экране с фильтром ввода окно и так слушает только выбирающего — двойной
+	# перевод выбора от его же стика/кнопки перескакивал через карточку)
+	if modal == _levelup_root and main.coop and main.get("_pin") == null and main._chooser != null and main._chooser.input != null and _lvl_t > 0.35:
 		var inp = main._chooser.input
 		inp.poll()
 		var cards := _cards.get_children().filter(func(b): return not b.is_queued_for_deletion())
@@ -443,6 +445,7 @@ func _process(delta: float) -> void:
 				UiFocus.pad_mode = true
 			if inp.just("ok"):
 				cards[i].pressed.emit()
+	_highlight_cards(delta, modal == _levelup_root)
 	if main == null or main.player == null:
 		return
 	var p: Node2D = _me()
@@ -1108,7 +1111,7 @@ func _card(index: int, ch: Dictionary) -> Button:
 	btn.add_theme_stylebox_override("normal", _neon_box(accent.darkened(0.35), PANEL_BG, 2, 8, 6))
 	btn.add_theme_stylebox_override("hover", _neon_box(accent, Color(0.1, 0.05, 0.18, 0.95), 3, 8, 18))
 	btn.add_theme_stylebox_override("pressed", _neon_box(Color.WHITE, Color(0.15, 0.08, 0.25, 0.95), 3, 8, 22))
-	btn.add_theme_stylebox_override("focus", _neon_box(accent, Color(0.1, 0.05, 0.18, 0.95), 3, 8, 18))
+	btn.add_theme_stylebox_override("focus", _neon_box(Color(1.2, 1.15, 1.0), Color(0.16, 0.08, 0.26, 0.97), 5, 8, 30))
 	btn.pressed.connect(func():
 		Sound.play("click")
 		main.apply_choice(ch))
@@ -1199,6 +1202,7 @@ func show_level_up(choices: Array, title := "ПОВЫШЕНИЕ УРОВНЯ", s
 	_lvl_title.text = title
 	_lvl_sub.text = sub
 	for c in _cards.get_children():
+		_cards.remove_child(c)   # сразу из дерева: старые карточки не мешают выбору соседа
 		c.queue_free()
 	_cards.add_theme_constant_override("separation", 8 if portrait() else 22)
 	for i in choices.size():
@@ -1213,6 +1217,16 @@ func show_level_up(choices: Array, title := "ПОВЫШЕНИЕ УРОВНЯ", s
 		tw.tween_interval(0.06 * i)
 		tw.tween_property(card, "modulate:a", 1.0, 0.15)
 		tw.parallel().tween_property(card, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	# Соседи заданы явно: влево/вправо — строго на соседнюю карточку
+	var cs := _cards.get_children()
+	for i in cs.size():
+		var c: Control = cs[i]
+		c.focus_neighbor_left = c.get_path_to(cs[i - 1]) if i > 0 else c.get_path_to(c)
+		c.focus_neighbor_right = c.get_path_to(cs[i + 1]) if i < cs.size() - 1 else c.get_path_to(c)
+		c.focus_neighbor_top = c.get_path_to(c)
+		c.focus_neighbor_bottom = c.get_path_to(c)
+		c.focus_next = c.focus_neighbor_right
+		c.focus_previous = c.focus_neighbor_left
 	_levelup_root.visible = true
 
 
@@ -1606,6 +1620,41 @@ func _party_owner_for(modal: Control) -> void:
 		pin.owner_idx = int(main.get("_chest_owner"))
 	else:
 		pin.owner_idx = pin.last_idx
+
+
+## Подсветка выбранной карточки: чуть крупнее, ярче, остальные приглушены; над ней — стрелка.
+var _pick_mark: Label
+
+
+func _highlight_cards(delta: float, on: bool) -> void:
+	if _pick_mark == null and _levelup_root != null:
+		_pick_mark = _label("▼", 34, Color(1.0, 0.95, 0.7), Color(GOLD, 0.9))
+		_pick_mark.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_pick_mark.size = Vector2(60, 40)
+		_pick_mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_levelup_root.add_child(_pick_mark)
+	if _pick_mark == null:
+		return
+	if not on or _lvl_t < 0.4:
+		_pick_mark.visible = false
+		return
+	var f := get_viewport().gui_get_focus_owner()
+	var cards := _cards.get_children()
+	var focused: Control = f if (f != null and f in cards) else null
+	_pick_mark.visible = focused != null
+	var k := minf(1.0, delta * 14.0)
+	for c in cards:
+		var cc: Control = c
+		var sel := cc == focused
+		cc.pivot_offset = cc.size / 2.0
+		cc.scale = cc.scale.lerp(Vector2.ONE * (1.06 if sel else (0.97 if focused != null else 1.0)), k)
+		cc.modulate = cc.modulate.lerp(Color(1.12, 1.12, 1.12, 1.0) if sel else (Color(0.72, 0.72, 0.8, 1.0) if focused != null else Color.WHITE), k)
+	if focused != null:
+		var r := focused.get_global_rect()
+		var tr := _levelup_root.get_global_transform().affine_inverse()
+		var top: Vector2 = tr * Vector2(r.get_center().x, r.position.y)
+		_pick_mark.position = top - Vector2(30, 44 + 6.0 * absf(sin(_t * 5.0)))
+		_pick_mark.move_to_front()
 
 
 func is_modal_open() -> bool:

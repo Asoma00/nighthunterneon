@@ -39,6 +39,7 @@ var _shake := 0.0
 
 var _avatar: Node3D
 var _av_base: Sprite3D
+var _av_outline: Sprite3D     # отряд: обводка Игрока 1 его цветом
 var _av_emit: Sprite3D
 var _av_frames: Dictionary
 var _av_t := 0.0
@@ -1147,6 +1148,9 @@ func _set_avatar_sprites() -> void:
 	var pair := _sprite_pair(_avatar, _av_frames)
 	_av_base = pair[0]
 	_av_emit = pair[1]
+	if _av_outline != null and is_instance_valid(_av_outline):
+		_av_outline.queue_free()
+		_av_outline = _outline3d(_avatar, _av_base, PARTY_COLORS[0])
 
 
 # ================= Цикл =================
@@ -1206,12 +1210,17 @@ func _update_avatar(delta: float) -> void:
 		flat.y = clampf(flat.y, ro.z - float(ri["d"]) / 2.0 + 0.45, front)
 	elif flat.length() > 22.0:
 		flat = flat.normalized() * 22.0
+	if Data.party and _inside == "" and not _party_in.is_empty() and not _hsplit_mode():
+		var cl := _shared_clamp(Vector3(flat.x, 0, flat.y), 0)
+		flat = Vector2(cl.x, cl.z)
 	_avatar.position = Vector3(flat.x, 0, flat.y)
 	if absf(dir.x) > 0.1:
 		_facing_left = dir.x < 0.0
 	_av_t += delta
 	var f := Pixel.hero_frame(_av_frames, "run" if moving else "idle", _av_t)
 	_av_base.texture = _av_frames["base"][f]
+	if _av_outline != null and is_instance_valid(_av_outline):
+		_sync_outline3d(_av_outline, _av_base)
 	_av_emit.texture = _av_frames["emit"][f]
 	_av_base.flip_h = _facing_left
 	_av_emit.flip_h = _facing_left
@@ -1267,12 +1276,17 @@ func _collide(pos: Vector3, r: float) -> Vector3:
 
 func _update_camera(delta: float) -> void:
 	_cine_t = maxf(0.0, _cine_t - delta)
-	_cam_target = _cam_target.lerp(_cine_focus if _cine_t > 0.0 else _avatar.position, minf(1.0, delta * (2.5 if _cine_t > 0.0 else 4.0)))
+	var focus := _avatar.position
+	if _cine_t <= 0.0 and Data.party and _inside == "" and not _party_in.is_empty():
+		_hsplit_centers()
+		focus = _hvc[0] if _hsplit_mode() else _party_center()
+	_cam_target = _cam_target.lerp(_cine_focus if _cine_t > 0.0 else focus, minf(1.0, delta * (2.5 if _cine_t > 0.0 else 4.0)))
 	_shake = move_toward(_shake, 0.0, delta * 2.0)
 	var jitter := Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * _shake * 0.15
 	_cine_zoom = lerpf(_cine_zoom, _cine_zoom_to if _cine_t > 0.0 else 1.0, minf(1.0, delta * 2.5))
 	_camera.position = _cam_target + _cam_off * _cine_zoom + jitter
 	_camera.look_at(_cam_target + Vector3(0, 0.8, 0) + jitter)
+	_hsplit_sync(delta)
 
 
 func _update_interaction() -> void:
@@ -3037,6 +3051,10 @@ func _mate(key: String, hero: String, sprite: String, label: String, col: Color,
 		var pair := _sprite_pair(d["node"], d["frames"])
 		d["base"] = pair[0]
 		d["emit"] = pair[1]
+		if d.has("outline") and is_instance_valid(d["outline"]):
+			d["outline"].queue_free()
+		if Data.party:
+			d["outline"] = _outline3d(d["node"], d["base"], col)
 	d["node"].visible = true
 	return d
 
@@ -3049,6 +3067,8 @@ func _mate_anim(d: Dictionary, moving: bool, left: bool, delta: float) -> void:
 	d["emit"].texture = fr["emit"][f]
 	d["base"].flip_h = left
 	d["emit"].flip_h = left
+	if d.has("outline") and is_instance_valid(d["outline"]):
+		_sync_outline3d(d["outline"], d["base"])
 
 
 func _drop_mate(key: String) -> void:
@@ -3087,6 +3107,10 @@ func _party_setup() -> void:
 		var at := _avatar.position + Vector3(-1.2 + 0.8 * i, 0, 1.0 + 0.3 * (i % 2))
 		var hid := str(Data.coop_heroes[i])
 		_mate("p%d" % i, hid, Meta.hero_sprite(hid), "ИГРОК %d" % (i + 1), PARTY_COLORS[i], _collide(at, 0.5))
+	# Игрок 1: подпись и обводка его цветом, как у остальных
+	_label3d(_avatar, "ИГРОК 1", Vector3(0, 1.9, 0), PARTY_COLORS[0], 36)
+	_av_outline = _outline3d(_avatar, _av_base, PARTY_COLORS[0])
+	_hsplit_setup()
 	_party_label = _label("", 14, Color(1.0, 0.6, 0.85), Color(1.0, 0.3, 0.7, 0.5))
 	_party_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	_party_label.offset_left = -560
@@ -3180,7 +3204,12 @@ func _party_tick(delta: float) -> void:
 		var pos := n.position + Vector3(v.x, 0, v.y) * 6.0 * delta
 		# Держимся рядом с Игроком 1: отставший (или он вошёл в здание) — подтягивается к нему
 		var to_p1 := Vector2(pos.x - _avatar.position.x, pos.z - _avatar.position.z)
-		if to_p1.length() > 9.0:
+		# В здании — держимся рядом; снаружи: свои камеры — гуляем свободно (подтягиваемся,
+		# только если Игрок 1 вошёл/вышел), общая камера — не выходим за край экрана
+		var far := 9.0 if (_inside != "" or not _hsplit_mode()) else 45.0
+		if _inside == "" and not _hsplit_mode() and to_p1.length() <= 30.0:
+			pos = _shared_clamp(pos, i)
+		elif to_p1.length() > far:
 			var off := Vector3(-1.0 + 0.7 * k, 0, 1.1)
 			pos = _avatar.position + off
 		pos = _collide(pos, 0.5)
@@ -6308,3 +6337,230 @@ func _fill_campfire() -> void:
 	more.pressed.connect(func(): _fill_panel())
 	_panel_box.add_child(_centered(more))
 	_add_close()
+
+
+
+# ================= Отряд в убежище: камеры как в бою =================
+# «Свои камеры»: пока все рядом — общий кадр; отошедший получает свою камеру, экран
+# делится линиями между игроками, граница проявляется плавно. «Общая камера»: кадр
+# посередине, игроки не выходят за его край.
+
+const HSPLIT_R := 0.72
+var _hsplit := false
+var _hvc: Array = []             # центры видов (XZ мира), по игроку
+var _hcam: Array = []            # сглаженные центры камер
+var _hviews: Array = []          # i ≥ 1: {"vp", "cam", "on"}
+var _hsplit_mat: ShaderMaterial
+const HSPLIT_SHADER := """
+shader_type canvas_item;
+uniform sampler2D v1 : source_color, filter_nearest;
+uniform sampler2D v2 : source_color, filter_nearest;
+uniform sampler2D v3 : source_color, filter_nearest;
+uniform sampler2D v4 : source_color, filter_nearest;
+uniform int n = 1;
+uniform vec2 site[5];
+uniform vec2 cpos[5];
+uniform int src[5];
+uniform vec2 scr = vec2(1280.0, 720.0);
+void fragment() {
+	vec2 p = UV * scr;
+	int a = 0;
+	int b = 0;
+	float da = 1e9;
+	float db = 1e9;
+	for (int i = 0; i < 5; i++) {
+		if (i >= n) { break; }
+		float d = distance(p, site[i]);
+		if (d < da) { db = da; b = a; da = d; a = i; }
+		else if (d < db) { db = d; b = i; }
+	}
+	int k = src[a];
+	vec4 c = texture(TEXTURE, UV);
+	if (k == 1) { c = texture(v1, UV); }
+	else if (k == 2) { c = texture(v2, UV); }
+	else if (k == 3) { c = texture(v3, UV); }
+	else if (k == 4) { c = texture(v4, UV); }
+	if (n > 1) {
+		float sep = max(distance(site[a], site[b]), 1.0);
+		float edge = (db * db - da * da) / (2.0 * sep) / scr.y * 720.0;
+		float amt = clamp(distance(cpos[a], cpos[b]) / 2.5, 0.0, 1.0);
+		float w = 1.0 + 2.5 * amt;
+		float core = 1.0 - smoothstep(w * 0.4, w, edge);
+		float glow = (1.0 - smoothstep(w, w * 6.0, edge)) * 0.35;
+		float la = clamp((core + glow) * amt, 0.0, 1.0);
+		c.rgb = mix(c.rgb, mix(vec3(0.33, 0.57, 0.6), vec3(1.0), core * 0.6), la);
+	}
+	COLOR = c;
+}
+"""
+
+
+func _hsplit_mode() -> bool:
+	return _hsplit
+
+
+func _party_positions() -> Array:
+	var out: Array = [_avatar.position]
+	for i in range(1, Data.coop_heroes.size()):
+		var d: Dictionary = _mates.get("p%d" % i, {})
+		out.append((d["node"] as Node3D).position if not d.is_empty() else _avatar.position)
+	return out
+
+
+func _party_center() -> Vector3:
+	var ps := _party_positions()
+	var g := Vector3.ZERO
+	for q in ps:
+		g += q
+	return g / maxf(ps.size(), 1)
+
+
+## Полуразмеры удобной части кадра на земле (единицы мира убежища).
+func _hhalf() -> Vector2:
+	var s := get_viewport().get_visible_rect().size
+	var asp := s.x / maxf(s.y, 1.0)
+	if asp < 1.0:
+		return Vector2(4.5, 7.0)
+	return Vector2(6.2 * asp / 1.778, 3.9)
+
+
+## Общая камера: игрок не может отойти от остальных дальше, чем помещается в кадр.
+func _shared_clamp(pos: Vector3, idx: int) -> Vector3:
+	var lim := _hhalf() * 2.0 * 0.85
+	var ps := _party_positions()
+	var lo := Vector2(-INF, -INF)
+	var hi := Vector2(INF, INF)
+	for j in ps.size():
+		if j == idx:
+			continue
+		var q: Vector3 = ps[j]
+		lo = lo.max(Vector2(q.x, q.z) - lim)
+		hi = hi.min(Vector2(q.x, q.z) + lim)
+	if lo.x <= hi.x:
+		pos.x = clampf(pos.x, lo.x, hi.x)
+	if lo.y <= hi.y:
+		pos.z = clampf(pos.z, lo.y, hi.y)
+	return pos
+
+
+func _hsplit_setup() -> void:
+	_hsplit = str(Settings.get("coop_split")) != "shared"
+	if Settings.has_signal("coop_split_changed") and not Settings.coop_split_changed.is_connected(_on_hsplit_changed):
+		Settings.coop_split_changed.connect(_on_hsplit_changed)
+	if not _hsplit or DisplayServer.get_name() == "headless":
+		return
+	for i in range(1, Data.coop_heroes.size()):
+		var vp := SubViewport.new()
+		vp.world_3d = _vp.find_world_3d()
+		vp.msaa_3d = _vp.msaa_3d
+		vp.positional_shadow_atlas_size = _vp.positional_shadow_atlas_size
+		vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		vp.size = _vp.size
+		add_child(vp)
+		var cam := Camera3D.new()
+		vp.add_child(cam)
+		cam.current = true
+		_hviews.append({"vp": vp, "cam": cam, "on": false})
+	_hsplit_mat = ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = HSPLIT_SHADER
+	_hsplit_mat.shader = sh
+	for k in _hviews.size():
+		_hsplit_mat.set_shader_parameter("v%d" % (k + 1), _hviews[k]["vp"].get_texture())
+	_view_rect.material = _hsplit_mat
+
+
+func _on_hsplit_changed() -> void:
+	if not Data.party or _party_in.is_empty():
+		return
+	for v in _hviews:
+		v["vp"].queue_free()
+	_hviews.clear()
+	_view_rect.material = null
+	_hsplit_mat = null
+	_hsplit_setup()
+
+
+func _hsplit_centers() -> void:
+	var ps := _party_positions()
+	var g := _party_center()
+	var h := _hhalf()
+	_hvc.resize(ps.size())
+	for i in ps.size():
+		var q: Vector3 = ps[i]
+		var u := Vector2(q.x - g.x, q.z - g.z) / h
+		var l := u.length()
+		var sv := u if l <= HSPLIT_R else u * (HSPLIT_R / l)
+		_hvc[i] = q - Vector3(sv.x * h.x, 0, sv.y * h.y)
+
+
+func _hsplit_sync(delta: float) -> void:
+	if _hsplit_mat == null:
+		return
+	var active := _hsplit and _cine_t <= 0.0 and _inside == "" and _panel_id == "" and _hvc.size() == Data.coop_heroes.size()
+	var ps := _party_positions()
+	var sz := Vector2(_vp.size)
+	var sites: Array = []
+	var cpos: Array = []
+	var src: Array = []
+	while _hcam.size() < ps.size():
+		_hcam.append(_cam_target)
+	_hcam[0] = _cam_target
+	for i in ps.size():
+		var c0: Vector3 = _cam_target
+		var want: Vector3 = (_hvc[i] - _hvc[0] + c0) if active else c0
+		_hcam[i] = want if i == 0 else (_hcam[i] as Vector3).lerp(want, minf(1.0, delta * 4.0))
+		var off: Vector3 = _hcam[i] - c0
+		var own := active and i > 0 and off.length() > 0.05
+		cpos.append(Vector2(_hcam[i].x, _hcam[i].z))
+		src.append(i if own else 0)
+		var cam: Camera3D = _camera
+		if i > 0:
+			var v: Dictionary = _hviews[i - 1]
+			if own != v["on"]:
+				v["on"] = own
+				v["vp"].render_target_update_mode = SubViewport.UPDATE_ALWAYS if own else SubViewport.UPDATE_DISABLED
+			if own:
+				if v["vp"].size != _vp.size:
+					v["vp"].size = _vp.size
+				cam = v["cam"]
+				cam.keep_aspect = _camera.keep_aspect
+				cam.fov = _camera.fov
+				cam.transform = _camera.transform.translated(off)
+		var pp: Vector3 = ps[i] + Vector3(0, 0.6, 0)
+		var sp: Vector2 = (cam.unproject_position(pp) if not cam.is_position_behind(pp) else sz / 2.0)
+		sites.append(sp)
+	while sites.size() < 5:
+		sites.append(Vector2(-100000, -100000))
+		cpos.append(Vector2.ZERO)
+		src.append(0)
+	_hsplit_mat.set_shader_parameter("n", ps.size() if active else 1)
+	_hsplit_mat.set_shader_parameter("site", PackedVector2Array(sites))
+	_hsplit_mat.set_shader_parameter("cpos", PackedVector2Array(cpos))
+	_hsplit_mat.set_shader_parameter("src", PackedInt32Array(src))
+	_hsplit_mat.set_shader_parameter("scr", sz)
+
+
+## Обводка аватара цветом игрока: кольцо вокруг силуэта поверх основного спрайта.
+func _outline3d(parent: Node3D, base: Sprite3D, col: Color) -> Sprite3D:
+	var o := Sprite3D.new()
+	o.pixel_size = base.pixel_size
+	o.billboard = base.billboard
+	o.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	o.shaded = false
+	o.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+	o.render_priority = 1
+	o.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	o.modulate = Pixel.hdr(col, 1.7)
+	o.position = base.position + Vector3(0, 0, 0.02)
+	parent.add_child(o)
+	_sync_outline3d(o, base)
+	return o
+
+
+func _sync_outline3d(o: Sprite3D, base: Sprite3D) -> void:
+	var t := Pixel.ring_outline(base.texture)
+	if o.texture != t:
+		o.texture = t
+	o.flip_h = base.flip_h
+	o.visible = base.visible

@@ -18,6 +18,8 @@ var cell := Vector2(206, 82)
 var btn := Vector2(190, 62)
 const PATH_GAP := 34.0       # отступ перед «Личным путём», чтобы надпись не наезжала на узлы
 var _path_row := -1.0
+var _off_main := 0.0
+var _off_path := 0.0
 
 
 func setup(key: String, color: Color, narrow := false, max_w := 0.0) -> void:
@@ -43,9 +45,22 @@ func setup(key: String, color: Color, narrow := false, max_w := 0.0) -> void:
 	for n in _nodes:
 		if n.has("excl") and (_path_row < 0.0 or float(n["pos"].y) < _path_row):
 			_path_row = float(n["pos"].y)
+	# Личный путь — на одной оси с основным деревом: обе части центруются по общей середине
+	_off_main = 0.0
+	_off_path = 0.0
+	if _path_row >= 0.0:
+		var lo := [INF, INF]
+		var hi := [-INF, -INF]
+		for n in _nodes:
+			var g := 1 if float(n["pos"].y) >= _path_row else 0
+			lo[g] = minf(lo[g], float(n["pos"].x))
+			hi[g] = maxf(hi[g], float(n["pos"].x))
+		var half := maxf((hi[0] - lo[0]) / 2.0, (hi[1] - lo[1]) / 2.0)
+		_off_main = half - (lo[0] + hi[0]) / 2.0
+		_off_path = half - (lo[1] + hi[1]) / 2.0
 	var max_pos := Vector2.ZERO
 	for n in _nodes:
-		max_pos = max_pos.max(n["pos"])
+		max_pos = max_pos.max(Vector2(float(n["pos"].x) + _xoff(n), float(n["pos"].y)))
 	custom_minimum_size = Vector2((max_pos.x + 1.0) * cell.x - (cell.x - btn.x), (max_pos.y + 1.0) * cell.y - (cell.y - btn.y) + (PATH_GAP if _path_row >= 0.0 else 0.0))
 	for n in _nodes:
 		var b := Button.new()
@@ -80,9 +95,15 @@ func setup(key: String, color: Color, narrow := false, max_w := 0.0) -> void:
 	refresh()
 
 
+func _xoff(n: Dictionary) -> float:
+	if _path_row < 0.0:
+		return 0.0
+	return _off_path if float(n["pos"].y) >= _path_row else _off_main
+
+
 func _npos(n: Dictionary) -> Vector2:
 	var extra := PATH_GAP if (_path_row >= 0.0 and float(n["pos"].y) >= _path_row) else 0.0
-	return Vector2(n["pos"].x * cell.x, n["pos"].y * cell.y + extra)
+	return Vector2((float(n["pos"].x) + _xoff(n)) * cell.x, n["pos"].y * cell.y + extra)
 
 
 ## Полное описание узла: эффект, цена, ярус и условия.

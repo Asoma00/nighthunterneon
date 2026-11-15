@@ -44,6 +44,57 @@ func _ready() -> void:
 	material = Pixel.mat_add()
 	z_index = 1
 	_r0 = radius
+	_dmg0 = damage
+	_try_merge()
+
+
+## Оптимизация: лужи и облака, легшие друг на друга, сливаются в одну — побольше
+## и чуть сильнее. Вместо десятков пятен с отдельной отрисовкой, светом и уроном — одно.
+const MERGE_MAX_R := 260.0
+var merges := 0
+var _dmg0 := 0.0
+
+
+func _mergeable() -> bool:
+	return not tornado and pull <= 0.0 and velocity == Vector2.ZERO and not puppet
+
+
+func _try_merge() -> void:
+	if not _mergeable() or main == null:
+		return
+	var best = null
+	var best_d := INF
+	for z in get_parent().get_children():
+		if z == self or z.is_queued_for_deletion() or not z.has_method("absorb"):
+			continue
+		if not z._mergeable() or z.flask != flask or z.cloud != cloud or z.status != status or z.owner_pl != owner_pl or z.source != source:
+			continue
+		var d: float = z.position.distance_to(position)
+		if d < (z.radius + radius) * 0.6 and d < best_d:
+			best = z
+			best_d = d
+	if best != null:
+		best.absorb(self)
+		set_process(false)
+		visible = false
+		queue_free()
+
+
+## Принять соседнюю лужу: площади складываются (с потолком), урон — от сильнейшей с
+## прибавкой, время — по дольше живущей; центр смещается к «тяжёлой» части.
+func absorb(o: Node2D) -> void:
+	var a1 := radius * radius
+	var a2: float = o.radius * o.radius
+	position = (position * a1 + o.position * a2) / (a1 + a2)
+	radius = minf(sqrt(a1 + a2 * 0.6), maxf(MERGE_MAX_R, radius))
+	_r0 = maxf(_r0, radius)
+	_dmg0 = maxf(_dmg0, float(o.damage))
+	damage = minf(maxf(damage, o.damage) + minf(damage, o.damage) * 0.25, _dmg0 * 1.5)
+	var left := maxf(duration - _t, float(o.duration))
+	duration = _t + left
+	merges += 1
+	if _light:
+		_light.texture_scale = maxf(1.5, radius / 40.0)
 
 
 ## Подпитка полем другого оружия: молот расплёскивает, импульс продлевает.
