@@ -116,6 +116,7 @@ func _ready() -> void:
 		_rebuild_building(id)
 	_build_places()
 	_build_board()
+	_build_signs()
 	_build_decor()
 	_build_avatar()
 	_spawn_npcs()
@@ -124,6 +125,7 @@ func _ready() -> void:
 		Net.send_profile()
 	_build_post()
 	_build_hud()
+	_build_pointers()
 	_party_setup()
 	Sound.set_track("hub")
 	if not Meta.intro_seen and not _net_client:
@@ -1162,6 +1164,7 @@ func _process(delta: float) -> void:
 	_t += delta
 	if _panel_root.visible:
 		UiFocus.keep(_panel_root, _focus)
+	_place_panel_x()
 	for s in _spinners:
 		if is_instance_valid(s[0]):
 			(s[0] as Node3D).rotate(s[1], s[2] * delta)
@@ -1174,6 +1177,7 @@ func _process(delta: float) -> void:
 	_update_chats(delta)
 	_update_villagers(delta)
 	_update_marks()
+	_update_pointers()
 	_update_thanks()
 	if _inside == "hall":
 		_update_tavern(delta)
@@ -1613,6 +1617,23 @@ func _build_hud() -> void:
 	_panel_style = pb
 	panel.add_theme_stylebox_override("panel", pb)
 	center.add_child(panel)
+	_panel_frame = panel
+	# Крестик закрытия в правом верхнем углу окна (держится у рамки при прокрутке)
+	_panel_x = Button.new()
+	_panel_x.text = "✕"
+	_panel_x.focus_mode = Control.FOCUS_NONE
+	_panel_x.add_theme_font_size_override("font_size", 26)
+	_panel_x.custom_minimum_size = Vector2(52, 52)
+	_panel_x.size = Vector2(52, 52)
+	for st_name in ["normal", "hover", "pressed"]:
+		var xs := _sbox(Color(1.0, 0.4, 0.55) if st_name != "normal" else Color(0.75, 0.6, 0.9), Color(0.08, 0.03, 0.14, 0.95), 2, 10 if st_name == "normal" else 18)
+		xs.set_corner_radius_all(26)
+		_panel_x.add_theme_stylebox_override(st_name, xs)
+	_panel_x.tooltip_text = "Закрыть"
+	_panel_x.pressed.connect(func():
+		Sound.play("click")
+		_close_panel())
+	_panel_root.add_child(_panel_x)
 	# Содержимое окна прокручивается, если не помещается в экран
 	_panel_scroll = ScrollContainer.new()
 	panel.add_child(_panel_scroll)
@@ -1626,6 +1647,26 @@ func _build_hud() -> void:
 
 
 var _badge_pic: TextureRect
+var _panel_frame: Control
+var _panel_x: Button
+
+
+## Крестик — у правого верхнего угла рамки окна.
+func _place_panel_x() -> void:
+	if _panel_x == null or _panel_frame == null:
+		return
+	_panel_x.visible = _panel_root.visible and _panel_id != "pause"
+	if not _panel_x.visible:
+		return
+	var r := _panel_frame.get_global_rect()
+	var tr := _panel_root.get_global_transform().affine_inverse()
+	var tl: Vector2 = tr * Vector2(r.end.x, r.position.y)
+	var vs := _panel_root.size
+	var pos := tl + Vector2(-_panel_x.size.x * 0.6, -_panel_x.size.y * 0.4)
+	pos.x = clampf(pos.x, 4.0, vs.x - _panel_x.size.x - 6.0)
+	pos.y = clampf(pos.y, 4.0, vs.y - _panel_x.size.y - 6.0)
+	_panel_x.position = pos
+	_panel_x.move_to_front()
 
 
 func _update_hero_label() -> void:
@@ -2125,6 +2166,23 @@ func _fill_tree_panel(id: String) -> void:
 	var narrow := _portrait()
 	var tl := _label("%s   %s" % [info["name"], "◆".repeat(lvl) + "◇".repeat(int(info["max"]) - lvl)], 26, Color.WHITE, Color(col, 0.8))
 	_panel_box.add_child(_centered(tl))
+	# Улучшение здания — сразу под названием (раньше было в самом низу длинного окна)
+	var top := HBoxContainer.new()
+	top.alignment = BoxContainer.ALIGNMENT_CENTER
+	top.add_theme_constant_override("separation", 14)
+	_panel_box.add_child(top)
+	if Meta.building_busy(id):
+		top.add_child(_label("⚒ стройка ур. %d — ещё %d выл." % [int(Meta.construct["lvl"]), int(Meta.construct["left"])], 16, GOLD))
+	elif lvl < int(info["max"]):
+		var up := _button("▲ ЗДАНИЕ УР. %d — %s" % [lvl + 1, Meta.cost_text(Meta.build_cost(id))], col, Meta.can_upgrade(id))
+		up.custom_minimum_size.x = 320 if narrow else 420
+		up.add_theme_font_size_override("font_size", 16)
+		up.pressed.connect(func(): _do_upgrade(id))
+		top.add_child(up)
+		var why := Meta.upgrade_block(id)
+		if why != "":
+			up.tooltip_text = why
+			_panel_box.add_child(_centered(_label("Здание: ⊘ " + why + "   •   у вас ⚙ %d  ▣ %d  ✶ %d" % [int(Meta.materials["scrap"]), int(Meta.materials["chips"]), int(Meta.materials["cores"])], 13, Color(1.0, 0.65, 0.65))))
 	var prefix: String = {"shrine": "c:", "forge": "w:", "lab": "m:"}[id]
 	var source: Dictionary = {"shrine": Data.CHARACTERS, "forge": Data.WEAPONS, "lab": Data.PASSIVES}[id]
 	if _tree_tab == "" or not _tree_tab.begins_with(prefix):
@@ -2226,29 +2284,6 @@ func _fill_tree_panel(id: String) -> void:
 		tv.bought.connect(func():
 			_particles(_world, Meta.BUILDINGS[id]["pos"] + Vector3(0, 2.0, 0), col, 30, Vector3(1, 1, 1), Vector3(0, 2, 0), 1.0, 0.1, true, 3.0)
 			_fill_panel.call_deferred())
-	var foot := HBoxContainer.new()
-	foot.alignment = BoxContainer.ALIGNMENT_CENTER
-	foot.add_theme_constant_override("separation", 14)
-	_panel_box.add_child(foot)
-	if Meta.building_busy(id):
-		foot.add_child(_label("⚒ стройка ур. %d — ещё %d выл." % [int(Meta.construct["lvl"]), int(Meta.construct["left"])], 16, GOLD))
-	elif lvl < int(info["max"]):
-		var up := _button("ЗДАНИЕ УР. %d — %s" % [lvl + 1, Meta.cost_text(Meta.build_cost(id))], col, Meta.can_upgrade(id))
-		up.custom_minimum_size.x = 320 if narrow else 420
-		up.add_theme_font_size_override("font_size", 16)
-		up.pressed.connect(func(): _do_upgrade(id))
-		foot.add_child(up)
-		var why := Meta.upgrade_block(id)
-		if why != "":
-			up.tooltip_text = why
-			_panel_box.add_child(_centered(_label("Здание: ⊘ " + why + "   •   у вас ⚙ %d  ▣ %d  ✶ %d" % [int(Meta.materials["scrap"]), int(Meta.materials["chips"]), int(Meta.materials["cores"])], 13, Color(1.0, 0.65, 0.65))))
-	var close := _button("ЗАКРЫТЬ" if narrow else Settings.with_key("ЗАКРЫТЬ", "back"), Color(0.6, 0.6, 0.75))
-	close.custom_minimum_size.x = 220 if narrow else 260
-	close.pressed.connect(func():
-		Sound.play("click")
-		_close_panel())
-	foot.add_child(close)
-
 
 
 # ================= Ковка оружия и закрытые модули =================
@@ -6710,3 +6745,124 @@ func _sync_outline3d(o: Sprite3D, base: Sprite3D) -> void:
 		o.texture = t
 	o.flip_h = base.flip_h
 	o.visible = base.visible
+
+
+
+# ================= Указатели и таблички к важным местам =================
+
+## [ключ, подпись, что там, позиция, цвет]
+func _sign_targets() -> Array:
+	var B: Dictionary = Meta.BUILDINGS
+	return [
+		["portal", "ПОРТАЛ", "в бой", PORTAL_POS, MAGENTA],
+		["hall", "ТАВЕРНА", "герои • наёмники • стройка", B["hall"]["pos"], B["hall"]["color"]],
+		["forge", "КУЗНИЦА", "прокачка оружия", B["forge"]["pos"], B["forge"]["color"]],
+		["shrine", "АЛТАРЬ", "прокачка героев", B["shrine"]["pos"], B["shrine"]["color"]],
+		["lab", "ЛАБОРАТОРИЯ", "прокачка модулей", B["lab"]["pos"], B["lab"]["color"]],
+		["library", "БИБЛИОТЕКА", "всё об открытом", LIBRARY, Color(0.6, 0.8, 1.0)],
+		["path", "МОНУМЕНТ", "путь и навыки", MONUMENT, GOLD],
+	]
+
+
+func _build_signs() -> void:
+	var wood := _mat(Color(0.32, 0.22, 0.14), 0.9, 0.0, "wood", 1.2)
+	# Центральный столб с досками-стрелками на площади
+	var post := Node3D.new()
+	post.position = Vector3(-2.3, 0, 5.4)
+	_world.add_child(post)
+	_add(post, _cyl(0.07, 0.09, 2.6, 6), wood, Vector3(0, 1.3, 0))
+	var k := 0
+	for t in _sign_targets():
+		if t[0] == "portal":
+			continue
+		var to: Vector3 = t[3] - post.position
+		var ang := atan2(to.x, to.z)
+		var arm := Node3D.new()
+		arm.position = Vector3(0, 2.4 - 0.36 * k, 0)
+		arm.rotation.y = ang
+		post.add_child(arm)
+		# Доска-стрелка в сторону места, с цветным краем
+		_add(arm, _box(0.07, 0.2, 0.95), wood, Vector3(0, 0, 0.5))
+		_add(arm, _box(0.08, 0.05, 0.98), _emat(t[4], 1.8), Vector3(0, 0.1, 0.5))
+		_add(arm, _box(0.06, 0.14, 0.14), _emat(t[4], 2.2), Vector3(0, 0, 1.02), Vector3(45, 0, 0))
+		var l := _label3d(arm, str(t[1]), Vector3(0, 0.05, 1.25), t[4], 20)
+		l.no_depth_test = false
+		k += 1
+	_label3d(post, "УКАЗАТЕЛЬ", Vector3(0, 2.85, 0), Color(0.9, 0.85, 0.7), 24)
+	# Таблички у входа в каждое здание: название и что там делать
+	for t in _sign_targets():
+		var pos: Vector3 = t[3]
+		var dir := Vector3(-pos.x, 0, 3.0 - pos.z).normalized()
+		var side := Vector3(dir.z, 0, -dir.x)
+		var at := pos + dir * (2.9 if t[0] != "portal" else 1.4) + side * 1.5
+		if t[0] == "portal":
+			at = PORTAL_POS + Vector3(-1.9, 0, 2.2)
+		var sg := Node3D.new()
+		sg.position = at
+		_world.add_child(sg)
+		for x in [-0.45, 0.45]:
+			_add(sg, _cyl(0.04, 0.05, 1.1, 5), wood, Vector3(x, 0.55, 0))
+		_add(sg, _box(1.2, 0.55, 0.06), wood, Vector3(0, 1.15, 0))
+		_add(sg, _box(1.26, 0.04, 0.07), _emat(t[4], 2.0), Vector3(0, 1.43, 0))
+		_add(sg, _box(1.26, 0.04, 0.07), _emat(t[4], 2.0), Vector3(0, 0.87, 0))
+		var pl := _label3d(sg, "%s\n%s" % [t[1], t[2]], Vector3(0, 1.15, 0.05), t[4], 20)
+		pl.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+		pl.no_depth_test = false
+
+
+# ---------- Стрелки у края экрана к местам, которые сейчас не видно ----------
+
+var _pointers: Array = []   # [Control, Label, target]
+
+
+func _build_pointers() -> void:
+	for t in _sign_targets():
+		if not (t[0] in ["portal", "hall", "forge", "shrine", "lab"]):
+			continue
+		var box := HBoxContainer.new()
+		box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.add_theme_constant_override("separation", 4)
+		var arrow := _label("➤", 26, t[4], Color(t[4], 0.7))
+		arrow.pivot_offset = Vector2(12, 16)
+		box.add_child(arrow)
+		var name_l := _label(str(t[1]), 14, Color(t[4]).lightened(0.3), Color(t[4], 0.6))
+		box.add_child(name_l)
+		box.visible = false
+		_hud.add_child(box)
+		_pointers.append([box, arrow, t])
+
+
+func _update_pointers() -> void:
+	if _pointers.is_empty() or _camera == null:
+		return
+	var hide: bool = _inside != "" or _panel_id != "" or _cine_t > 0.0 or (_dlg != null and is_instance_valid(_dlg))
+	var vs := get_viewport().get_visible_rect().size
+	var vps := Vector2(_vp.size)
+	var k := vs / vps
+	var mid := vs / 2.0
+	for p in _pointers:
+		var box: Control = p[0]
+		var t: Array = p[2]
+		var wp: Vector3 = t[3] + Vector3(0, 1.0, 0)
+		if hide:
+			box.visible = false
+			continue
+		var behind := _camera.is_position_behind(wp)
+		var sp: Vector2 = _camera.unproject_position(wp) * k
+		if behind:
+			sp = mid + (mid - sp) * 10.0
+		var m := 60.0
+		var inside := not behind and sp.x > 10.0 and sp.x < vs.x - 10.0 and sp.y > 10.0 and sp.y < vs.y - 10.0
+		box.visible = not inside
+		if inside:
+			continue
+		# Точка на краю экрана по направлению к месту
+		var d := sp - mid
+		if d.length() < 1.0:
+			d = Vector2.UP
+		var half := vs / 2.0 - Vector2(m + 60.0, m + 40.0)
+		var sc := minf(half.x / maxf(absf(d.x), 0.001), half.y / maxf(absf(d.y), 0.001))
+		var edge := mid + d * sc
+		(p[1] as Label).rotation = d.angle()
+		box.position = edge - Vector2(20, 16)
+		box.modulate.a = 0.85 + 0.15 * sin(_t * 4.0)

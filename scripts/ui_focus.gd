@@ -108,7 +108,40 @@ static var _sc_drag := false
 static var _sc_from := Vector2.ZERO
 static var _sc_godot := false   # список и так прокручивает сам (палец на пустом месте)
 static var _sc_base := Vector2.ZERO
-const DRAG_PX := 14.0
+static var _vel := 0.0
+static var _last_y := 0.0
+static var _last_t := 0
+static var _fling_v := 0.0
+static var _fling_sc: ScrollContainer = null
+static var _fling_pos := 0.0
+static var _fling_on := false
+
+
+static func _start_fling(sc: ScrollContainer, v: float) -> void:
+	_fling_sc = sc
+	_fling_v = clampf(v, -6000.0, 6000.0)
+	_fling_pos = float(sc.scroll_vertical)
+	if not _fling_on:
+		_fling_on = true
+		var tree := Engine.get_main_loop() as SceneTree
+		tree.process_frame.connect(_fling_tick)
+
+
+static func _fling_tick() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	var dt := clampf(tree.root.get_process_delta_time() if tree.root.has_method("get_process_delta_time") else 1.0 / 60.0, 0.0, 0.05)
+	if _fling_sc == null or not is_instance_valid(_fling_sc) or not _fling_sc.is_visible_in_tree() or absf(_fling_v) < 25.0:
+		_fling_on = false
+		_fling_v = 0.0
+		tree.process_frame.disconnect(_fling_tick)
+		return
+	_fling_pos += _fling_v * dt
+	var before := _fling_sc.scroll_vertical
+	_fling_sc.scroll_vertical = int(round(_fling_pos))
+	if _fling_sc.scroll_vertical == before and absf(_fling_v * dt) >= 1.0:
+		_fling_v = 0.0   # упёрлись в край списка
+	_fling_v *= exp(-3.2 * dt)
+const DRAG_PX := 9.0
 
 
 static func _mobile() -> bool:
@@ -167,7 +200,14 @@ static func _touch_scroll(event: InputEvent) -> void:
 			_sc_from = event.position
 			_sc_drag = false
 			_sc_godot = false
+			_fling_v = 0.0   # палец остановил разогнанный список
+			_vel = 0.0
+			_last_y = event.position.y
+			_last_t = Time.get_ticks_usec()
 		else:
+			# Отпустили на ходу — список докатывается по инерции и плавно тормозит
+			if _sc_drag and _sc != null and is_instance_valid(_sc) and absf(_vel) > 120.0:
+				_start_fling(_sc, -_vel)
 			_sc = null
 			_sc_drag = false
 		return
@@ -195,6 +235,14 @@ static func _touch_scroll(event: InputEvent) -> void:
 		off.button_mask = MOUSE_BUTTON_MASK_LEFT
 		vp.push_input(off)
 		_sc_base = Vector2(_sc.scroll_horizontal, _sc.scroll_vertical) + (mm.position - _sc_from)
+	# Скорость пальца (сглаженная) — для инерции после отпускания
+	var now := Time.get_ticks_usec()
+	var dt := float(now - _last_t) / 1000000.0
+	if dt > 0.0005:
+		var inst := (mm.position.y - _last_y) / dt
+		_vel = lerpf(_vel, inst, 0.5) if dt < 0.1 else inst
+		_last_y = mm.position.y
+		_last_t = now
 	# Список едет за пальцем ровно на столько, на сколько палец сдвинулся
 	var dpos := mm.position - _sc_from
 	_sc.scroll_vertical = int(round(_sc_base.y - dpos.y))
