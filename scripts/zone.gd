@@ -8,6 +8,7 @@ const Fx := preload("res://scripts/fx.gd")
 var main: Node2D
 var owner_pl: Node2D
 var puppet := false
+var net_owner := 0     # хост: зона чьего клиента (для пересылки остальным)
 var net_pos := Vector2.ZERO
 var radius := 60.0
 var damage := 5.0

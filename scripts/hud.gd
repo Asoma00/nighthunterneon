@@ -449,8 +449,11 @@ func _process(delta: float) -> void:
 	_hp_bar.max_value = p.max_hp
 	_hp_bar.value = lerpf(_hp_bar.value, p.hp, minf(1.0, delta * 10.0))
 	_hp_label.text = ("ПАЛ — ВСТАНЬТЕ РЯДОМ" if p._dead else "%d / %d" % [int(ceil(p.hp)), int(p.max_hp)])
+	_upd_shield(_shield_ui, p)
 	if main.coop and _p2_hp:
 		_update_p2(delta)
+	if main.coop and not _party.is_empty():
+		_update_party(delta)
 	_level_label.text = "УР %d" % p.level
 	if main.endless:
 		_time_label.text = "∞ %s  •  мин %d" % [_fmt_time(main.time_alive), main.endless_min]
@@ -662,8 +665,12 @@ func _build_hud() -> void:
 	_hp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_full_rect(_hp_label)
 	_hp_bar.add_child(_hp_label)
+	_shield_ui = _make_shield(_hp_bar, 18)
 	if main.coop:
-		_build_p2(root)
+		if main.players.size() == 2:
+			_build_p2(root)
+		else:
+			_build_party(root)
 	relayout()
 
 
@@ -715,6 +722,7 @@ func _build_p2(root: Control) -> void:
 	_full_rect(_p2_hp_label)
 	_p2_hp.add_child(_p2_hp_label)
 	_p2_hp.add_child(_tag("P%d" % (_other().pid + 1), c2, Vector2(376, -2)))
+	_p2_shield = _make_shield(_p2_hp, 15, true)
 	# Опыт напарника — тонкая полоска под его здоровьем
 	_p2_xp = _bar(CYAN.darkened(0.15), CYAN)
 	_p2_xp.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
@@ -768,15 +776,18 @@ func _build_p2(root: Control) -> void:
 
 ## Свой герой (слева на экране) и напарник (справа).
 func _me() -> Node2D:
-	if main.net_mode == "client" and main.players.size() > 1:
-		return main.players[1]
+	if main.net_mode == "client" and main.my_idx > 0 and main.my_idx < main.players.size():
+		return main.players[main.my_idx]
 	return main.player
 
 
 func _other() -> Node2D:
 	if main.players.size() < 2:
 		return main.player
-	return main.players[0] if _me() == main.players[1] else main.players[1]
+	for p in main.players:
+		if p != _me():
+			return p
+	return main.player
 
 
 ## Оружие с аспектом подсвечено цветом аспекта.
@@ -825,6 +836,172 @@ func _update_p2(delta: float) -> void:
 	_p2_ab_shade.anchor_top = 1.0 - clampf(cd / full, 0.0, 1.0)
 	_p2_ab_label.text = ("%.0f" % ceil(cd)) if cd > 0.0 else _ab_hint(1)
 	_p2_ab_icon.modulate = Color(1, 1, 1) if cd <= 0.0 else Color(0.5, 0.5, 0.6)
+	_upd_shield(_p2_shield, p)
+
+
+# ---------- Энергощит у полосы здоровья ----------
+
+var _shield_ui := {}
+var _p2_shield := {}
+
+
+## Значок щита над правым краем полосы здоровья и полоска заряда по её верхней кромке.
+func _make_shield(bar: Control, fs: int, left := false) -> Dictionary:
+	var box := HBoxContainer.new()
+	box.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT if left else Control.PRESET_TOP_RIGHT)
+	box.offset_left = 2 if left else -170
+	box.offset_right = 170 if left else -2
+	box.offset_top = -fs - 12
+	box.offset_bottom = -2
+	box.alignment = BoxContainer.ALIGNMENT_BEGIN if left else BoxContainer.ALIGNMENT_END
+	box.add_theme_constant_override("separation", 4)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.visible = false
+	var ic := _icon_rect(Pixel.icon("shield"), fs + 6)
+	box.add_child(ic)
+	var l := _label("", fs, Color(0.55, 0.9, 1.0), Color(0.3, 0.7, 1.0, 0.7))
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	box.add_child(l)
+	bar.add_child(box)
+	# Голубой слой поверх здоровья: щит поднят — полоса целиком в рамке щита
+	var line := ColorRect.new()
+	line.color = Color(0.45, 0.85, 1.0, 0.9)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.anchor_left = 0.0
+	line.anchor_right = 1.0
+	line.offset_left = 3
+	line.offset_right = -3
+	line.offset_top = 1
+	line.offset_bottom = 4
+	line.visible = false
+	bar.add_child(line)
+	var frame := Panel.new()
+	var st := StyleBoxFlat.new()
+	st.bg_color = Color(0.4, 0.8, 1.0, 0.10)
+	st.border_color = Color(0.55, 0.9, 1.0, 0.95)
+	st.set_border_width_all(2)
+	st.set_corner_radius_all(4)
+	st.bg_color = Color(0, 0, 0, 0)
+	st.set_expand_margin_all(3)
+	frame.add_theme_stylebox_override("panel", st)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_full_rect(frame)
+	frame.visible = false
+	bar.add_child(frame)
+	return {"box": box, "label": l, "icon": ic, "line": line, "frame": frame}
+
+
+func _upd_shield(d: Dictionary, p: Node2D) -> void:
+	if d.is_empty() or p == null:
+		return
+	var has: bool = p.ward_lvl > 0.0 and not p._dead
+	d["box"].visible = has
+	d["line"].visible = has
+	d["frame"].visible = has and p.ward_ready()
+	if not has:
+		return
+	var cd: float = p.ward_cd()
+	var k := clampf(1.0 - p._ward_t / maxf(cd, 0.1), 0.0, 1.0)
+	d["line"].anchor_right = k
+	if p.ward_ready():
+		d["label"].text = "ЩИТ 1/1"
+		d["label"].modulate = Color(1, 1, 1, 0.85 + 0.15 * sin(_t * 5.0))
+		d["icon"].modulate = Color(1, 1, 1)
+		d["line"].color = Color(0.45, 0.85, 1.0, 0.9)
+	else:
+		d["label"].text = "ЩИТ 0/1 • %d с" % int(ceil(p._ward_t))
+		d["label"].modulate = Color(0.75, 0.75, 0.85)
+		d["icon"].modulate = Color(0.5, 0.5, 0.6)
+		d["line"].color = Color(0.35, 0.55, 0.8, 0.7)
+
+
+# ---------- Отряд из трёх и больше: карточки напарников справа ----------
+
+var _party: Array = []
+
+
+func _build_party(root: Control) -> void:
+	var c1: Color = _me().player_color()
+	_hp_bar.add_child(_tag("P%d" % (_me().pid + 1), c1, Vector2(-38, -2)))
+	var col := VBoxContainer.new()
+	col.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	col.offset_left = -238
+	col.offset_right = -12
+	col.offset_top = 82
+	col.add_theme_constant_override("separation", 4)
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(col)
+	for p in main.players:
+		if p == _me():
+			continue
+		var pc: Color = p.player_color()
+		var panel := PanelContainer.new()
+		var pst := _neon_box(pc, PANEL_BG, 2, 6, 4)
+		pst.set_content_margin_all(4)
+		panel.add_theme_stylebox_override("panel", pst)
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		col.add_child(panel)
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 2)
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.add_child(v)
+		var head := HBoxContainer.new()
+		head.add_theme_constant_override("separation", 6)
+		head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(head)
+		var ic := _icon_rect(Pixel.icon("ab_" + p.char_id), 20)
+		head.add_child(ic)
+		var name_l := _label("P%d  %s" % [p.pid + 1, p.char_data["name"]], 13, pc, Color(pc, 0.5))
+		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		head.add_child(name_l)
+		var sh := _label("", 11, Color(0.55, 0.9, 1.0))
+		head.add_child(sh)
+		var ab_l := _label("", 11, GOLD)
+		head.add_child(ab_l)
+		var hp := _bar(Color(0.9, 0.12, 0.3), MAGENTA)
+		hp.custom_minimum_size = Vector2(210, 15)
+		v.add_child(hp)
+		var hp_l := _label("", 11, Color.WHITE)
+		hp_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		hp_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		_full_rect(hp_l)
+		hp.add_child(hp_l)
+		var xp := _bar(CYAN.darkened(0.15), CYAN)
+		xp.custom_minimum_size = Vector2(210, 4)
+		v.add_child(xp)
+		_party.append({"p": p, "hp": hp, "hp_l": hp_l, "xp": xp, "ab": ab_l, "ic": ic, "sh": sh, "panel": panel})
+
+
+func _update_party(delta: float) -> void:
+	for d in _party:
+		var p: Node2D = d["p"]
+		if not is_instance_valid(p):
+			continue
+		if p.get("gone"):
+			d["panel"].modulate = Color(1, 1, 1, 0.35)
+			d["hp_l"].text = "ОТКЛЮЧИЛСЯ"
+			continue
+		d["hp"].max_value = p.max_hp
+		d["hp"].value = lerpf(d["hp"].value, p.hp, minf(1.0, delta * 10.0))
+		var st := "ПАЛ — НУЖНА ПОМОЩЬ" if p._dead else ("выбирает улучшение" if p.choosing else "%d / %d" % [int(ceil(p.hp)), int(p.max_hp)])
+		d["hp_l"].text = "УР %d  •  %s" % [p.level, st]
+		d["xp"].max_value = p.xp_to_next
+		d["xp"].value = p.xp
+		var cd: float = p.ability_left
+		d["ab"].text = ("%.0f" % ceil(cd)) if cd > 0.0 else _party_hint(p)
+		d["ic"].modulate = Color(1, 1, 1) if cd <= 0.0 else Color(0.5, 0.5, 0.6)
+		if p.ward_lvl > 0.0 and not p._dead:
+			d["sh"].visible = true
+			d["sh"].text = "◈ЩИТ" if p.ward_ready() else "◇%d" % int(ceil(p._ward_t))
+			d["sh"].modulate = Color.WHITE if p.ward_ready() else Color(0.7, 0.7, 0.8)
+		else:
+			d["sh"].visible = false
+
+
+func _party_hint(p: Node2D) -> String:
+	if main.net_mode != "" or not main.coop:
+		return "готово"
+	return DevInput.ability_hint(Data.coop_devices[p.pid]) if p.pid < Data.coop_devices.size() else "готово"
 
 
 func _update_weapons(p: Node2D) -> void:
@@ -1094,7 +1271,7 @@ func _build_game_over() -> void:
 		main.restart())
 	v.add_child(btn)
 	btn.visible = main.net_mode == ""
-	var hub_btn := _menu_button("В ЛОББИ" if (main.coop or main.net_mode != "") else "В УБЕЖИЩЕ", GOLD)
+	var hub_btn := _menu_button("В УБЕЖИЩЕ ХОСТА" if main.net_mode != "" else ("В УБЕЖИЩЕ ОТРЯДОМ" if main.coop else "В УБЕЖИЩЕ"), GOLD)
 	hub_btn.pressed.connect(func():
 		Sound.play("click")
 		main.to_hub())
@@ -1334,7 +1511,7 @@ func _build_pause() -> void:
 	if main.net_mode == "client":
 		hub_text = "ПОКИНУТЬ ИГРУ"
 	elif main.coop:
-		hub_text = "СДАТЬСЯ И В ЛОББИ"
+		hub_text = "СДАТЬСЯ И В УБЕЖИЩЕ"
 	var hub := _menu_button(hub_text, MAGENTA)
 	hub.pressed.connect(func():
 		Sound.play("click")

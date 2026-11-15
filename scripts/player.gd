@@ -14,6 +14,7 @@ var profile := {}      # прокачка из чужого сохранения
 var choosing := false  # сетевая игра: выбирает улучшение — неуязвим и стоит на месте
 var pending_lv := 0
 var input              # DevInput: своё устройство в кооперативе (иначе общие действия)
+var gone := false     # сетевой игрок вышел посреди забега
 var remote := false   # хост: герой клиента — симулируется у клиента, здесь только показ
 var _heal_acc := 0.0
 var _heal_t := 0.0
@@ -71,7 +72,21 @@ var extra_pierce := 0        # модуль «Бронебойный серде�
 var execute_bonus := 0.0     # модуль «Добивающий чип»
 var titan_bonus := 0.0       # модуль «Гроза титанов»
 var ward_lvl := 0.0          # модуль «Энергощит»
-var _ward_t := 0.0
+var _ward_t := 0.0           # до перезарядки щита (0 — щит поднят)
+var _ward_pop := 0.0         # вспышка разбитого щита
+var _ward_cd_net := 0.0      # перезарядка щита чужого героя (из сети)
+
+
+## Перезарядка Энергощита (с).
+func ward_cd() -> float:
+	if _ward_cd_net > 0.0 and puppet:
+		return _ward_cd_net
+	return maxf(5.0, 16.0 - 2.0 * ward_lvl)
+
+
+## Энергощит: поднят ли сейчас и сколько осталось до восстановления.
+func ward_ready() -> bool:
+	return ward_lvl > 0.0 and _ward_t <= 0.0
 var _armor_cd := 0.0
 var _overflow_t := 0.0
 var _spirit_splits := 0
@@ -320,10 +335,13 @@ func _puppet_tick(delta: float) -> void:
 		_heal_t -= delta
 		if _heal_t <= 0.0 and _heal_acc > 0.0:
 			_heal_t = 0.3
-			Net.event("p_heal", _heal_acc)
+			Net.event_to(pid, "p_heal", _heal_acc)
 			_heal_acc = 0.0
 	position = position.lerp(net_pos, 1.0 - exp(-18.0 * delta))
 	_flash = maxf(0.0, _flash - delta)
+	_ward_pop = maxf(0.0, _ward_pop - delta)
+	if remote:
+		_ward_t = maxf(0.0, _ward_t - delta)
 	_invuln = maxf(0.0, _invuln - delta)
 	if _dead:
 		_anim_t += delta
@@ -352,6 +370,13 @@ func net_state(d: Array, own_progress := false) -> void:
 	_orbit_angle = d[9]
 	_blades_charged = d[10]
 	area_mult = d[11]
+	if d.size() > 17:
+		# Энергощит: показ на чужом герое (заряд и перезарядка — у владельца)
+		ward_lvl = 0.0 if float(d[16]) < 0.0 else maxf(ward_lvl, 0.01)
+		if ward_lvl > 0.0 and _ward_t <= 0.0 and float(d[16]) > 0.0:
+			_ward_pop = 0.45
+		_ward_t = maxf(0.0, float(d[16]))
+		_ward_cd_net = float(d[17])
 	if not own_progress:
 		level = d[12]
 		xp = d[13]
@@ -371,7 +396,8 @@ func net_state(d: Array, own_progress := false) -> void:
 
 func net_row() -> Array:
 	return [position, facing, hp, max_hp, _dead, moving, ability_left, ability_cd * cooldown_mult,
-		_revive, _orbit_angle, _blades_charged, area_mult, level, xp, xp_to_next, choosing]
+		_revive, _orbit_angle, _blades_charged, area_mult, level, xp, xp_to_next, choosing,
+		_ward_t if ward_lvl > 0.0 else -1.0, ward_cd()]
 
 
 ## Клиент: прогресс своего героя ведёт хост (опыт, уровень, выбор улучшений).
@@ -452,8 +478,11 @@ func _m_pre(id: String) -> bool:
 	return preload("res://scripts/meta.gd").module_preinstalled(id)
 
 
+const PLAYER_COLORS := [Color(0.3, 0.95, 1.0), Color(1.0, 0.4, 0.75), Color(0.55, 1.0, 0.35), Color(1.0, 0.7, 0.25), Color(0.7, 0.5, 1.0)]
+
+
 func player_color() -> Color:
-	return Color(0.3, 0.95, 1.0) if pid == 0 else Color(1.0, 0.4, 0.75)
+	return PLAYER_COLORS[clampi(pid, 0, PLAYER_COLORS.size() - 1)]
 
 
 ## Кольцо игрока на полу, а у павшего — круг воскрешения.
@@ -572,6 +601,7 @@ func _process_body(delta: float) -> void:
 	_blades_charged = maxf(0.0, _blades_charged - delta)
 	_shield_t = maxf(0.0, _shield_t - delta)
 	_ward_t = maxf(0.0, _ward_t - delta)
+	_ward_pop = maxf(0.0, _ward_pop - delta)
 	if regen > 0.0:
 		hp = minf(max_hp, hp + regen * delta)
 	infuse_t = maxf(0.0, infuse_t - delta)
@@ -635,7 +665,7 @@ var _aim_shown := Vector2.ZERO
 func _draw_aim(c: Node2D) -> void:
 	if _aim_shown == Vector2.ZERO or _dead:
 		return
-	var col := Color(0.3, 0.95, 1.0) if pid == 0 else Color(1.0, 0.4, 0.75)
+	var col := player_color()
 	var a := _aim_shown
 	for k in 4:
 		var a0 := Vector2(0, 4) + a * (46.0 + k * 22.0)
@@ -727,14 +757,14 @@ func stats(id: String) -> Dictionary:
 ## Неуязвимость (у героя клиента — отправляется ему).
 func give_invuln(t: float) -> void:
 	if remote:
-		Net.event("p_inv", t)
+		Net.event_to(pid, "p_inv", t)
 		return
 	_invuln = maxf(_invuln, t)
 
 
 func add_buff(kind: String, t: float) -> void:
 	if remote:
-		Net.event("p_buff", [kind, t])
+		Net.event_to(pid, "p_buff", [kind, t])
 		buffs[kind] = t
 		return
 	if not buffs.has(kind):
@@ -1335,6 +1365,7 @@ func _animate(delta: float) -> void:
 	var pulse := 0.5 + 0.5 * sin(_anim_t * 3.0)
 	_light.energy = 1.15 + 0.15 * pulse
 	_update_gear(vis)
+	_update_ward3d(vis)
 	_halo.modulate.a = 0.2 + 0.15 * pulse
 
 	if not has_active("aura") and _aura_ring:
@@ -1408,6 +1439,8 @@ func _draw_overlay(canvas: Node2D) -> void:
 			var b0 := -_anim_t * 2.2 + TAU * k / 3.0 + 0.5
 			canvas.draw_arc(Vector2.ZERO, 40.0 + fi * 12.0, b0, b0 + 1.2, 12, Pixel.hdr(cb, 1.6), 3.0)
 		canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if ward_lvl > 0.0 and not _dead:
+		_draw_ward(canvas)
 	if _shield_t > 0.0:
 		# Гексагональный рунный щит
 		var a := minf(1.0, _shield_t) * (0.7 + 0.3 * sin(_anim_t * 10.0))
@@ -1423,6 +1456,29 @@ func _draw_overlay(canvas: Node2D) -> void:
 	if _spin_t > 0.0:
 		var r := 150.0 * area_mult
 		canvas.draw_arc(Vector2(0, -25), r, _anim_t * 25.0, _anim_t * 25.0 + PI * 1.2, 32, Color(1.6, 0.4, 0.9, 0.6), 6.0)
+
+
+## Энергощит на герое: прозрачный купол с бегущими сотами; разряжен — едва видный
+## контур, который заполняется по мере перезарядки; при ударе купол разлетается.
+func _draw_ward(canvas: Node2D) -> void:
+	var c := Vector2(0, 4)
+	var r := 44.0
+	var col := Color(0.45, 0.85, 1.0)
+	if _ward_t <= 0.0:
+		# Сам купол — 3D-сфера (_update_ward3d); на полу — светящийся след щита
+		var pulse := 0.75 + 0.25 * sin(_anim_t * 4.0)
+		canvas.draw_arc(c, r, 0.0, TAU, 40, Color(col, 0.35 * pulse), 2.0)
+	else:
+		# Перезарядка: дуга набирается по кругу
+		var k := clampf(1.0 - _ward_t / maxf(ward_cd(), 0.1), 0.0, 1.0)
+		canvas.draw_arc(c, r, -PI / 2.0, -PI / 2.0 + TAU * k, 32, Color(col, 0.35), 2.0)
+	if _ward_pop > 0.0:
+		var t := 1.0 - _ward_pop / 0.45
+		canvas.draw_arc(c, r + 40.0 * t, 0.0, TAU, 40, Color(col.r * 1.6, col.g * 1.6, col.b * 1.8, 1.0 - t), 4.0 * (1.0 - t) + 1.0)
+		for i in 8:
+			var a := TAU * i / 8.0 + 0.3
+			var p0 := c + Vector2.RIGHT.rotated(a) * (r + 30.0 * t)
+			canvas.draw_line(p0, p0 + Vector2.RIGHT.rotated(a) * 10.0, Color(col, 1.0 - t), 2.0)
 
 
 func _sync_swords() -> void:
@@ -1460,6 +1516,8 @@ func _sync_swords() -> void:
 func _exit_tree() -> void:
 	if is_instance_valid(_gear):
 		_gear.queue_free()
+	if is_instance_valid(_ward3d):
+		_ward3d.queue_free()
 	for sw in _swords:
 		if is_instance_valid(sw):
 			sw.queue_free()
@@ -1491,14 +1549,15 @@ func take_damage(amount: float) -> void:
 	if remote:
 		# Хост: урон по герою клиента — отправляем клиенту, броня и уклонение считаются у него
 		if _invuln <= 0.0 and not _dead and not main.game_over:
-			Net.event("p_dmg", amount)
+			Net.event_to(pid, "p_dmg", amount)
 			_invuln = 0.45
 		return
 	if _invuln > 0.0 or _dead or main.game_over:
 		return
 	if ward_lvl > 0.0 and _ward_t <= 0.0:
 		# Энергощит поглощает удар целиком
-		_ward_t = maxf(5.0, 16.0 - 2.0 * ward_lvl)
+		_ward_t = ward_cd()
+		_ward_pop = 0.45
 		_invuln = 0.5
 		Fx.ring(main, position + Vector2(0, -20), 10.0, 90.0, Pixel.hdr(Color(0.4, 0.85, 1.0), 2.0), 0.35, 5.0)
 		Fx.text_pop(main, position + Vector2(0, -20), "щит", Color(0.5, 0.9, 1.0), 16)
@@ -2437,7 +2496,9 @@ func _coop_sprite() -> String:
 	var base := str(char_data["sprite"])
 	var key := ""
 	if Net.in_game and Data.coop:
-		key = str(Net.lobby.get("sprite1" if pid == 0 else "sprite2", ""))
+		key = str(Net.run_info(pid).get("sprite", ""))
+		if key == "":
+			key = str(Net.lobby.get("sprite1" if pid == 0 else "sprite2", ""))
 	else:
 		key = preload("res://scripts/meta.gd").hero_sprite(char_id)
 	return key if Pixel.base_key(key) == base else base
@@ -2453,6 +2514,69 @@ func _refresh_mod_frames() -> void:
 	_mod_wait = fr.is_empty()
 	if not _mod_wait:
 		_frames = fr
+
+
+## Энергощит в 3D: прозрачная сфера с бегущими сотами накрывает героя целиком.
+var _ward3d: MeshInstance3D
+var _ward_mat: ShaderMaterial
+const WARD_SHADER := """
+shader_type spatial;
+render_mode unshaded, blend_add, cull_back, depth_draw_never, shadows_disabled;
+uniform vec4 col : source_color = vec4(0.45, 0.85, 1.0, 1.0);
+uniform float amt = 1.0;
+uniform float hit = 0.0;
+void fragment() {
+	float rim = pow(1.0 - clamp(abs(dot(NORMAL, VIEW)), 0.0, 1.0), 2.2);
+	// Соты: два набора полос под углом — сетка ромбов, медленно плывёт вверх
+	vec2 uv = UV * vec2(28.0, 14.0);
+	float a = abs(fract(uv.x + uv.y * 0.5 - TIME * 0.25) - 0.5);
+	float b = abs(fract(uv.x - uv.y * 0.5 + TIME * 0.18) - 0.5);
+	float grid = smoothstep(0.08, 0.0, min(a, b));
+	float scan = smoothstep(0.92, 1.0, sin(UV.y * 9.0 - TIME * 3.0) * 0.5 + 0.5);
+	float k = rim * 1.5 + grid * (0.18 + rim * 0.5) + scan * 0.12 + 0.05;
+	ALBEDO = col.rgb * k * amt + vec3(1.0, 1.0, 1.0) * hit * rim * 2.0;
+}
+"""
+
+
+func _update_ward3d(vis: bool) -> void:
+	if main == null or main.get("_mirror_root") == null or main._mirror_root == null:
+		return
+	var up := ward_lvl > 0.0 and _ward_t <= 0.0 and not _dead and visible
+	var show := (up or _ward_pop > 0.0) and vis
+	if not show:
+		if is_instance_valid(_ward3d):
+			_ward3d.visible = false
+		return
+	if not is_instance_valid(_ward3d):
+		_ward3d = MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.5
+		sm.height = 1.0
+		sm.radial_segments = 24
+		sm.rings = 12
+		_ward3d.mesh = sm
+		_ward3d.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_ward_mat = ShaderMaterial.new()
+		var sh := Shader.new()
+		sh.code = WARD_SHADER
+		_ward_mat.shader = sh
+		_ward_mat.set_shader_parameter("col", Color(0.45, 0.85, 1.0) if pid == 0 else player_color().lerp(Color(0.45, 0.85, 1.0), 0.5))
+		_ward3d.material_override = _ward_mat
+		main._mirror_root.add_child(_ward3d)
+	_ward3d.visible = true
+	_ward3d.position = main._bl(global_position, 0.36)
+	var pulse := 0.85 + 0.15 * sin(_anim_t * 4.0)
+	if up:
+		_ward3d.scale = Vector3(0.68, 0.78, 0.68) * (1.0 + 0.02 * sin(_anim_t * 3.0))
+		_ward_mat.set_shader_parameter("amt", pulse)
+		_ward_mat.set_shader_parameter("hit", 0.0)
+	else:
+		# Щит разбит: сфера вспыхивает, раздувается и гаснет
+		var t := 1.0 - _ward_pop / 0.45
+		_ward3d.scale = Vector3(0.68, 0.78, 0.68) * (1.0 + 0.6 * t)
+		_ward_mat.set_shader_parameter("amt", 1.0 - t)
+		_ward_mat.set_shader_parameter("hit", 1.0 - t)
 
 
 func _update_gear(vis: bool) -> void:

@@ -462,12 +462,12 @@ func _build_main_page() -> void:
 		tw.tween_interval(0.12)   # без затемнения: кадр растворится неоновой волной
 		tw.tween_callback(func(): Loader.go("res://hub.tscn")))
 	v.add_child(play)
-	var coop := _main_btn("ИГРАТЬ ВДВОЁМ", Color(1.0, 0.4, 0.75))
+	var coop := _main_btn("НА ОДНОМ ЭКРАНЕ (2–5)", Color(1.0, 0.4, 0.75))
 	coop.pressed.connect(func():
 		Sound.play("click")
 		_show("coop"))
 	v.add_child(coop)
-	var net := _main_btn("СЕТЕВАЯ ИГРА (LAN)", Color(0.4, 1.0, 0.6))
+	var net := _main_btn("СЕТЕВАЯ ИГРА (LAN, 2–5)", Color(0.4, 1.0, 0.6))
 	net.pressed.connect(func():
 		Sound.play("click")
 		_show("net"))
@@ -982,7 +982,7 @@ func _build_coop_page() -> void:
 	var title := _label("КООПЕРАТИВ", 48, Color.WHITE, Color(MAGENTA, 0.8))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
-	var sub := _label("Два героя на одном экране. Каждый игрок управляет своим устройством.", 16, Color(0.8, 0.8, 0.95))
+	var sub := _label("От двух до пяти героев на одном экране — каждый со своим устройством. Выберите героев, и отряд отправится в убежище: там прокачка, а вылазку начинает Игрок 1 через портал.", 16, Color(0.8, 0.8, 0.95))
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var vw := get_viewport().get_visible_rect().size.x
@@ -995,14 +995,13 @@ func _build_coop_page() -> void:
 	row.add_theme_constant_override("v_separation", 16)
 	row.custom_minimum_size = Vector2(minf(1200.0, vw - 20.0), 0)
 	v.add_child(row)
-	for i in 2:
+	row.add_theme_constant_override("h_separation", 8)
+	# Пять карточек в ряд, если помещаются; иначе переносятся
+	_coop_pw = clampf((minf(1160.0, vw - 24.0) - 8.0 * (COOP_MAX - 1)) / COOP_MAX - 1.0, 132.0, 196.0)
+	for i in COOP_MAX:
 		var slot := _coop_panel(i)
 		_coop_slots.append(slot)
-		if i == 0:
-			row.add_child(slot["panel"])
-			row.add_child(_coop_level_panel())
-		else:
-			row.add_child(slot["panel"])
+		row.add_child(slot["panel"])
 	_coop_hint = _label("", 15, Color(0.75, 0.75, 0.9))
 	_coop_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_coop_hint.custom_minimum_size = Vector2(minf(900.0, vw - 40.0), 0)
@@ -1016,39 +1015,46 @@ func _build_coop_page() -> void:
 		Sound.play("click")
 		_show("main"))
 	buttons.add_child(back)
-	_coop_start = _button("В БОЙ ВДВОЁМ!", GOLD, 320)
+	_coop_start = _button("В УБЕЖИЩЕ ОТРЯДОМ!", GOLD, 340)
 	_coop_start.pressed.connect(_coop_launch)
 	buttons.add_child(_coop_start)
 	v.add_child(buttons)
 
 
+const COOP_MAX := 5
+var _coop_pw := 228.0
+const COOP_COLORS := [Color(0.3, 0.95, 1.0), Color(1.0, 0.4, 0.75), Color(0.55, 1.0, 0.35), Color(1.0, 0.7, 0.25), Color(0.7, 0.5, 1.0)]
+
+
 func _coop_panel(i: int) -> Dictionary:
-	var col := CYAN if i == 0 else Color(1.0, 0.4, 0.75)
+	var col: Color = COOP_COLORS[i]
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(330, 430)
+	panel.custom_minimum_size = Vector2(_coop_pw, 330)
 	panel.add_theme_stylebox_override("panel", _box(col.darkened(0.3), PANEL_BG, 2, 8))
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
 	panel.add_child(v)
-	var head := _label("ИГРОК %d" % (i + 1), 26, col, Color(col, 0.7))
+	var head := _label("ИГРОК %d" % (i + 1), 22, col, Color(col, 0.7))
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(head)
-	var dev_l := _label("", 13, Color(0.75, 0.75, 0.9))
+	var dev_l := _label("", 12, Color(0.75, 0.75, 0.9))
 	dev_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	dev_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(dev_l)
-	var portrait := _sprite_stack("hero", 150, true)
+	var portrait := _sprite_stack("hero", 96, true)
 	portrait.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(portrait)
-	var name_l := _label("", 28, Color.WHITE)
+	var name_l := _label("", 22, Color.WHITE)
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(name_l)
-	var info_l := _label("", 14, Color(0.85, 0.85, 0.95))
+	var info_l := _label("", 12, Color(0.85, 0.85, 0.95))
 	info_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	info_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info_l.custom_minimum_size = Vector2(300, 0)
+	info_l.custom_minimum_size = Vector2(_coop_pw - 22.0, 0)
 	v.add_child(info_l)
-	var state_l := _label("", 18, GOLD, Color(GOLD, 0.5))
+	var state_l := _label("", 15, GOLD, Color(GOLD, 0.5))
+	state_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	state_l.custom_minimum_size = Vector2(_coop_pw - 22.0, 0)
 	state_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	state_l.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	state_l.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
@@ -1093,20 +1099,23 @@ func _coop_level_panel() -> Control:
 
 func _coop_reset() -> void:
 	_join_block = true
-	_coop_level = clampi(Data.selected_level, 0, mini(Meta.levels_cleared, Data.LEVELS.size() - 1))
+	Data.party = false
 	var heroes := _unlocked_heroes()
 	for i in _coop_slots.size():
 		var sl: Dictionary = _coop_slots[i]
 		sl["dev"] = null
 		sl["input"] = null
 		sl["ready"] = false
-		var want: String = Data.selected_character if i == 0 else Data.selected_character2
-		sl["hero"] = maxi(0, heroes.find(want))
+		var want: String = Data.selected_character if i == 0 else (str(Data.coop_heroes[i]) if i < Data.coop_heroes.size() else Data.selected_character2)
+		sl["hero"] = heroes.find(want)
+		if sl["hero"] < 0:
+			sl["hero"] = i % heroes.size()
 		_coop_refresh(i)
-	_coop_change_level(0)
 
 
 func _coop_change_level(d: int) -> void:
+	if _coop_level_l == null:
+		return
 	var max_l := mini(Meta.levels_cleared, Data.LEVELS.size() - 1)
 	_coop_level = clampi(_coop_level + d, 0, max_l)
 	var lv: Dictionary = Data.LEVELS[_coop_level]
@@ -1126,7 +1135,7 @@ func _coop_refresh(i: int) -> void:
 	sl["dev_l"].text = DevInput.device_name(sl["dev"]) if joined else "Свободно"
 	sl["name_l"].text = c["name"]
 	sl["name_l"].add_theme_color_override("font_shadow_color", Color(c["color"], 0.8))
-	sl["info_l"].text = "%s\nОружие: %s\n%s" % [c["title"], Data.WEAPONS[c["weapon"]]["name"], c["active"]]
+	sl["info_l"].text = "%s\nОружие: %s" % [c["title"], Data.WEAPONS[c["weapon"]]["name"]]
 	if not joined:
 		sl["state_l"].text = "Нажмите A на геймпаде" if Settings.input_mode() != "kb" else "Нажмите ПРОБЕЛ, ENTER\nили A на геймпаде"
 	elif sl["ready"]:
@@ -1172,8 +1181,6 @@ func _coop_tick(delta: float) -> void:
 				sl["hero"] = wrapi(sl["hero"] + (1 if inp.just("right") else -1), 0, heroes.size())
 				Sound.play("hover", -6.0)
 				_coop_refresh(i)
-			if i == 0 and (inp.just("up") or inp.just("down")):
-				_coop_change_level(-1 if inp.just("up") else 1)
 			if inp.just("ok"):
 				sl["ready"] = true
 				Sound.play("click")
@@ -1186,31 +1193,48 @@ func _coop_tick(delta: float) -> void:
 				sl["input"] = null
 			_join_block = true
 			_coop_refresh(i)
-	var both: bool = _coop_slots[0]["dev"] != null and _coop_slots[1]["dev"] != null
-	_coop_start.disabled = not both
-	_coop_hint.text = "Ждём второго игрока: нажмите кнопку на своём устройстве" if not both else "Когда оба готовы — бой начнётся сам (или нажмите «В бой вдвоём»)"
-	if both and _coop_slots[0]["ready"] and _coop_slots[1]["ready"]:
+	var joined: Array = _coop_slots.filter(func(sl): return sl["dev"] != null)
+	var enough := joined.size() >= 2
+	var all_ready := enough and joined.all(func(sl): return sl["ready"])
+	_coop_start.disabled = not enough
+	if not enough:
+		_coop_hint.text = "Нужно минимум два игрока: нажмите кнопку на своём устройстве (до пяти — с геймпадами)"
+	else:
+		var rd := joined.filter(func(sl): return sl["ready"]).size()
+		_coop_hint.text = "В отряде %d. Готовы: %d из %d — когда готовы все, отряд отправится в убежище" % [joined.size(), rd, joined.size()]
+	if all_ready:
 		_coop_launch()
 	# Esc / B, когда никто не вошёл — назад в меню
-	if not both and _coop_slots[0]["dev"] == null and _coop_slots[1]["dev"] == null and Input.is_action_just_pressed("ui_cancel"):
+	if joined.is_empty() and Input.is_action_just_pressed("ui_cancel"):
 		_show("main")
 
 
 func _coop_launch() -> void:
 	if _page_name != "coop":
 		return
+	var joined: Array = _coop_slots.filter(func(sl): return sl["dev"] != null)
+	if joined.size() < 2:
+		return
 	var heroes := _unlocked_heroes()
-	Data.coop = true
-	Data.selected_character = heroes[_coop_slots[0]["hero"]]
-	Data.selected_character2 = heroes[_coop_slots[1]["hero"]]
-	Data.coop_devices = [_coop_slots[0]["dev"], _coop_slots[1]["dev"]]
-	Data.selected_level = _coop_level
+	var hs: Array = []
+	var devs: Array = []
+	for sl in joined:
+		hs.append(heroes[clampi(sl["hero"], 0, heroes.size() - 1)])
+		devs.append(sl["dev"])
+	# Отряд собран — все вместе отправляются в убежище; там прокачка, а вылазку
+	# начинает Игрок 1 через портал
+	Data.party = true
+	Data.coop = false
+	Data.coop_heroes = hs
+	Data.coop_devices = devs
+	Data.selected_character = hs[0]
+	Data.selected_character2 = hs[1]
 	Data.world_seed = 0
 	_page_name = ""
 	Sound.play("levelup", 0.0)
 	var tw := create_tween()
 	tw.tween_interval(0.12)   # без затемнения: кадр растворится неоновой волной
-	tw.tween_callback(func(): Loader.go("res://main.tscn"))
+	tw.tween_callback(func(): Loader.go("res://hub.tscn"))
 
 
 # ---------- Сетевая игра (LAN) ----------
@@ -1234,7 +1258,7 @@ func _build_net_page() -> void:
 	var title := _label("СЕТЕВАЯ ИГРА", 48, Color.WHITE, Color(Color(0.4, 1.0, 0.6), 0.8))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_net_v.add_child(title)
-	_net_status = _label("Два компьютера в одной локальной сети (Wi-Fi или кабель).", 16, Color(0.8, 0.8, 0.95))
+	_net_status = _label("От 2 до 5 устройств в одной локальной сети (Wi-Fi или кабель). Бой можно начинать вдвоём.", 16, Color(0.8, 0.8, 0.95))
 	_net_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_net_v.add_child(_net_status)
 
@@ -1246,7 +1270,7 @@ func _build_net_page() -> void:
 	host_btn.pressed.connect(func():
 		Sound.play("click")
 		var err: String = Net.host()
-		_net_status.text = err if err != "" else "Игра создана. Ждём второго игрока...  Ваши адреса: " + _local_ips()
+		_net_status.text = err if err != "" else "Игра создана. Ждём игроков (до 4 подключений)...  Ваши адреса: " + _local_ips()
 		if err == "":
 			_net_push()
 		_net_refresh())
@@ -1328,7 +1352,7 @@ func _net_fill_hosts() -> void:
 		return
 	for ip in Net.hosts:
 		var h: Dictionary = Net.hosts[ip]
-		var b := _button("%s  —  %s%s" % [h["name"], ip, "  (занято)" if h["busy"] else ""], CYAN, 520)
+		var b := _button("%s  —  %s   •   %d/%d%s" % [h["name"], ip, int(h.get("count", 1)), Net.MAX_PLAYERS, "  (мест нет)" if h["busy"] else ""], CYAN, 520)
 		b.disabled = h["busy"]
 		b.pressed.connect(func():
 			Sound.play("click")

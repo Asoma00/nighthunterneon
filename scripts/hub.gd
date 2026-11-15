@@ -97,8 +97,10 @@ var _panel_id := ""
 
 func _ready() -> void:
 	Meta.ensure_loaded()
-	Data.coop = false
-	Data.world_seed = 0
+	if not Net.in_game:
+		# (вылазку могли начать, пока убежище ещё грузилось — тогда отряд уже собран)
+		Data.coop = false
+		Data.world_seed = 0
 	if not Meta.hero_unlocked(Data.selected_character):
 		Data.selected_character = "vega"
 	if not Meta.hero_unlocked(Data.selected_character2):
@@ -117,10 +119,11 @@ func _ready() -> void:
 	_build_avatar()
 	_spawn_npcs()
 	if _net_client:
-		_avatar.position = Vector3(2.0, 0, 4.0)
+		_avatar.position = Vector3(randf_range(-2.5, 2.5), 0, randf_range(3.5, 5.0))
 		Net.send_profile()
 	_build_post()
 	_build_hud()
+	_party_setup()
 	Sound.set_track("hub")
 	if not Meta.intro_seen and not _net_client:
 		get_tree().create_timer(1.0).timeout.connect(func():
@@ -1180,12 +1183,17 @@ func _process(delta: float) -> void:
 			mt += "   %s %d" % [Meta.MATERIALS[mk]["icon"], mv]
 	_mats_label.text = mt
 	_net_tick(delta)
+	_party_tick(delta)
 
 
 func _update_avatar(delta: float) -> void:
 	var dir := Vector2.ZERO
 	if _panel_id == "" and _cine_t <= 0.0:
-		dir = Input.get_vector("move_left", "move_right", "move_up", "move_down")
+		if _p1_input != null:
+			_p1_input.poll()
+			dir = _p1_input.vector()   # отряд: Игрок 1 — только своим устройством
+		else:
+			dir = Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	var moving := dir != Vector2.ZERO
 	var pos := _avatar.position + Vector3(dir.x, 0, dir.y) * 6.0 * delta
 	pos = _collide(pos, 0.5)
@@ -1696,13 +1704,16 @@ func _fill_panel() -> void:
 			_panel_id = "settings"
 			_fill_panel())
 		_panel_box.add_child(_centered(sett))
-		var menu := _button("ПОКИНУТЬ СЕТЕВУЮ ИГРУ" if Net.mode != "" else "В ГЛАВНОЕ МЕНЮ", MAGENTA)
+		var menu := _button("ПОКИНУТЬ СЕТЕВУЮ ИГРУ" if Net.mode != "" else ("РАСПУСТИТЬ ОТРЯД — В МЕНЮ" if Data.party else "В ГЛАВНОЕ МЕНЮ"), MAGENTA)
 		menu.pressed.connect(func():
 			Sound.play("click")
 			Meta.save()
 			if Net.mode != "":
 				Net.leave()
 				Data.menu_page = "net"
+			elif Data.party:
+				Data.party = false
+				Data.menu_page = "coop"
 			Loader.go("res://menu.tscn"))
 		_panel_box.add_child(_centered(menu))
 		return
@@ -1978,6 +1989,11 @@ func _do_upgrade(id: String) -> void:
 func _start_run() -> void:
 	Sound.play("ability", 0.0)
 	_close_panel()
+	if Data.party and Net.mode == "":
+		# Локальный отряд: в бой идут все, Игрок 1 — со своим героем из таверны
+		Data.coop = true
+		Data.coop_heroes[0] = Data.selected_character
+		Data.selected_character2 = Data.coop_heroes[1]
 	var fade := ColorRect.new()
 	fade.color = Color(0, 0, 0, 0)
 	fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -2024,10 +2040,25 @@ func _fill_portal() -> void:
 	_panel_box.add_child(_centered(intro))
 	_panel_box.add_child(_centered(_label(("Герой: %s — %s\nпройдено %d / %d" if _portrait() else "Герой: %s — %s   •   пройдено %d / %d") % [c["name"], c["title"], Meta.levels_cleared, Data.LEVELS.size()], 17, c["color"])))
 	if Net.mode == "host":
-		var ok: bool = Net.lobby.get("client", false)
-		var hc: Dictionary = Data.CHARACTERS.get(Net.peer_hero, Data.CHARACTERS["vega"])
-		var t := ("Сетевая вылазка вдвоём  •  Игрок 2: %s — %s" % [hc["name"], hc["title"]]) if ok else "Ждём второго игрока — он должен подключиться к вашей игре"
-		_panel_box.add_child(_centered(_label(t, 17, Color(1.0, 0.45, 0.8) if ok else Color(0.7, 0.7, 0.85))))
+		var ok: bool = Net.can_start()
+		var names: Array = []
+		var ids: Array = Net.peers.keys()
+		ids.sort()
+		for pid in ids:
+			var hc: Dictionary = Data.CHARACTERS.get(str(Net.peers[pid].get("hero", "vega")), Data.CHARACTERS["vega"])
+			var nk := str(Net.peers[pid].get("nick", ""))
+			names.append("%s%s" % [hc["name"], (" (%s)" % nk) if nk != "" else ""])
+		var t := ("Сетевая вылазка: %d игрока(ов)  •  с вами: %s" % [1 + names.size(), ", ".join(names)]) if ok else "Нужно минимум два человека — ждём, пока кто-то подключится к вашей игре"
+		var tl := _label(t, 17, Color(1.0, 0.45, 0.8) if ok else Color(0.7, 0.7, 0.85))
+		tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		tl.custom_minimum_size = Vector2(minf(700, _avail()), 0)
+		tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_panel_box.add_child(_centered(tl))
+	elif Data.party:
+		var names: Array = []
+		for i in range(1, Data.coop_heroes.size()):
+			names.append("P%d %s" % [i + 1, Data.CHARACTERS[Data.coop_heroes[i]]["name"]])
+		_panel_box.add_child(_centered(_label("Вылазка отрядом (%d): %s" % [Data.coop_heroes.size(), ", ".join(names)], 17, Color(1.0, 0.45, 0.8))))
 	var grid := GridContainer.new()
 	grid.columns = _cols(220)   # вертикальный экран: уровни в две колонки, ничего не вылезает
 	grid.add_theme_constant_override("h_separation", 10)
@@ -2043,7 +2074,7 @@ func _fill_portal() -> void:
 		elif unlocked:
 			status_txt = "%d:%02d" % [int(lv["time"]) / 60, int(lv["time"]) % 60]
 		var accent := GOLD if cleared else (MAGENTA if unlocked else Color(0.35, 0.35, 0.4))
-		var b := _button("%d. %s%s\n%s" % [i + 1, lv["name"], boss_mark, status_txt], accent, unlocked and (Net.mode != "host" or Net.lobby.get("client", false)))
+		var b := _button("%d. %s%s\n%s" % [i + 1, lv["name"], boss_mark, status_txt], accent, unlocked and (Net.mode != "host" or Net.can_start()))
 		b.custom_minimum_size = Vector2(minf(210, _avail()), 64)
 		b.add_theme_font_size_override("font_size", 14)
 		b.tooltip_text = Story.LEVEL_STORY[i]["brief"] if i < Story.LEVEL_STORY.size() else lv["desc"]
@@ -2938,55 +2969,182 @@ func _net_tick(delta: float) -> void:
 		_net_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 		_net_label.offset_left = -620
 		_net_label.offset_right = -16
-		_net_label.offset_top = 18
+		_net_label.offset_top = 128
+		_net_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_net_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		_hud.add_child(_net_label)
 	if Net.mode == "host":
-		_net_label.text = ("СЕТЬ: Игрок 2 в убежище" if Net.lobby.get("client", false) else "СЕТЬ: ждём игрока 2...  IP: " + _local_ips())
+		var cnt := 1 + Net.peers.size()
+		_net_label.text = ("СЕТЬ: в убежище %d из %d  •  можно начинать вылазку в портале  •  IP: %s" % [cnt, Net.MAX_PLAYERS, _local_ips()]) if cnt >= 2 else "СЕТЬ: ждём игроков (от 2 до %d)...  IP: %s" % [Net.MAX_PLAYERS, _local_ips()]
 	else:
-		_net_label.text = "СЕТЬ: вы в убежище хоста  •  вылазку начинает хост"
+		_net_label.text = "СЕТЬ: вы в убежище хоста (%d из %d)  •  вылазку начинает хост" % [Net.player_count(), Net.MAX_PLAYERS]
 	# Свой аватар — напарнику
 	_net_send_t -= delta
 	if _net_send_t <= 0.0:
 		_net_send_t = 1.0 / 15.0
 		var moving := Input.get_vector("move_left", "move_right", "move_up", "move_down") != Vector2.ZERO and _panel_id == ""
 		Net.send_hub_pos(_avatar.position, _facing_left, moving, Data.selected_character)
-	# Аватар напарника
-	var b: Dictionary = Net.buddy
-	if b.is_empty() or Time.get_ticks_msec() - int(b.get("t", 0)) > 4000:
-		if _buddy:
-			_buddy.visible = false
+	# Аватары напарников (до четырёх)
+	var seen := {}
+	for bid in Net.buddies:
+		var b: Dictionary = Net.buddies[bid]
+		if Time.get_ticks_msec() - int(b.get("t", 0)) > 4000:
+			continue
+		seen["n%d" % bid] = true
+		var is_host: bool = b.get("host", false)
+		var col: Color = Color(0.3, 0.95, 1.0) if is_host else Color(1.0, 0.4, 0.75)
+		var nm := str(b.get("nick", ""))
+		if nm == "":
+			nm = "ХОСТ" if is_host else "ИГРОК"
+		var d := _mate("n%d" % bid, str(b["hero"]), str(b.get("sprite", "")), nm, col, b["pos"])
+		d["node"].position = d["node"].position.lerp(b["pos"], 1.0 - exp(-12.0 * delta))
+		_mate_anim(d, b["moving"], b["left"], delta)
+	for k in _mates.keys():
+		if str(k).begins_with("n") and not seen.has(k):
+			_drop_mate(k)
+
+
+# ---------- Аватары напарников: сетевые и локальный отряд ----------
+
+var _mates := {}          # ключ -> {"node", "base", "emit", "frames", "hero", "sprite", "t", "label"}
+
+
+func _mate(key: String, hero: String, sprite: String, label: String, col: Color, at: Vector3) -> Dictionary:
+	var d: Dictionary = _mates.get(key, {})
+	if d.is_empty():
+		var n := Node3D.new()
+		n.position = at
+		_world.add_child(n)
+		d = {"node": n, "hero": "", "sprite": "", "t": randf() * 3.0, "label": _label3d(n, label, Vector3(0, 1.9, 0), col, 36)}
+		_mates[key] = d
+	if d["label"].text != label:
+		d["label"].text = label
+	if hero != d["hero"] or sprite != d["sprite"]:
+		d["hero"] = hero
+		d["sprite"] = sprite
+		if d.has("base") and is_instance_valid(d["base"]):
+			d["base"].queue_free()
+			d["emit"].queue_free()
+		# Облик — тот, что игрок сам надел
+		var base_sp := str(Data.CHARACTERS.get(hero, Data.CHARACTERS["vega"])["sprite"])
+		d["frames"] = Pixel.frames(sprite if Pixel.base_key(sprite) == base_sp else base_sp)
+		var pair := _sprite_pair(d["node"], d["frames"])
+		d["base"] = pair[0]
+		d["emit"] = pair[1]
+	d["node"].visible = true
+	return d
+
+
+func _mate_anim(d: Dictionary, moving: bool, left: bool, delta: float) -> void:
+	d["t"] += delta
+	var fr: Dictionary = d["frames"]
+	var f := Pixel.hero_frame(fr, "run" if moving else "idle", d["t"])
+	d["base"].texture = fr["base"][f]
+	d["emit"].texture = fr["emit"][f]
+	d["base"].flip_h = left
+	d["emit"].flip_h = left
+
+
+func _drop_mate(key: String) -> void:
+	var d: Dictionary = _mates.get(key, {})
+	if not d.is_empty() and is_instance_valid(d["node"]):
+		d["node"].queue_free()
+	_mates.erase(key)
+
+
+# ---------- Локальный отряд (2–5 на одном экране) ----------
+
+const PARTY_COLORS := [Color(0.3, 0.95, 1.0), Color(1.0, 0.4, 0.75), Color(0.55, 1.0, 0.35), Color(1.0, 0.7, 0.25), Color(0.7, 0.5, 1.0)]
+var _p1_input = null
+var _party_in: Array = []      # DevInput игроков 2..N
+var _party_left: Array = []
+var _party_label: Label
+
+
+func _party_setup() -> void:
+	if not Data.party or Net.mode != "" or Data.coop_heroes.size() < 2:
+		Data.party = false
 		return
-	if _buddy == null:
-		_buddy = Node3D.new()
-		_buddy.position = b["pos"]
-		_world.add_child(_buddy)
-		var col := Color(1.0, 0.4, 0.75) if not _net_client else Color(0.3, 0.95, 1.0)
-		_bd_label = _label3d(_buddy, "ИГРОК 2" if not _net_client else "ХОСТ", Vector3(0, 1.9, 0), col, 36)
-	_buddy.visible = true
-	var bn: String = b.get("nick", "")
-	if bn != "" and _bd_label.text != bn:
-		_bd_label.text = bn
-	var bsp := str(b.get("sprite", ""))
-	if b["hero"] != _bd_hero or bsp != _bd_sprite:
-		_bd_hero = b["hero"]
-		_bd_sprite = bsp
-		if _bd_base:
-			_bd_base.queue_free()
-			_bd_emit.queue_free()
-		# Облик напарника — тот, что он сам надел
-		var base_sp := str(Data.CHARACTERS.get(_bd_hero, Data.CHARACTERS["vega"])["sprite"])
-		_bd_frames = Pixel.frames(bsp if Pixel.base_key(bsp) == base_sp else base_sp)
-		var pair := _sprite_pair(_buddy, _bd_frames)
-		_bd_base = pair[0]
-		_bd_emit = pair[1]
-	_buddy.position = _buddy.position.lerp(b["pos"], 1.0 - exp(-12.0 * delta))
-	_bd_t += delta
-	var f := Pixel.hero_frame(_bd_frames, "run" if b["moving"] else "idle", _bd_t)
-	_bd_base.texture = _bd_frames["base"][f]
-	_bd_emit.texture = _bd_frames["emit"][f]
-	_bd_base.flip_h = b["left"]
-	_bd_emit.flip_h = b["left"]
+	var DevInput := preload("res://scripts/devinput.gd")
+	_p1_input = DevInput.new(int(Data.coop_devices[0]))
+	for i in range(1, Data.coop_heroes.size()):
+		if not Meta.hero_unlocked(str(Data.coop_heroes[i])):
+			Data.coop_heroes[i] = "vega"
+		var inp = DevInput.new(int(Data.coop_devices[i]) if i < Data.coop_devices.size() else DevInput.ANY)
+		inp.poll()
+		inp.poll()
+		_party_in.append(inp)
+		_party_left.append(false)
+		var at := _avatar.position + Vector3(-1.2 + 0.8 * i, 0, 1.0 + 0.3 * (i % 2))
+		var hid := str(Data.coop_heroes[i])
+		_mate("p%d" % i, hid, Meta.hero_sprite(hid), "ИГРОК %d" % (i + 1), PARTY_COLORS[i], _collide(at, 0.5))
+	_party_label = _label("", 14, Color(1.0, 0.6, 0.85), Color(1.0, 0.3, 0.7, 0.5))
+	_party_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_party_label.offset_left = -560
+	_party_label.offset_right = -16
+	_party_label.offset_top = 128
+	_party_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_party_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hud.add_child(_party_label)
+	_party_update_label()
+
+
+func _party_update_label() -> void:
+	if _party_label == null:
+		return
+	var DevInput := preload("res://scripts/devinput.gd")
+	var parts: Array = ["ОТРЯД: %d  •  вылазку начинает Игрок 1 в портале" % Data.coop_heroes.size()]
+	for i in range(1, Data.coop_heroes.size()):
+		var dev := int(Data.coop_devices[i]) if i < Data.coop_devices.size() else -1
+		parts.append("P%d %s — %s: сменить героя" % [i + 1, Data.CHARACTERS[Data.coop_heroes[i]]["name"],
+			"ПРОБЕЛ" if dev == DevInput.KB_LEFT else ("ENTER" if dev == DevInput.KB_RIGHT else "A")])
+	_party_label.text = "\n".join(parts)
+
+
+func _party_tick(delta: float) -> void:
+	if _party_in.is_empty():
+		return
+	var free := _panel_id == "" and _cine_t <= 0.0
+	if _party_label:
+		_party_label.visible = free
+	var heroes: Array = []
+	for hid in Data.CHARACTERS:
+		if Meta.hero_unlocked(hid):
+			heroes.append(hid)
+	for k in _party_in.size():
+		var i := k + 1
+		var inp = _party_in[k]
+		inp.poll()
+		var d: Dictionary = _mates.get("p%d" % i, {})
+		if d.is_empty():
+			continue
+		var n: Node3D = d["node"]
+		# Смена героя своим устройством — прямо в убежище
+		if free and inp.just("ok") and not heroes.is_empty():
+			var cur := heroes.find(str(Data.coop_heroes[i]))
+			var nh: String = heroes[(cur + 1) % heroes.size()]
+			Data.coop_heroes[i] = nh
+			_mate("p%d" % i, nh, Meta.hero_sprite(nh), "ИГРОК %d" % (i + 1), PARTY_COLORS[i], n.position)
+			_particles(_world, n.position + Vector3(0, 1.0, 0), Data.CHARACTERS[nh]["color"], 20, Vector3(0.4, 0.8, 0.4), Vector3(0, 2, 0), 0.8, 0.07, true, 2.0)
+			Sound.play("levelup", -8.0, 1.0 + 0.1 * i)
+			_party_update_label()
+		var v: Vector2 = inp.vector() if free else Vector2.ZERO
+		var pos := n.position + Vector3(v.x, 0, v.y) * 6.0 * delta
+		# Держимся рядом с Игроком 1: отставший (или он вошёл в здание) — подтягивается к нему
+		var to_p1 := Vector2(pos.x - _avatar.position.x, pos.z - _avatar.position.z)
+		if to_p1.length() > 9.0:
+			var off := Vector3(-1.0 + 0.7 * k, 0, 1.1)
+			pos = _avatar.position + off
+		pos = _collide(pos, 0.5)
+		if _inside != "":
+			var ri: Dictionary = INTERIORS[_inside]
+			var ro: Vector3 = ri["o"]
+			pos.x = clampf(pos.x, ro.x - float(ri["w"]) / 2.0 + 0.45, ro.x + float(ri["w"]) / 2.0 - 0.45)
+			pos.z = clampf(pos.z, ro.z - float(ri["d"]) / 2.0 + 0.45, ro.z + float(ri["d"]) / 2.0 - 0.45)
+		n.position = Vector3(pos.x, 0, pos.z)
+		if absf(v.x) > 0.1:
+			_party_left[k] = v.x < 0.0
+		_mate_anim(d, v != Vector2.ZERO, _party_left[k], delta)
 
 
 func _local_ips() -> String:

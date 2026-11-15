@@ -1,5 +1,5 @@
 extends CanvasLayer
-const REV := 15020   # версия скрипта автозагрузки (см. hotswap.gd)
+const REV := 15025   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Экран загрузки между сценами (меню → убежище → бой и обратно).
 ## Длится ровно столько, сколько нужно: загрузка сцены в фоне, генерация всех
 ## пиксельных текстур, которые понадобятся, сборка мира и «прогрев» видеокарты
@@ -262,7 +262,14 @@ func _jobs_for(path: String) -> Array:
 		# Герой в надетом облике
 		keys.append(preload("res://scripts/meta.gd").hero_sprite(Data.selected_character))
 		if Data.coop:
-			for sk in [Net.lobby.get("sprite1", ""), Net.lobby.get("sprite2", ""), preload("res://scripts/meta.gd").hero_sprite(Data.selected_character2)]:
+			var sks: Array = [Net.lobby.get("sprite1", ""), Net.lobby.get("sprite2", ""), preload("res://scripts/meta.gd").hero_sprite(Data.selected_character2)]
+			# Все герои отряда (до пяти): облики сетевых игроков и героев на одном экране
+			for rp in Net.lobby.get("players", []):
+				sks.append(rp.get("sprite", ""))
+				sks.append(str(Data.CHARACTERS.get(str(rp.get("hero", "")), {}).get("sprite", "")))
+			for hid in Data.coop_heroes:
+				sks.append(preload("res://scripts/meta.gd").hero_sprite(str(hid)))
+			for sk in sks:
 				if str(sk) != "" and not (str(sk) in keys):
 					keys.append(str(sk))
 		for id in Data.WEAPONS:

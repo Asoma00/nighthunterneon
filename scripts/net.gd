@@ -1,5 +1,5 @@
 extends Node
-const REV := 15020   # версия скрипта автозагрузки (см. hotswap.gd)
+const REV := 15025   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Сетевая игра по локальной сети (автозагрузка Net).
 ## Хост считает всю игру, клиент присылает ввод своего героя и показывает
 ## присланное состояние мира и эффекты. Поиск хоста — широковещательный UDP.
@@ -10,10 +10,12 @@ signal status(text: String)
 
 const PORT := 7777
 const DISCO_PORT := 7779
-const VERSION := "neon-2"
+const VERSION := "neon-3"
+const MAX_PLAYERS := 5      # хост + до 4 подключившихся
 
 var mode := ""            # "" | "host" | "client"
-var lobby := {"hero1": "vega", "hero2": "rin", "level": 0, "ready1": false, "ready2": false, "client": false}
+# «client» — подключился хотя бы один игрок (для совместимости со старым кодом)
+var lobby := {"hero1": "vega", "hero2": "rin", "level": 0, "client": false}
 var hosts := {}           # ip -> {"name": String, "t": float}
 var main: Node            # текущий забег (если идёт)
 var in_game := false
@@ -23,24 +25,28 @@ var _bc: PacketPeerUDP
 var _listen: PacketPeerUDP
 var _bc_t := 0.0
 var _ab_count := 0        # клиент: сколько раз нажата способность
-var _ab_seen := 0         # хост: сколько нажатий клиента уже применено
+var _ab_seen := {}        # хост: индекс игрока -> сколько нажатий уже применено
 var last_snap: Dictionary = {}
 # Убежище хоста
 var host_hub := {}        # клиент: здания/жители хоста
-var buddy := {}           # позиция и герой второго игрока в убежище
-var peer_profile := {}    # хост: прокачка второго игрока из его сохранения
-var peer_hero := "rin"    # хост: герой второго игрока
-var peer_sprite := ""     # хост: спрайт героя второго игрока с его обликом (скином)
+var buddies := {}         # id пира -> позиция и герой его аватара в убежище
+var buddy := {}           # (совместимость) последний присланный аватар
+var peers := {}           # хост: id пира -> {"hero", "sprite", "nick", "profile"}
+var order: Array = []     # порядок игроков в забеге: id пиров, первым — хост (1)
+var my_idx := 0           # свой номер в забеге (хост — 0)
+var run_players: Array = []   # [{"id", "hero", "sprite", "nick"}] — состав забега
+var peer_profile := {}    # (совместимость)
+var peer_hero := "rin"
+var peer_sprite := ""
 var peer_nick := ""
 # Распределённая симуляция: клиент сам считает своего героя, его оружие и эффекты,
 # а хосту отправляет только итог — попадания, своё состояние и эффекты для показа.
 var local := false        # клиент: сейчас идёт своя (локальная) симуляция
 var _c_hits: Array = []   # клиент: попадания по врагам для хоста
 var _c_fx: Array = []     # клиент: свои эффекты для показа у хоста
-var _cstate := {}         # хост: последнее состояние клиента
-var _cstate_new := false
-var _cfx_pending: Array = []
-const CFX_SKIP := ["shake", "flash", "glitch", "hurt", "snd", "number"]       # ник второго игрока (у хоста — клиента, у клиента — хоста)
+var _cstate := {}         # хост: индекс игрока -> последнее состояние
+var _cfx_pending := {}    # хост: индекс игрока -> накопленные эффекты
+const CFX_SKIP := ["shake", "flash", "glitch", "hurt", "snd", "number"]
 var my_hero := ""         # клиент: свой герой (Data.selected_character меняется на время забега)
 var _hub_t := 0.0
 var _snap_new := false
@@ -69,16 +75,26 @@ func is_client() -> bool:
 	return mode == "client"
 
 
+## Сколько человек в игре вместе с хостом.
+func player_count() -> int:
+	if mode == "host":
+		return 1 + peers.size()
+	if mode == "client":
+		return maxi(2, int(lobby.get("count", 2)))
+	return 1
+
+
 func host() -> String:
 	leave()
 	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_server(PORT, 1)
+	var err := peer.create_server(PORT, MAX_PLAYERS - 1)
 	if err != OK:
 		return "Не удалось открыть порт %d (ошибка %d)" % [PORT, err]
 	multiplayer.multiplayer_peer = peer
 	mode = "host"
-	lobby = {"hero1": lobby["hero1"], "hero2": lobby["hero2"], "level": lobby["level"],
-		"ready1": false, "ready2": false, "client": false}
+	peers = {}
+	buddies = {}
+	lobby = {"hero1": lobby["hero1"], "hero2": lobby["hero2"], "level": lobby["level"], "client": false, "count": 1}
 	_bc = PacketPeerUDP.new()
 	_bc.set_broadcast_enabled(true)
 	_bc.set_dest_address("255.255.255.255", DISCO_PORT)
@@ -105,9 +121,13 @@ func leave() -> void:
 	mode = ""
 	in_game = false
 	_bc = null
-	lobby["ready1"] = false
-	lobby["ready2"] = false
+	peers = {}
+	buddies = {}
+	buddy = {}
+	order = []
+	my_idx = 0
 	lobby["client"] = false
+	lobby["count"] = 1
 	lobby_changed.emit()
 
 
@@ -130,7 +150,8 @@ func _process(delta: float) -> void:
 			var pc := OS.get_environment("COMPUTERNAME")
 			if pc == "":
 				pc = OS.get_environment("HOSTNAME")
-			_bc.put_packet(("NEON|%s|%s|%d" % [VERSION, pc if pc != "" else "Хост", 1 if lobby["client"] else 0]).to_utf8_buffer())
+			var full := player_count() >= MAX_PLAYERS
+			_bc.put_packet(("NEON|%s|%s|%d|%d" % [VERSION, pc if pc != "" else "Хост", 1 if full else 0, player_count()]).to_utf8_buffer())
 	if _listen != null:
 		var changed := false
 		while _listen.get_available_packet_count() > 0:
@@ -140,7 +161,10 @@ func _process(delta: float) -> void:
 			if parts.size() >= 4 and parts[0] == "NEON" and parts[1] == VERSION:
 				if not hosts.has(ip):
 					changed = true
-				hosts[ip] = {"name": parts[2], "busy": parts[3] == "1", "t": Time.get_ticks_msec()}
+				var cnt := int(parts[4]) if parts.size() > 4 else 1
+				if hosts.has(ip) and int(hosts[ip].get("count", 1)) != cnt:
+					changed = true
+				hosts[ip] = {"name": parts[2], "busy": parts[3] == "1", "count": cnt, "t": Time.get_ticks_msec()}
 		for ip in hosts.keys():
 			if Time.get_ticks_msec() - int(hosts[ip]["t"]) > 3500:
 				hosts.erase(ip)
@@ -164,14 +188,40 @@ func _on_peer_connected(id: int) -> void:
 
 func _on_peer_disconnected(id: int) -> void:
 	if mode == "host":
-		buddy = {}
-		peer_profile = {}
-		lobby["client"] = false
-		lobby["ready2"] = false
+		buddies.erase(id)
+		var had := peers.has(id)
+		peers.erase(id)
+		_sync_counts()
+		if had:
+			rpc("h_gone", id)
 		lobby_changed.emit()
-		if in_game and main != null and is_instance_valid(main):
-			main.net_lost("Игрок 2 отключился")
-		status.emit("Игрок 2 отключился")
+		var idx := order.find(id)
+		if in_game and idx > 0 and main != null and is_instance_valid(main):
+			if peers.is_empty():
+				main.net_lost("Все игроки отключились")
+			else:
+				main.net_peer_left(idx)
+				event("gone", idx)
+		status.emit("Игрок отключился")
+
+
+func _sync_counts() -> void:
+	lobby["client"] = not peers.is_empty()
+	lobby["count"] = 1 + peers.size()
+	# Совместимость со старыми полями (один напарник)
+	if not peers.is_empty():
+		var first: Dictionary = peers[peers.keys()[0]]
+		peer_hero = str(first.get("hero", "rin"))
+		peer_sprite = str(first.get("sprite", ""))
+		peer_nick = str(first.get("nick", ""))
+		peer_profile = first.get("profile", {})
+	if mode == "host" and lobby["client"]:
+		rpc("h_lobby", lobby)
+
+
+@rpc("authority", "reliable")
+func h_gone(id: int) -> void:
+	buddies.erase(id)
 
 
 # ================= Лобби =================
@@ -181,29 +231,14 @@ func c_hello(ver: String, hero2: String) -> void:
 	if mode != "host":
 		return
 	var id := multiplayer.get_remote_sender_id()
-	if ver != VERSION:
+	if ver != VERSION or peers.size() >= MAX_PLAYERS - 1 or in_game:
 		multiplayer.multiplayer_peer.disconnect_peer(id)
 		return
-	lobby["client"] = true
-	lobby["hero2"] = hero2
-	peer_hero = hero2
-	lobby["ready2"] = false
-	_push_lobby()
+	peers[id] = {"hero": hero2, "sprite": "", "nick": "", "profile": {}}
+	_sync_counts()
+	lobby_changed.emit()
 	rpc_id(id, "h_welcome", hub_state())
-	status.emit("Игрок 2 вошёл в убежище")
-
-
-## Клиент меняет своего героя / готовность.
-@rpc("any_peer", "reliable")
-func c_lobby(hero2: String, ready2: bool, sprite2 := "") -> void:
-	if mode != "host":
-		return
-	lobby["hero2"] = hero2
-	if sprite2 != "":
-		lobby["sprite2"] = sprite2
-		peer_sprite = sprite2
-	lobby["ready2"] = ready2
-	_push_lobby()
+	status.emit("Игрок %d вошёл в убежище" % (1 + peers.size()))
 
 
 @rpc("authority", "reliable")
@@ -212,68 +247,88 @@ func h_lobby(state: Dictionary) -> void:
 	lobby_changed.emit()
 
 
-func set_local(hero: String, ready: bool, level := -1) -> void:
-	var M = load("res://scripts/meta.gd")
+func set_local(hero: String, _ready: bool, level := -1) -> void:
 	if mode == "host":
 		lobby["hero1"] = hero
-		lobby["sprite1"] = M.hero_sprite(hero)
-		lobby["ready1"] = ready
 		if level >= 0:
 			lobby["level"] = level
-		_push_lobby()
 	elif mode == "client":
 		lobby["hero2"] = hero
-		lobby["ready2"] = ready
-		rpc_id(1, "c_lobby", hero, ready, M.hero_sprite(hero))
-		lobby_changed.emit()
-
-
-func _push_lobby() -> void:
 	lobby_changed.emit()
-	if mode == "host" and lobby["client"]:
-		rpc("h_lobby", lobby)
 
 
+## Бой можно начинать, когда в убежище хоста есть хотя бы ещё один игрок.
 func can_start() -> bool:
-	return mode == "host" and lobby["client"] and lobby["ready1"] and lobby["ready2"]
+	return mode == "host" and not peers.is_empty() and not in_game
 
 
 func start() -> void:
-	if not can_start():
-		return
-	# Облики обоих игроков: свой — из сохранения, напарника — присланный им
-	lobby["sprite1"] = load("res://scripts/meta.gd").hero_sprite(lobby["hero1"])
-	if not lobby.has("sprite2") and peer_sprite != "":
-		lobby["sprite2"] = peer_sprite
-	rpc("h_start", lobby, randi() % 2000000000 + 1)
+	start_run(int(lobby.get("level", 0)))
+
+
+## Номер игрока в забеге по id пира (или -1).
+func idx_of(id: int) -> int:
+	return order.find(id)
 
 
 @rpc("authority", "call_local", "reliable")
 func h_start(state: Dictionary, wseed: int) -> void:
 	lobby = state
-	lobby["ready1"] = false
-	lobby["ready2"] = false
-	lobby["client"] = true
+	run_players = state.get("players", [])
+	order = []
+	for rp in run_players:
+		order.append(int(rp["id"]))
+	my_idx = maxi(0, order.find(multiplayer.get_unique_id())) if mode == "client" else 0
 	var Data := load("res://scripts/data.gd")
 	if mode == "client":
 		my_hero = Data.selected_character
-		if state.has("nick1"):
-			peer_nick = state["nick1"]
+		if not run_players.is_empty():
+			peer_nick = str(run_players[0].get("nick", ""))
+	var heroes: Array = []
+	for rp in run_players:
+		heroes.append(str(rp["hero"]))
 	Data.coop = true
-	Data.selected_character = state["hero1"]
-	Data.selected_character2 = state["hero2"]
+	Data.selected_character = heroes[0]
+	Data.selected_character2 = heroes[1] if heroes.size() > 1 else heroes[0]
+	Data.coop_heroes = heroes
 	Data.selected_level = int(state["level"])
 	Data.world_seed = wseed
 	in_game = true
 	_ab_count = 0
-	_ab_seen = 0
+	_ab_seen = {}
+	_cstate = {}
+	_cfx_pending = {}
 	_fx.clear()
 	last_snap = {}
 	get_tree().paused = false
-	Loader.go("res://main.tscn")
+	_go("res://main.tscn")
 
 
-## Конец забега: оба возвращаются в убежище хоста.
+## Переход сцены, даже если идёт загрузка (вылазку начали, пока кто-то ещё грузил убежище).
+func _go(path: String) -> void:
+	var guard := 0
+	while Loader.busy and guard < 3600:
+		guard += 1
+		await get_tree().process_frame
+	if path == "res://main.tscn" and not in_game:
+		return
+	Loader.go(path)
+
+
+## Сведения об игроке забега: облик, ник, прокачка (у хоста — присланная игроком).
+func run_info(idx: int) -> Dictionary:
+	if idx < 0 or idx >= run_players.size():
+		return {}
+	return run_players[idx]
+
+
+func profile_of(idx: int) -> Dictionary:
+	if mode != "host" or idx <= 0 or idx >= order.size():
+		return {}
+	return peers.get(order[idx], {}).get("profile", {})
+
+
+## Конец забега: все возвращаются в убежище хоста.
 func back_to_lobby() -> void:
 	in_game = false
 	main = null
@@ -301,10 +356,11 @@ func hub_state() -> Dictionary:
 @rpc("authority", "reliable")
 func h_welcome(state: Dictionary) -> void:
 	host_hub = state
+	lobby["client"] = true
 	status.emit("Вы в убежище хоста")
 	var Data := load("res://scripts/data.gd")
 	Data.coop = false
-	Loader.go("res://hub.tscn")
+	_go("res://hub.tscn")
 
 
 ## Хост обновил убежище (построил здание, нанял жителя).
@@ -318,7 +374,7 @@ func h_hub(state: Dictionary) -> void:
 	host_hub = state
 
 
-## Позиция своего аватара в убежище (оба направления).
+## Позиция своего аватара в убежище — всем остальным (через хост).
 func send_hub_pos(pos: Vector3, left: bool, moving: bool, hero: String) -> void:
 	if mode == "" or in_game:
 		return
@@ -330,13 +386,18 @@ func send_hub_pos(pos: Vector3, left: bool, moving: bool, hero: String) -> void:
 
 @rpc("any_peer", "unreliable_ordered")
 func hub_pos(pos: Vector3, left: bool, moving: bool, hero: String, nick := "", sprite := "") -> void:
-	buddy = {"pos": pos, "left": left, "moving": moving, "hero": hero, "t": Time.get_ticks_msec(), "nick": nick, "sprite": sprite}
-	if mode == "host" and sprite != "":
-		peer_sprite = sprite
-	if nick != "":
-		peer_nick = nick
-	if mode == "host":
-		peer_hero = hero
+	var id := multiplayer.get_remote_sender_id()
+	if id == multiplayer.get_unique_id():
+		return
+	var b := {"pos": pos, "left": left, "moving": moving, "hero": hero, "t": Time.get_ticks_msec(), "nick": nick, "sprite": sprite, "host": id == 1}
+	buddies[id] = b
+	buddy = b
+	if mode == "host" and peers.has(id):
+		peers[id]["hero"] = hero
+		if sprite != "":
+			peers[id]["sprite"] = sprite
+		if nick != "":
+			peers[id]["nick"] = nick
 
 
 ## Клиент: отправить хосту свою прокачку для выбранного героя.
@@ -347,27 +408,42 @@ func send_profile() -> void:
 	var Meta := load("res://scripts/meta.gd")
 	var prof: Dictionary = Meta.profile(Data.selected_character)
 	prof["sprite"] = Meta.hero_sprite(Data.selected_character)
+	prof["nick"] = Meta.nickname
 	rpc_id(1, "c_profile", Data.selected_character, prof)
 
 
 @rpc("any_peer", "reliable")
 func c_profile(hero: String, prof: Dictionary) -> void:
-	if mode == "host":
-		peer_hero = hero
-		peer_profile = prof
-		peer_sprite = str(prof.get("sprite", ""))
-		if prof.get("nick", "") != "":
-			peer_nick = prof["nick"]
+	if mode != "host":
+		return
+	var id := multiplayer.get_remote_sender_id()
+	if not peers.has(id):
+		return
+	peers[id]["hero"] = hero
+	peers[id]["profile"] = prof
+	peers[id]["sprite"] = str(prof.get("sprite", ""))
+	if str(prof.get("nick", "")) != "":
+		peers[id]["nick"] = str(prof["nick"])
+	_sync_counts()
 
 
-## Хост в портале начинает вылазку для обоих.
+## Хост в портале начинает вылазку для всех, кто в убежище (от двух человек).
 func start_run(level: int) -> void:
 	var Data := load("res://scripts/data.gd")
-	if mode != "host" or not lobby["client"]:
+	if not can_start():
 		return
 	var M = load("res://scripts/meta.gd")
-	var state := {"hero1": Data.selected_character, "hero2": peer_hero, "level": level, "nick1": M.nickname,
-		"sprite1": M.hero_sprite(Data.selected_character), "sprite2": peer_sprite}
+	var plist: Array = [{"id": 1, "hero": Data.selected_character, "nick": M.nickname,
+		"sprite": M.hero_sprite(Data.selected_character)}]
+	var ids: Array = peers.keys()
+	ids.sort()
+	for id in ids:
+		var pr: Dictionary = peers[id]
+		plist.append({"id": id, "hero": str(pr.get("hero", "rin")), "nick": str(pr.get("nick", "")),
+			"sprite": str(pr.get("sprite", ""))})
+	var state := {"level": level, "players": plist, "client": true, "count": plist.size(),
+		"hero1": plist[0]["hero"], "hero2": plist[1]["hero"], "nick1": M.nickname,
+		"sprite1": plist[0]["sprite"], "sprite2": plist[1]["sprite"]}
 	rpc("h_start", state, randi() % 2000000000 + 1)
 
 
@@ -379,6 +455,12 @@ func fx(kind: String, args: Array) -> void:
 		_fx.append([kind, args])
 
 
+## Хост: переслать эффект одного клиента остальным (сам он его не проиграет повторно).
+func fx_from(idx: int, kind: String, args: Array) -> void:
+	if mode == "host" and in_game and _fx.size() < 500:
+		_fx.append([kind, args, idx])
+
+
 func take_fx() -> Array:
 	var f := _fx
 	_fx = []
@@ -386,7 +468,7 @@ func take_fx() -> Array:
 
 
 func send_snapshot(snap: Dictionary) -> void:
-	if mode == "host" and lobby["client"]:
+	if mode == "host" and not peers.is_empty():
 		rpc("h_snap", snap)
 
 
@@ -438,28 +520,35 @@ func send_client_state(state: Dictionary) -> void:
 func c_state(s: Dictionary) -> void:
 	if mode != "host":
 		return
-	_cstate = s
-	_cstate_new = true
-	_cfx_pending.append_array(s.get("fx", []))
-	if _cfx_pending.size() > 400:
-		_cfx_pending = _cfx_pending.slice(_cfx_pending.size() - 400)
+	var idx := idx_of(multiplayer.get_remote_sender_id())
+	if idx <= 0:
+		return
+	_cstate[idx] = s
+	var pend: Array = _cfx_pending.get(idx, [])
+	pend.append_array(s.get("fx", []))
+	if pend.size() > 400:
+		pend = pend.slice(pend.size() - 400)
+	_cfx_pending[idx] = pend
 
 
 @rpc("any_peer", "reliable")
 func c_hits(h: Array) -> void:
 	if mode == "host" and main != null and is_instance_valid(main):
-		main.net_client_hits(h)
+		var idx := idx_of(multiplayer.get_remote_sender_id())
+		if idx > 0:
+			main.net_client_hits(h, idx)
 
 
-## Хост: забрать свежее состояние клиента (или пустой словарь).
-func take_cstate() -> Dictionary:
-	if not _cstate_new:
-		return {}
-	_cstate_new = false
-	var s := _cstate
-	s["fx"] = _cfx_pending
-	_cfx_pending = []
-	return s
+## Хост: забрать свежие состояния клиентов {индекс: состояние}.
+func take_cstates() -> Dictionary:
+	var out := {}
+	for idx in _cstate:
+		var s: Dictionary = _cstate[idx]
+		s["fx"] = _cfx_pending.get(idx, [])
+		out[idx] = s
+	_cstate = {}
+	_cfx_pending = {}
+	return out
 
 
 ## Клиент: ввод своего героя.
@@ -475,19 +564,28 @@ func send_input(v: Vector2, ability_pressed: bool) -> void:
 func c_input(v: Vector2, ab: int) -> void:
 	if mode != "host" or main == null or not is_instance_valid(main):
 		return
-	var p2 = main.players[1] if main.players.size() > 1 else null
-	if p2 == null:
+	var idx := idx_of(multiplayer.get_remote_sender_id())
+	if idx <= 0 or idx >= main.players.size():
 		return
+	var p2 = main.players[idx]
 	p2.net_vec = v
-	if ab > _ab_seen:
-		_ab_seen = ab
+	if ab > int(_ab_seen.get(idx, 0)):
+		_ab_seen[idx] = ab
 		p2.net_ability = true
 
 
 ## Надёжные события хоста: выбор улучшений, сундук, конец игры, музыка.
 func event(kind: String, data: Variant = null) -> void:
-	if mode == "host" and in_game and lobby["client"]:
+	if mode == "host" and in_game and not peers.is_empty():
 		rpc("h_event", kind, data)
+
+
+## Событие только одному игроку (по номеру в забеге).
+func event_to(idx: int, kind: String, data: Variant = null) -> void:
+	if mode != "host" or not in_game or idx <= 0 or idx >= order.size():
+		return
+	if peers.has(order[idx]):
+		rpc_id(order[idx], "h_event", kind, data)
 
 
 @rpc("authority", "reliable")
@@ -505,7 +603,9 @@ func choose(index: int) -> void:
 @rpc("any_peer", "reliable")
 func c_choose(index: int) -> void:
 	if mode == "host" and main != null and is_instance_valid(main):
-		main.net_remote_choice(index)
+		var idx := idx_of(multiplayer.get_remote_sender_id())
+		if idx > 0:
+			main.net_remote_choice(index, idx)
 
 
 ## Клиент закрыл окно своего сундука.

@@ -68,6 +68,7 @@ void fragment() {
 var player: Node2D          # Игрок 1 — ведущий: общий опыт и уровень
 var players: Array = []      # все герои на экране (1 или 2)
 var coop := false
+var my_idx := 0          # свой герой в сетевой игре (у клиента — не 0)
 var net_mode := ""           # "" | "host" | "client"
 var attacker: Node2D         # чей удар сейчас наносится
 var _choosers: Array = []    # кто выбирает улучшение (по очереди)
@@ -194,46 +195,63 @@ func _ready() -> void:
 	ground.props_parent = props_node
 
 	coop = Data.coop
-	player = PlayerScript.new()
-	player.name = "Player"
-	player.main = self
-	player.setup(Data.selected_character)
-	entities.add_child(player)
-	players.append(player)
+	net_mode = Net.mode if (coop and Net.in_game) else ""
+	# Состав отряда: локально — Data.coop_heroes, по сети — порядок игроков хоста
+	var heroes: Array = [Data.selected_character]
 	if coop:
-		var p2 = PlayerScript.new()
-		p2.name = "Player2"
-		p2.main = self
-		p2.pid = 1
-		if Net.in_game and Net.mode == "host":
-			p2.profile = Net.peer_profile  # второй игрок играет со своей прокачкой
-		p2.setup(Data.selected_character2)
-		p2.position = Vector2(90, 0)
-		player.position = Vector2(-90, 0)
-		entities.add_child(p2)
-		players.append(p2)
-		net_mode = Net.mode if Net.in_game else ""
-		if net_mode == "":
-			var DevInput := preload("res://scripts/devinput.gd")
-			player.input = DevInput.new(Data.coop_devices[0])
-			p2.input = DevInput.new(Data.coop_devices[1])
-		elif net_mode == "host":
-			# Герой клиента считается у клиента; здесь — только показ по его данным
-			p2.puppet = true
-			p2.remote = true
-			p2.net_pos = p2.position
+		if net_mode != "":
+			heroes = []
+			for rp in Net.run_players:
+				heroes.append(str(rp["hero"]))
+			if heroes.size() < 2:
+				heroes = [Data.selected_character, Data.selected_character2]
+			my_idx = Net.my_idx if net_mode == "client" else 0
 		else:
-			# Клиент: хост — показ, свой герой — полная локальная симуляция
-			player.puppet = true
-			player.net_pos = player.position
-			_client_input = preload("res://scripts/devinput.gd").new(-1)
-			p2.input = _client_input
+			heroes = Data.coop_heroes.duplicate()
+			if heroes.size() < 2:
+				heroes = [Data.selected_character, Data.selected_character2]
+			heroes[0] = Data.selected_character
+	var DevInput := preload("res://scripts/devinput.gd")
+	for i in heroes.size():
+		var p = PlayerScript.new()
+		p.name = "Player" if i == 0 else "Player%d" % (i + 1)
+		p.main = self
+		p.pid = i
+		if net_mode == "host" and i > 0:
+			p.profile = Net.profile_of(i)   # каждый играет со своей прокачкой
+		p.setup(str(heroes[i]))
+		if heroes.size() > 1:
+			# Отряд встаёт кругом вокруг точки старта
+			p.position = Vector2.RIGHT.rotated(PI + TAU * i / heroes.size()) * (90.0 if heroes.size() == 2 else 110.0)
+		entities.add_child(p)
+		players.append(p)
+		if i == 0:
+			player = p
+		if not coop:
+			continue
+		if net_mode == "":
+			p.input = DevInput.new(int(Data.coop_devices[i]) if i < Data.coop_devices.size() else DevInput.ANY)
+		elif net_mode == "host":
+			if i > 0:
+				# Герой клиента считается у клиента; здесь — только показ по его данным
+				p.puppet = true
+				p.remote = true
+				p.net_pos = p.position
+		else:
+			if i == my_idx:
+				_client_input = DevInput.new(-1)
+				p.input = _client_input
+			else:
+				# Клиент: хост и другие игроки — показ, свой герой — полная локальная симуляция
+				p.puppet = true
+				p.net_pos = p.position
 	if net_mode != "":
 		Net.main = self
 		# Ники над героями в сетевой игре
-		var me_i := 0 if net_mode == "host" else 1
 		for i in players.size():
-			var nk: String = Meta.nickname if i == me_i else (Net.peer_nick if Net.peer_nick != "" else "Игрок")
+			var nk: String = Meta.nickname if i == my_idx else str(Net.run_info(i).get("nick", ""))
+			if nk == "":
+				nk = "Игрок %d" % (i + 1)
 			var l := Label3D.new()
 			l.text = nk
 			l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -357,15 +375,19 @@ func loading_ready() -> bool:
 func view_center() -> Vector2:
 	if net_mode == "host":
 		return players[0].position
-	if net_mode == "client" and players.size() > 1:
-		return players[1].position
+	if net_mode == "client" and my_idx < players.size():
+		return players[my_idx].position
 	return center()
 
 
 ## Вокруг каких точек держать мир загруженным (хосту нужны оба героя).
 func world_centers() -> Array:
 	if net_mode == "host":
-		return [players[0].position, players[1].position]
+		var out: Array = []
+		for p in players:
+			if not p.get("gone"):
+				out.append(p.position)
+		return out
 	return [view_center()]
 
 
@@ -395,19 +417,26 @@ func nearest_player(pos: Vector2) -> Node2D:
 func _leash() -> void:
 	if players.size() < 2:
 		return
-	var a: Node2D = players[0]
-	var b: Node2D = players[1]
-	# Павший не двигается — живой не может уйти от него за край экрана
-	var ka := 0.0 if a._dead else (1.0 if b._dead else 0.5)
-	var kb := 1.0 - ka
+	# Попарно: павший не двигается — живые не могут уйти от него за край экрана
 	var lim := Vector2(820.0, 520.0)
-	var d: Vector2 = b.position - a.position
-	for ax in 2:
-		var ex: float = absf(d[ax]) - lim[ax]
-		if ex > 0.0:
-			var sgn := signf(d[ax])
-			a.position[ax] += sgn * ex * ka
-			b.position[ax] -= sgn * ex * kb
+	for it in 2:
+		for i in players.size():
+			for j in range(i + 1, players.size()):
+				var a: Node2D = players[i]
+				var b: Node2D = players[j]
+				if a.get("gone") or b.get("gone"):
+					continue
+				if a._dead and b._dead:
+					continue
+				var ka := 0.0 if a._dead else (1.0 if b._dead else 0.5)
+				var kb := 1.0 - ka
+				var d: Vector2 = b.position - a.position
+				for ax in 2:
+					var ex: float = absf(d[ax]) - lim[ax]
+					if ex > 0.0:
+						var sgn := signf(d[ax])
+						a.position[ax] += sgn * ex * ka
+						b.position[ax] -= sgn * ex * kb
 
 
 func _make_layer(layer_name: String, parent: Node, ysort: bool) -> Node2D:
@@ -1294,7 +1323,7 @@ func _update_shake(delta: float) -> void:
 	if not camera.get_screen_center_position().is_finite():
 		camera.reset_smoothing()
 	# Взгляд: камера чуть смещается туда, куда смотрит герой
-	var me: Node2D = players[1] if (net_mode == "client" and players.size() > 1) else players[0]
+	var me: Node2D = players[my_idx] if (net_mode == "client" and my_idx < players.size()) else players[0]
 	var want: Vector2 = me.aim * 110.0 if (me.get("aim") != null and not coop) else Vector2.ZERO
 	_look = _look.lerp(want, 1.0 - exp(-3.5 * get_process_delta_time()))
 	camera.offset = _cam_offset + _look + Vector2(randf_range(-1, 1), randf_range(-1, 1)) * _shake
@@ -1302,8 +1331,8 @@ func _update_shake(delta: float) -> void:
 
 ## Красная вспышка экрана только у того, чьего героя ударили.
 func hurt_flash_for(p: Node2D) -> void:
-	if net_mode == "host" and p == players[1]:
-		Net.fx("hurt", [])
+	if net_mode == "host" and p.pid > 0:
+		Net.event_to(p.pid, "fx_hurt")
 		return
 	hurt_flash()
 
@@ -2332,8 +2361,8 @@ func open_chest(opener: Node2D = null) -> void:
 		rewards.append({"type": "heal", "id": "heal", "title": "Нано-аптечка", "desc": "+50 здоровья"})
 	if net_mode == "host":
 		# Сетевая игра: окно сундука только у того, кто открыл, мир не останавливается
-		if player == players[1]:
-			Net.event("chest", rewards)
+		if player.pid > 0:
+			Net.event_to(player.pid, "chest", rewards)
 			_net_next_offer(player)
 		else:
 			hud.show_chest(rewards)
@@ -2734,9 +2763,9 @@ func to_hub() -> void:
 		Net.back_to_lobby()
 		return
 	if coop:
-		Data.menu_page = "coop"
-		to_menu()
-		return
+		# Локальный отряд возвращается в убежище вместе: там прокачка и новая вылазка
+		Data.party = true
+		Data.coop = false
 	get_tree().paused = false
 	Loader.go("res://hub.tscn")
 
@@ -2755,7 +2784,7 @@ var _cstate_t := 0.0
 
 
 ## Хост: у каждого игрока свои предложения улучшений (мир не стоит).
-var _offers := [[], []]
+var _offers := [[], [], [], [], []]
 
 
 func _net_offer(ch: Array, title: String, sub: String) -> void:
@@ -2785,7 +2814,7 @@ func _net_show_offer(p: Node2D, ch: Array, title: String, sub: String) -> void:
 	if p.pid == 0:
 		hud.show_level_up(ch, title, sub)
 	else:
-		Net.event("choices", [ch, title, sub])
+		Net.event_to(p.pid, "choices", [ch, title, sub])
 
 
 func _net_apply_offer(p: Node2D, choice: Dictionary) -> void:
@@ -2810,18 +2839,20 @@ func _net_apply_offer(p: Node2D, choice: Dictionary) -> void:
 	_net_next_offer(p)
 
 
-func net_remote_choice(index: int) -> void:
-	var off: Array = _offers[1]
+func net_remote_choice(index: int, idx := 1) -> void:
+	if idx <= 0 or idx >= players.size():
+		return
+	var off: Array = _offers[idx]
 	if index < 0 or index >= off.size():
 		return
-	_net_apply_offer(players[1], off[index])
+	_net_apply_offer(players[idx], off[index])
 
 
 ## Хост: попадания героя клиента — урон уже посчитан у него, здесь только применяем.
-func net_client_hits(h: Array) -> void:
-	if players.size() < 2 or game_over:
+func net_client_hits(h: Array, idx := 1) -> void:
+	if idx <= 0 or idx >= players.size() or game_over:
 		return
-	var p2: Node2D = players[1]
+	var p2: Node2D = players[idx]
 	var prev_att: Node2D = attacker
 	attacker = p2
 	for row in h:
@@ -2847,9 +2878,9 @@ func net_client_hits(h: Array) -> void:
 func net_event(kind: String, data: Variant) -> void:
 	match kind:
 		"p_dmg", "p_heal", "p_buff", "p_inv":
-			if players.size() < 2:
+			if my_idx <= 0 or my_idx >= players.size():
 				return
-			var me: Node2D = players[1]
+			var me: Node2D = players[my_idx]
 			Net.local = true
 			match kind:
 				"p_dmg":
@@ -2865,6 +2896,10 @@ func net_event(kind: String, data: Variant) -> void:
 			_client_choices = data[0]
 			hud.hide_wait()
 			hud.show_level_up(data[0], data[1], data[2])
+		"fx_hurt":
+			hurt_flash()
+		"gone":
+			net_peer_left(int(data))
 		"wait":
 			hud.show_wait(str(data))
 		"wait_end":
@@ -2882,6 +2917,29 @@ func net_event(kind: String, data: Variant) -> void:
 			hud.show_game_over(bool(data[0]), float(data[1]), int(data[2]), int(data[3]), int(data[4]))
 
 
+## Игрок вышел посреди забега: его герой исчезает, остальные играют дальше.
+func net_peer_left(idx: int) -> void:
+	if idx <= 0 or idx >= players.size():
+		return
+	var p: Node2D = players[idx]
+	if p.get("gone"):
+		return
+	p.gone = true
+	p._dead = true
+	p.visible = false
+	p.choosing = false
+	_offers[idx] = []
+	for nl in _nick_labels:
+		if nl[1] == p:
+			nl[0].visible = false
+	Fx.text_pop(self, view_center() + Vector2(0, -120), "ИГРОК %d ОТКЛЮЧИЛСЯ" % (idx + 1), Pixel.hdr(p.player_color(), 1.5), 24)
+	if net_mode == "host":
+		for q in players:
+			if not q._dead:
+				return
+		on_player_died()
+
+
 ## Связь потеряна посреди забега.
 func net_lost(reason: String) -> void:
 	net_mode = ""
@@ -2894,23 +2952,31 @@ func net_lost(reason: String) -> void:
 
 
 func _net_host_tick(delta: float) -> void:
-	# Состояние героя клиента: позиция, здоровье, его снаряды, зоны и эффекты
-	var cs: Dictionary = Net.take_cstate()
-	if not cs.is_empty() and players.size() > 1:
-		var p2: Node2D = players[1]
+	# Состояния героев клиентов: позиция, здоровье, их снаряды, зоны и эффекты
+	var all: Dictionary = Net.take_cstates()
+	for idx in all:
+		if idx <= 0 or idx >= players.size() or players[idx].get("gone"):
+			continue
+		var cs: Dictionary = all[idx]
+		var p2: Node2D = players[idx]
 		Net.replaying = true
 		if cs.has("pl"):
 			p2.net_state(cs["pl"], true)
 		if cs.has("p"):
-			_apply_projectiles(cs["p"], "cp", p2)
+			_apply_projectiles(cs["p"], "cp%d" % idx, p2)
 		if cs.has("z"):
-			_apply_zones(cs["z"], "cz")
+			_apply_zones(cs["z"], "cz%d" % idx, idx)
 		for f in cs.get("fx", []):
 			_replay(f[0], f[1])
+			# Эффекты одного клиента — и остальным (у него самого они уже есть)
+			if players.size() > 2:
+				Net.fx_from(idx, f[0], f[1])
 		Net.replaying = false
-	# Касания врагов и пули по герою клиента считаем здесь (враги настоящие тут)
-	if players.size() > 1 and not players[1]._dead and not game_over:
-		players[1]._check_contact()
+	# Касания врагов и пули по героям клиентов считаем здесь (враги настоящие тут)
+	if not game_over:
+		for i in range(1, players.size()):
+			if not players[i]._dead and not players[i].get("gone"):
+				players[i]._check_contact()
 	_snap_t -= delta
 	if _snap_t > 0.0:
 		return
@@ -2963,17 +3029,26 @@ func _build_snapshot() -> Dictionary:
 	var p_v := PackedVector2Array()
 	var p_c := PackedColorArray()
 	var p_r := PackedFloat32Array()
+	var p_o := PackedByteArray()
+	var relay := players.size() > 2
 	for p in projectiles_node.get_children():
-		if p.is_queued_for_deletion() or p.get("puppet") == true:
-			continue   # снаряды клиента у него и так есть
+		if p.is_queued_for_deletion():
+			continue
+		var po := 0
+		if p.get("puppet") == true:
+			# Снаряды клиента у него и так есть; при трёх и больше — пересылаем остальным
+			if not relay or p.get("style") == null or p.get("owner_pl") == null or not is_instance_valid(p.owner_pl):
+				continue
+			po = int(p.owner_pl.pid)
 		var st = p.get("style")
+		p_o.append(po)
 		p_id.append(p.get_instance_id())
 		p_s.append(st if st != null else "eb")
 		p_xy.append(p.position)
 		p_v.append(p.velocity)
 		p_c.append(p.color)
 		p_r.append(p.zap_radius if st != null else p.radius)
-	s["p"] = [p_id, p_s, p_xy, p_v, p_c, p_r]
+	s["p"] = [p_id, p_s, p_xy, p_v, p_c, p_r, p_o]
 	# Кристаллы и сундуки
 	var g_id := PackedInt64Array()
 	var g_k := PackedByteArray()
@@ -2994,9 +3069,14 @@ func _build_snapshot() -> Dictionary:
 	# Зоны
 	var z: Array = []
 	for zz in zones_node.get_children():
-		if zz.is_queued_for_deletion() or zz.puppet:
+		if zz.is_queued_for_deletion():
 			continue
-		z.append([zz.get_instance_id(), zz.position, zz.radius, zz.color, 1 if zz.flask else (2 if zz.cloud else 0)])
+		var zo := 0
+		if zz.puppet:
+			if not relay or zz.get("net_owner") == null or int(zz.net_owner) <= 0:
+				continue
+			zo = int(zz.net_owner)
+		z.append([zz.get_instance_id(), zz.position, zz.radius, zz.color, 1 if zz.flask else (2 if zz.cloud else 0), zo])
 	s["z"] = z
 	s["fx"] = Net.take_fx()
 	return s
@@ -3010,9 +3090,9 @@ func _net_client_tick(delta: float) -> void:
 		Net.replaying = false
 	# Своё состояние хосту: герой, его снаряды и зоны, эффекты (попадания уходят отдельно)
 	_cstate_t -= delta
-	if _cstate_t <= 0.0 and players.size() > 1:
+	if _cstate_t <= 0.0 and my_idx > 0 and my_idx < players.size():
 		_cstate_t = NET_DT
-		var me: Node2D = players[1]
+		var me: Node2D = players[my_idx]
 		var p_id := PackedInt64Array()
 		var p_s := PackedStringArray()
 		var p_xy := PackedVector2Array()
@@ -3049,14 +3129,16 @@ func net_apply(s: Dictionary) -> void:
 	player.xp = h[3]
 	player.xp_to_next = h[4]
 	for i in mini(players.size(), s["pl"].size()):
-		if i == 1:
+		if players[i].get("gone"):
+			continue
+		if i == my_idx:
 			players[i].net_progress(s["pl"][i])   # свой герой: только опыт и уровень от хоста
 		else:
 			players[i].net_state(s["pl"][i])
 	if s.has("inv"):
 		for i in mini(players.size(), s["inv"].size()):
 			var inv: Array = s["inv"][i]
-			if i == 1:
+			if i == my_idx:
 				Net.replaying = false
 				players[i].sync_owned_inventory(inv[0], inv[1], inv[2], inv[3] if inv.size() > 3 else [])
 				Net.replaying = true
@@ -3085,6 +3167,8 @@ func net_apply(s: Dictionary) -> void:
 	_apply_zones(s["z"])
 	Net.replaying = true
 	for f in s["fx"]:
+		if f.size() > 2 and int(f[2]) == my_idx:
+			continue   # свой эффект, пересланный хостом другим игрокам
 		_replay(f[0], f[1])
 	Net.replaying = false
 
@@ -3094,6 +3178,8 @@ func _sync_set(key: String, ids: Variant) -> Dictionary:
 	var keep := {}
 	for id in ids:
 		keep[id] = true
+	if not _puppets.has(key):
+		_puppets[key] = {}
 	var d: Dictionary = _puppets[key]
 	for id in d.keys():
 		if not keep.has(id):
@@ -3142,8 +3228,19 @@ func _apply_enemies(e: Array) -> void:
 
 
 func _apply_projectiles(p: Array, key := "p", owner: Node2D = null) -> void:
-	var d := _sync_set(key, p[0])
+	var own: PackedByteArray = p[6] if p.size() > 6 else PackedByteArray()
+	var ids = p[0]
+	if not own.is_empty() and my_idx > 0:
+		# Свои снаряды, пересланные хостом, у клиента уже есть
+		var keep := PackedInt64Array()
+		for i in p[0].size():
+			if int(own[i]) != my_idx:
+				keep.append(p[0][i])
+		ids = keep
+	var d := _sync_set(key, ids)
 	for i in p[0].size():
+		if not own.is_empty() and my_idx > 0 and int(own[i]) == my_idx:
+			continue
 		var id: int = p[0][i]
 		var n = d.get(id)
 		if n == null or not is_instance_valid(n):
@@ -3154,7 +3251,8 @@ func _apply_projectiles(p: Array, key := "p", owner: Node2D = null) -> void:
 			else:
 				n = preload("res://scripts/projectile.gd").new()
 				n.style = st
-				n.owner_pl = owner if owner != null else player
+				var oi := int(own[i]) if not own.is_empty() else 0
+				n.owner_pl = owner if owner != null else (players[oi] if oi > 0 and oi < players.size() else player)
 				n.zap_radius = p[5][i]
 			n.main = self
 			n.puppet = true
@@ -3194,12 +3292,16 @@ func _apply_gems(g: Array) -> void:
 			n.net_pos = g[3][i]
 
 
-func _apply_zones(z: Array, key := "z") -> void:
+func _apply_zones(z: Array, key := "z", owner_idx := 0) -> void:
 	var ids: Array = []
+	var rows: Array = []
 	for row in z:
+		if key == "z" and my_idx > 0 and row.size() > 5 and int(row[5]) == my_idx:
+			continue   # своя зона, пересланная хостом
 		ids.append(row[0])
+		rows.append(row)
 	var d := _sync_set(key, ids)
-	for row in z:
+	for row in rows:
 		var n = d.get(row[0])
 		if n == null or not is_instance_valid(n):
 			n = preload("res://scripts/zone.gd").new()
@@ -3211,6 +3313,7 @@ func _apply_zones(z: Array, key := "z") -> void:
 			n.color = row[3]
 			n.flask = row.size() > 4 and row[4] == 1
 			n.cloud = row.size() > 4 and row[4] == 2
+			n.net_owner = owner_idx
 			zones_node.add_child(n)
 			d[row[0]] = n
 		n.net_pos = row[1]
