@@ -1,4 +1,5 @@
 extends Node
+const REV := 15020   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Сетевая игра по локальной сети (автозагрузка Net).
 ## Хост считает всю игру, клиент присылает ввод своего героя и показывает
 ## присланное состояние мира и эффекты. Поиск хоста — широковещательный UDP.
@@ -516,3 +517,13 @@ func chest_closed() -> void:
 @rpc("any_peer", "reliable")
 func c_chest_closed() -> void:
 	pass
+
+
+## Свежий скрипт подставлен вместо старого (см. hotswap.gd): переподключаем сигналы сети.
+func _hotswapped() -> void:
+	for sig in [multiplayer.peer_connected, multiplayer.peer_disconnected, multiplayer.connected_to_server,
+			multiplayer.connection_failed, multiplayer.server_disconnected]:
+		for c in (sig as Signal).get_connections():
+			if (c["callable"] as Callable).get_object() == self:
+				(sig as Signal).disconnect(c["callable"])
+	_ready()

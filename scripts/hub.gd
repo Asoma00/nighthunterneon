@@ -220,7 +220,15 @@ var _hint_l: Label
 
 ## Префикс подсказки у здания: «[E]  » / «[A]  »; на телефоне — кнопка «ВОЙТИ» на экране
 func _pk(action := "interact") -> String:
-	return "" if Settings.input_mode() == "touch" else "[%s]  " % Settings.key(action)
+	return "" if Settings.input_mode() == "touch" else "[%s]  " % _key(action)
+
+
+## Клавиша действия; если настройки ещё старые и её не знают — клавиша по умолчанию.
+func _key(action: String) -> String:
+	var k := str(Settings.key(action))
+	if k == "":
+		k = {"talk": "F" if Settings.input_mode() == "kb" else "Y", "interact": "E", "move": "WASD", "pause": "ESC"}.get(action, "")
+	return k
 
 
 ## Нижняя подсказка управления в убежище — под текущее устройство
@@ -230,7 +238,7 @@ func _hint_text() -> String:
 			return "Касание и сдвиг пальца — ходить   •   ВОЙТИ / ГОВОРИТЬ   •   II — пауза"
 		"pad":
 			return "Левый стик — ходить   •   A — войти   •   Y — поговорить   •   START — пауза   •   B — назад"
-	return "%s — ходить   •   %s — войти   •   %s — поговорить   •   %s — пауза / назад" % [Settings.key("move"), Settings.key("interact"), Settings.key("talk"), Settings.key("pause")]
+	return "%s — ходить   •   %s — войти   •   %s — поговорить   •   %s — пауза / назад" % [_key("move"), _key("interact"), _key("talk"), _key("pause")]
 
 
 func _on_input_mode(_m: String) -> void:
@@ -579,6 +587,8 @@ func _rebuild_building(id: String) -> void:
 			var wc := Color(1.0, 0.8, 0.5) if rng.randf() < 0.5 else col
 			if i == 0 and j == 1:
 				continue  # здесь дверь
+			if i == 0 and id == "hall":
+				continue  # у таверны внизу — окна с героями (ниже); иначе они накладывались и мерцали
 			_add(root, _box(0.32, 0.38, 0.05), _emat(wc, 1.3) if lit else _mat(Color(0.05, 0.05, 0.08)),
 				Vector3(-0.7 + j * 0.7, top + h * 0.5, w / 2.0 + 0.02))
 		if i == 0:
@@ -623,8 +633,9 @@ func _rebuild_building(id: String) -> void:
 			for k in 4:
 				var hero_ids := ["vega", "rin", "bram", "kira"]
 				var unlocked := Meta.hero_unlocked(hero_ids[k])
-				_add(root, _box(0.3, 0.5, 0.05), _emat(Data.CHARACTERS[hero_ids[k]]["color"], 2.5) if unlocked else _mat(Color(0.1, 0.1, 0.12)),
-					Vector3(-0.9 + k * 0.6, 0.9, 1.37))
+				# Окна по бокам от двери, чуть впереди стены — без наложений (не мерцают)
+				_add(root, _box(0.28, 0.46, 0.05), _emat(Data.CHARACTERS[hero_ids[k]]["color"], 2.5) if unlocked else _mat(Color(0.1, 0.1, 0.12)),
+					Vector3([-1.05, -0.62, 0.62, 1.05][k], 0.9, 1.35 + 0.04))
 		"shrine":
 			var crystal := Node3D.new()
 			crystal.position = Vector3(0, top + 1.0, 0)
@@ -1348,7 +1359,8 @@ func _update_place() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("talk") and _inside == "" and _panel_id == "" and _near_talk >= 0:
+	var talk_ev: bool = event.is_action_pressed("talk") if InputMap.has_action("talk") else (event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F)
+	if talk_ev and _inside == "" and _panel_id == "" and _near_talk >= 0:
 		get_viewport().set_input_as_handled()
 		_talk_dialog(_near_talk)
 		return

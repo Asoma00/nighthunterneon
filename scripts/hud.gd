@@ -220,7 +220,7 @@ var _stats_t := 0.0
 
 var force_stats := false
 func _stats_held() -> bool:
-	if force_stats or Input.is_action_pressed("stats"):
+	if force_stats or (Input.is_action_pressed("stats") if InputMap.has_action("stats") else Input.is_physical_key_pressed(KEY_TAB)):
 		return true
 	for d in Input.get_connected_joypads():
 		if Input.is_joy_button_pressed(d, JOY_BUTTON_BACK):

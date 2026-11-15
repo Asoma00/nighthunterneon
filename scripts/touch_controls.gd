@@ -1,4 +1,5 @@
 extends CanvasLayer
+const REV := 15020   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Сенсорное управление для телефона (Android).
 ## Плавающий джойстик: появляется там, где коснулись экрана (кроме кнопок и окон интерфейса).
 ## Способность — двойное касание в любом месте экрана (кроме кнопок интерфейса),
@@ -254,3 +255,11 @@ func _draw_controls() -> void:
 		var fs := int(float(b[1]) * (0.75 if str(b[2]).length() <= 2 else 0.32))
 		var w := font.get_string_size(b[2], HORIZONTAL_ALIGNMENT_CENTER, -1, fs).x
 		_canvas.draw_string(font, b[0] + Vector2(-w / 2.0, fs * 0.35), b[2], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.95 if ab_ready else 0.5))
+
+
+## Свежий скрипт подставлен вместо старого (см. hotswap.gd): строим интерфейс заново.
+func _hotswapped() -> void:
+	for c in get_children():
+		remove_child(c)
+		c.queue_free()
+	_ready()

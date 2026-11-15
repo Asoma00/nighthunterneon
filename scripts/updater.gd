@@ -187,12 +187,12 @@ func _on_done(result: int, code: int, _headers: PackedStringArray, body: PackedB
 ## Перезапуск только там, где ничего не потеряется: в главном меню или в убежище.
 func _try_apply() -> void:
 	var scene := get_tree().current_scene
-	if scene == null or Loader.busy:
+	if scene == null or get_node("/root/Loader").busy:
 		return
 	var f := scene.scene_file_path
 	if not (f.ends_with("menu.tscn") or f.ends_with("hub.tscn")):
 		return
-	if Net.mode != "":
+	if get_node("/root/Net").mode != "":
 		return   # в сетевой игре не перезапускаемся — напарник потеряет связь
 	_restarting = true
 	_show_overlay("ОБНОВЛЕНИЕ %s" % _remote_version, "Перезапуск в новой версии…")
@@ -219,7 +219,7 @@ func _try_apply() -> void:
 
 ## Сохранить настройки и прогресс перед перезапуском.
 func _save_all() -> void:
-	Settings.save_settings()
+	get_node("/root/Settings").save_settings()
 	var meta = load("res://scripts/meta.gd")
 	if meta.loaded:
 		meta.save()

@@ -66,7 +66,8 @@ const TABS := [["video", "ВИДЕО"], ["graphics", "ГРАФИКА"], ["sound"
 
 ## Вкладка «Управление» — только там, где есть клавиатура (ПК, Steam Deck)
 func _tabs() -> Array:
-	if Settings.is_mobile():
+	# Старая автозагрузка настроек (до перезапуска после обновления) не умеет переназначать клавиши
+	if Settings.is_mobile() or not Settings.has_method("set_bind"):
 		return TABS.slice(0, 3)
 	return TABS
 const TAB_OF := {
@@ -113,7 +114,7 @@ func _build() -> void:
 	tabs.alignment = FlowContainer.ALIGNMENT_CENTER
 	tabs.add_theme_constant_override("h_separation", 12)
 	tabs.add_theme_constant_override("v_separation", 8)
-	if tab == "controls" and Settings.is_mobile():
+	if tab == "controls" and (Settings.is_mobile() or not Settings.has_method("set_bind")):
 		tab = "video"
 	for t in _tabs():
 		var on: bool = t[0] == tab

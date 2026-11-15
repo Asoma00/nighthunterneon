@@ -1,4 +1,5 @@
 extends Node
+const REV := 15020   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Настройки экрана и звука: режим окна, формат, разрешение, громкость.
 ## Сохраняются в user://settings.cfg и применяются при каждом запуске.
 ## Подключён как автозагрузка «Settings».
@@ -186,13 +187,33 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_setup_input()
 	get_window().size_changed.connect(_on_window_resized)
+	Input.joy_connection_changed.connect(_on_joy)
+	_defaults_and_load()
+	apply_display()
+	apply_graphics()
+
+
+func _on_joy(_d: int, connected: bool) -> void:
+	if connected and not is_mobile() and not _pad_used:
+		_pad_used = true
+		input_mode_changed.emit(input_mode())
+
+
+## Свежий скрипт подставлен вместо старого (см. hotswap.gd): переменные сброшены —
+## читаем настройки заново и пересобираем управление. Окно не трогаем.
+func _hotswapped() -> void:
+	for c in Input.joy_connection_changed.get_connections():
+		if (c["callable"] as Callable).get_object() == self:
+			Input.joy_connection_changed.disconnect(c["callable"])
+	Input.joy_connection_changed.connect(_on_joy)
+	_setup_input()
+	_defaults_and_load()
+
+
+func _defaults_and_load() -> void:
 	# Геймпад подключён с самого начала — сразу подсказки для геймпада
 	if not is_mobile() and Input.get_connected_joypads().size() > 0:
 		_pad_used = true
-	Input.joy_connection_changed.connect(func(_d: int, connected: bool):
-		if connected and not is_mobile() and not _pad_used:
-			_pad_used = true
-			input_mode_changed.emit(input_mode()))
 	if is_deck() and not FileAccess.file_exists(PATH):
 		# Steam Deck: экран 1280×800, полный экран, средний профиль, 60 кадров
 		mode = "fullscreen"
@@ -211,7 +232,7 @@ func _ready() -> void:
 		# В браузере нет системных шрифтов: значки ◆ ★ ✓ → ≡ и т. п. берём из DejaVu Sans
 		var fb: Font = ThemeDB.fallback_font
 		var dv = load("res://fonts/DejaVuSans.ttf")
-		if fb and dv:
+		if fb and dv and not (dv in fb.fallbacks):
 			var arr: Array[Font] = fb.fallbacks
 			arr.append(dv)
 			fb.fallbacks = arr
@@ -238,8 +259,6 @@ func _ready() -> void:
 			mobile_h = 900; effects = 2; shadows = 1; tex_quality = "auto"; glow = true
 			weather = true; decor = 1; view_dist = 2; crowd = 1; fps = "60"; preset = 3
 	load_settings()
-	apply_display()
-	apply_graphics()
 
 
 func native_size() -> Vector2i:
@@ -578,7 +597,7 @@ const HINTS := {
 	"interact": {"kb": "E", "pad": "A", "touch": "ВОЙТИ"},
 	"talk": {"kb": "F", "pad": "Y", "touch": "ГОВОРИТЬ"},
 	"move": {"kb": "WASD", "pad": "левый стик", "touch": "касание и сдвиг пальца"},
-	"pick": {"kb": "клавиши 1, 2, 3", "pad": "крестовина и A", "touch": "коснитесь карточки"},
+	"pick": {"kb": "клавиши 1, 2, 3 или стрелки / WASD и ENTER", "pad": "крестовина и A", "touch": "коснитесь карточки"},
 	"accept": {"kb": "ENTER", "pad": "A", "touch": ""},
 }
 

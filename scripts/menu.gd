@@ -32,6 +32,7 @@ var _redirect := false
 
 
 func _ready() -> void:
+	preload("res://scripts/hotswap.gd").run()
 	# Заставка при каждом запуске игры. На ПК с автообновлением стартовая сцена берётся
 	# из старого файла игры (меню), поэтому заставку запускаем отсюда.
 	RenderingServer.set_default_clear_color(Color(0, 0, 0))
@@ -810,6 +811,8 @@ func _build_profile_page() -> void:
 		Meta.save()
 		_refresh_badge())
 	nick_row.add_child(_nick_edit)
+	if Settings.is_mobile():
+		_mobile_keyboard(_nick_edit)
 	if not Settings.is_mobile():
 		# Вместо поля ввода — кнопка: геймпад сразу на ней, A открывает экранную клавиатуру
 		_nick_edit.visible = false
@@ -843,6 +846,23 @@ func _build_profile_page() -> void:
 		Sound.play("click")
 		_profile_back())
 	v.add_child(back)
+
+
+## Телефон и планшет: касание поля сразу открывает системную клавиатуру устройства.
+func _mobile_keyboard(edit: LineEdit) -> void:
+	edit.virtual_keyboard_enabled = true
+	edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_DEFAULT
+	edit.editable = true
+	edit.focus_mode = Control.FOCUS_ALL
+	edit.gui_input.connect(func(ev: InputEvent):
+		if (ev is InputEventScreenTouch and ev.pressed) or (ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT):
+			edit.grab_focus()
+			if edit.has_method("edit"):
+				edit.call_deferred("edit")
+			DisplayServer.virtual_keyboard_show(edit.text, edit.get_global_rect(), DisplayServer.KEYBOARD_TYPE_DEFAULT, edit.max_length))
+	edit.text_submitted.connect(func(_t: String):
+		DisplayServer.virtual_keyboard_hide()
+		edit.release_focus())
 
 
 ## Поле ввода на ПК / Steam Deck / геймпаде: нажатие (мышь, тачскрин, A/Enter) открывает
@@ -1246,6 +1266,8 @@ func _build_net_page() -> void:
 	_net_ip.add_theme_font_size_override("font_size", 20)
 	row.add_child(_net_ip)
 	_vk_field(_net_ip, "IP ХОСТА", "0123456789.", func(t: String): _net_ip.text = t)
+	if Settings.is_mobile():
+		_mobile_keyboard(_net_ip)
 	var join_btn := _button("ПОДКЛЮЧИТЬСЯ", CYAN, 260)
 	join_btn.pressed.connect(func():
 		Sound.play("click")

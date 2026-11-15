@@ -1,4 +1,5 @@
 extends CanvasLayer
+const REV := 15020   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Экран загрузки между сценами (меню → убежище → бой и обратно).
 ## Длится ровно столько, сколько нужно: загрузка сцены в фоне, генерация всех
 ## пиксельных текстур, которые понадобятся, сборка мира и «прогрев» видеокарты
@@ -301,3 +302,11 @@ func _jobs_for(path: String) -> Array:
 		out.append(j)
 	out.reverse()
 	return out
+
+
+## Свежий скрипт подставлен вместо старого (см. hotswap.gd): строим интерфейс заново.
+func _hotswapped() -> void:
+	for c in get_children():
+		remove_child(c)
+		c.queue_free()
+	_ready()
