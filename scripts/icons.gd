@@ -18,7 +18,7 @@ const PINK := Color(1.0, 0.3, 0.75)
 const WHITE := Color(1, 1, 1)
 
 const IDS := ["bolt", "blades", "aura", "lightning", "katana", "quake", "drones", "railbow", "sunbeam",
-	"spirits", "ball", "flask", "shuriken", "pulse", "scatter", "mines", "hp", "speed", "magnet", "regen", "armor", "vamp", "luck",
+	"spirits", "ball", "flask", "shuriken", "vortex", "scatter", "mines", "hp", "speed", "magnet", "regen", "armor", "vamp", "luck",
 	"damage", "cooldown", "area", "crit", "multi", "duration",
 	"shield", "dodge", "dash", "pierce", "execute", "giant", "toxin"]
 
@@ -555,20 +555,22 @@ static func draw(id: String) -> Image:
 			ellipse(hole, 18, 18, 1.6, 1.6, Color(1.0, 0.4, 0.4))
 			_neon(im, g, hole)
 
-		"pulse":
-			# Неоновый пульс: расходящиеся кольца и яркое ядро
-			var r1 := _l()
-			_ring(r1, 18, 18, 16.5, 14.8, Color(0.4, 0.9, 1.0))
-			_neon(im, g, r1)
-			var r2 := _l()
-			_ring(r2, 18, 18, 11.5, 9.8, Color(1.0, 0.35, 0.85))
-			_neon(im, g, r2)
-			var r3 := _l()
-			_ring(r3, 18, 18, 6.8, 5.2, Color(0.6, 1.0, 1.0))
-			_neon(im, g, r3)
-			var core := _l()
-			ellipse(core, 18, 18, 2.6, 2.6, Color(1, 1, 1))
-			_neon(im, g, core)
+		"vortex":
+			# Гравитонная воронка: спиральные рукава вокруг чёрного ядра
+			for arm in 3:
+				var sp := _l()
+				for k in 26:
+					var t := float(k) / 25.0
+					var a := TAU * arm / 3.0 + t * 4.2
+					var rr := 3.5 + t * 13.0
+					px(sp, int(18.0 + cos(a) * rr), int(18.0 + sin(a) * rr), Color(0.75, 0.4, 1.0).lerp(Color(1.0, 0.45, 0.85), t))
+				_neon(im, g, sp)
+			var rim := _l()
+			_ring(rim, 18, 18, 5.5, 4.0, Color(1.0, 0.6, 0.3))
+			_neon(im, g, rim)
+			var hole := _l()
+			ellipse(hole, 18, 18, 3.6, 3.6, Color(0.02, 0.0, 0.05))
+			_put(im, hole)
 		"scatter":
 			# Разрядник-дробовик: короткий ствол и веер осколков
 			var gun := _l()

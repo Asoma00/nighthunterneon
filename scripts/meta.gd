@@ -86,6 +86,7 @@ static var rescued: Array = []
 static var story_step := 0
 static var story_taken := false
 static var intro_seen := false
+static var tour_seen := false   # показана экскурсия по механикам
 static var npc_quests: Array = []
 static var npc_cd := {}          # имя жителя -> номер забега, с которого он снова просит
 static var npc_thanks: Array = []
@@ -266,6 +267,7 @@ static func reset() -> void:
 	story_step = 0
 	story_taken = false
 	intro_seen = false
+	tour_seen = false
 	npc_quests = []
 	npc_cd = {}
 	npc_thanks = []
@@ -312,6 +314,7 @@ static func ensure_loaded() -> void:
 		story_step = cfg.get_value("meta", "story_step", 0)
 		story_taken = cfg.get_value("meta", "story_taken", false)
 		intro_seen = cfg.get_value("meta", "intro_seen", false)
+		tour_seen = cfg.get_value("meta", "tour_seen", false)
 		npc_quests = cfg.get_value("meta", "npc_quests", [])
 		npc_cd = cfg.get_value("meta", "npc_cd", {})
 		npc_thanks = cfg.get_value("meta", "npc_thanks", [])
@@ -391,6 +394,7 @@ static func save() -> void:
 	cfg.set_value("meta", "story_step", story_step)
 	cfg.set_value("meta", "story_taken", story_taken)
 	cfg.set_value("meta", "intro_seen", intro_seen)
+	cfg.set_value("meta", "tour_seen", tour_seen)
 	cfg.set_value("meta", "npc_quests", npc_quests)
 	cfg.set_value("meta", "npc_cd", npc_cd)
 	cfg.set_value("meta", "npc_thanks", npc_thanks)

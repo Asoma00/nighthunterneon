@@ -8,6 +8,7 @@ static var _kb_nav_t := -10.0  # когда последний раз нажат
 
 
 static func on_input(event: InputEvent) -> void:
+	_touch_scroll(event)
 	if event is InputEventJoypadButton and event.pressed:
 		pad_mode = true
 	elif event is InputEventJoypadMotion and absf(event.axis_value) > 0.6:
@@ -84,3 +85,108 @@ static func keep(root: Control, state: Dictionary) -> void:
 		return
 	var i := clampi(int(state.get("idx", 0)), 0, list.size() - 1)
 	(list[i] as Control).grab_focus()
+
+
+# ---------- Прокрутка списков пальцем в любом месте (телефон) ----------
+# Godot прокручивает список, только если палец лёг на пустое место: кнопки и карточки
+# забирают касание себе. Здесь: палец сдвинулся больше чем на порог — это прокрутка
+# ближайшего списка под пальцем, а нажатие кнопки отменяется. Короткое касание без
+# сдвига — обычный выбор пункта.
+static var _sc: ScrollContainer = null
+static var _sc_drag := false
+static var _sc_from := Vector2.ZERO
+static var _sc_godot := false   # список и так прокручивает сам (палец на пустом месте)
+static var _sc_base := Vector2.ZERO
+const DRAG_PX := 14.0
+
+
+static func _mobile() -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return false
+	var st = tree.root.get_node_or_null("Settings")
+	return st != null and st.has_method("is_mobile") and st.is_mobile()
+
+
+static func _scroll_at(vp: Viewport, pos: Vector2) -> ScrollContainer:
+	var best: ScrollContainer = null
+	var best_area := INF
+	var best_layer := -INF
+	for n in vp.find_children("*", "ScrollContainer", true, false):
+		var sc := n as ScrollContainer
+		if sc == null or not sc.is_visible_in_tree():
+			continue
+		var r := sc.get_global_rect()
+		if not r.has_point(pos):
+			continue
+		var cl := sc.get_canvas_layer_node()
+		var layer := float(cl.layer) if cl != null else 0.0
+		var area := r.get_area()
+		if layer > best_layer or (layer == best_layer and area < best_area):
+			best = sc
+			best_area = area
+			best_layer = layer
+	return best
+
+
+## Пойдёт ли касание само до списка (по пути одни «пропускающие» элементы)?
+static func _godot_scrolls(vp: Viewport, sc: ScrollContainer) -> bool:
+	if not vp.has_method("gui_get_hovered_control"):
+		return false
+	var c: Control = vp.gui_get_hovered_control()
+	if c == null:
+		return true
+	while c != null and c != sc:
+		if c.mouse_filter == Control.MOUSE_FILTER_STOP:
+			return false
+		c = c.get_parent() as Control
+	return true
+
+
+static func _touch_scroll(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton or event is InputEventMouseMotion or event is InputEventScreenDrag):
+		return
+	if not _mobile():
+		return
+	var tree := Engine.get_main_loop() as SceneTree
+	var vp := tree.root
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_sc = _scroll_at(vp, event.position)
+			_sc_from = event.position
+			_sc_drag = false
+			_sc_godot = false
+		else:
+			_sc = null
+			_sc_drag = false
+		return
+	if event is InputEventScreenDrag:
+		if _sc_drag:
+			vp.set_input_as_handled()
+		return
+	var mm := event as InputEventMouseMotion
+	if mm.position.x < -5000.0:
+		return   # наш служебный сдвиг «за экран»
+	if _sc == null or not is_instance_valid(_sc) or not (mm.button_mask & MOUSE_BUTTON_MASK_LEFT):
+		return
+	if not _sc_drag:
+		if mm.position.distance_to(_sc_from) < DRAG_PX:
+			return
+		_sc_godot = _godot_scrolls(vp, _sc)
+		if _sc_godot:
+			_sc = null
+			return
+		_sc_drag = true
+		# Отменить нажатие кнопки под пальцем: «увести» указатель за экран
+		var off := InputEventMouseMotion.new()
+		off.position = Vector2(-10000, -10000)
+		off.global_position = off.position
+		off.button_mask = MOUSE_BUTTON_MASK_LEFT
+		vp.push_input(off)
+		_sc_base = Vector2(_sc.scroll_horizontal, _sc.scroll_vertical) + (mm.position - _sc_from)
+	# Список едет за пальцем ровно на столько, на сколько палец сдвинулся
+	var dpos := mm.position - _sc_from
+	_sc.scroll_vertical = int(round(_sc_base.y - dpos.y))
+	if _sc.horizontal_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED:
+		_sc.scroll_horizontal = int(round(_sc_base.x - dpos.x))
+	vp.set_input_as_handled()

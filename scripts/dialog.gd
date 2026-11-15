@@ -72,7 +72,7 @@ func _build() -> void:
 	_root.gui_input.connect(_on_root_input)
 	add_child(_root)
 	var dim := ColorRect.new()
-	dim.color = Color(0.02, 0.0, 0.06, 0.58)
+	dim.color = Color(0.02, 0.0, 0.06, float(opts.get("dim", 0.58)))
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(dim)

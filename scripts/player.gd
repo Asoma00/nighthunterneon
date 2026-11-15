@@ -1806,12 +1806,9 @@ func _fire_once(id: String, s: Dictionary) -> void:
 			_flasks(s)
 		"shuriken":
 			_shurikens(s["count"], s["damage"] * damage_mult, s["speed"], s["spiral"])
-		"pulse":
-			_wpulse(s, 1.0)
-			if s["double"]:
-				_later(0.3, func(): _wpulse(s, 1.45))
-			for i in int(s.get("extra", 0)):
-				_later(0.25 * (i + 1), func(): _wpulse(s, 1.2 + 0.15 * i))
+		"vortex":
+			for k in int(s["count"]):
+				_later(0.35 * k, func(): _vortex(s, k))
 		"scatter":
 			_scatter(s)
 		"mines":
@@ -2021,29 +2018,118 @@ func _quake(s: Dictionary, scale_k: float) -> void:
 		main.combo_pop(position + Vector2(0, -40), "РАСКОЛ ×%d" % shattered, Color(0.6, 1.0, 1.0))
 
 
-## Неоновый пульс: ударная волна от героя, отброс; по замороженным — вдвое (Ледяной звон).
-func _wpulse(s: Dictionary, scale_k: float) -> void:
+## Гравитонная воронка: открывается в гуще врагов, затягивает их к центру, жжёт,
+## а в конце схлопывается взрывом. Враги под током делают взрыв шире (Грави-разряд).
+func _vortex(s: Dictionary, idx := 0) -> void:
 	if _dead:
 		return
-	_src = "pulse"
-	main.attacker = self
-	var r: float = s["radius"] * area_mult * scale_k
-	var col := evo_tint("pulse", Color(0.45, 0.9, 1.0)) if evolved.has("pulse") else Color(0.45, 0.9, 1.0)
-	Fx.ring(main, position, 12.0, r, Pixel.hdr(col, 2.2), 0.4, 6.0)
-	Fx.ring(main, position, 8.0, r * 0.82, Pixel.hdr(Color(1.0, 0.4, 0.9), 1.6), 0.32, 3.0)
-	Sound.play("zap", -8.0, 1.3 / scale_k, 0.1)
-	main.energize(position, r, "pulse", "shock")
-	var rang := 0
-	for e in main.get_enemies():
-		if not e.can_be_hit() or e.position.distance_to(position) > r + e.radius:
-			continue
-		var dmg: float = s["damage"] * damage_mult
-		if e.statuses.has("chill"):
-			dmg *= 2.0
-			rang += 1
-		e.hit(dmg, position, float(s["knock"]), "shock")
-	if rang >= 3:
-		main.combo_pop(position + Vector2(0, -40), "ЛЕДЯНОЙ ЗВОН ×%d" % rang, Color(0.6, 1.0, 1.0))
+	var r: float = float(s["radius"]) * area_mult
+	var center := position + facing * 170.0
+	var targets: Array = main.nearest_enemies_to(position, 6, 520.0, null, aim)
+	if not targets.is_empty():
+		var acc := Vector2.ZERO
+		for t in targets:
+			acc += (t as Node2D).position
+		center = acc / float(targets.size())
+		if idx > 0:
+			center += Vector2.RIGHT.rotated(randf() * TAU) * r * 0.9
+	var dur: float = float(s["duration"])
+	var col := evo_tint("vortex", Color(0.7, 0.35, 1.0)) if evolved.has("vortex") else Color(0.7, 0.35, 1.0)
+	_vortex_fx(center, r, dur, col)
+	Sound.play("ability", -12.0, 0.55, 0.05)
+	var steps := int(dur / 0.1)
+	for k in steps:
+		_later(0.1 * k, func():
+			if _dead:
+				return
+			_src = "vortex"
+			main.attacker = self
+			# Сходящиеся кольца — видно, куда тянет
+			if k % 4 == 0:
+				Fx.ring(main, center, r, 12.0, Pixel.hdr(col, 1.8), 0.4, 3.0)
+			for e in main.get_enemies():
+				if not e.can_be_hit():
+					continue
+				var d: Vector2 = center - e.position
+				var dist := d.length()
+				if dist > r + e.radius:
+					continue
+				# Притяжение: сильнее у края, у центра враги кружат
+				var pull: float = float(s["pull"]) * (0.4 if e.is_boss else 1.0) * clampf(dist / r + 0.35, 0.35, 1.0)
+				e._knock = d.normalized().rotated(0.6) * pull
+				if k % 5 == 0:
+					e.hit(float(s["damage"]) * damage_mult, center, 0.0, "burn"))
+	_later(dur, func():
+		if _dead:
+			return
+		_src = "vortex"
+		main.attacker = self
+		var charged := 0
+		for e in main.get_enemies():
+			if e.can_be_hit() and e.position.distance_to(center) < r and e.statuses.has("shock"):
+				charged += 1
+		var br: float = r * (1.0 + minf(0.08 * charged, 0.6))
+		var dmg: float = float(s["blast"]) * damage_mult * (1.0 + minf(0.06 * charged, 0.5))
+		Fx.explosion(main, center, Color(1.0, 0.45, 0.9), col, br)
+		main.damage_area(center, br, dmg, null, "burn")
+		main.shake(4.0)
+		if charged >= 3:
+			main.combo_pop(center + Vector2(0, -40), "ГРАВИ-РАЗРЯД ×%d" % charged, Color(0.7, 0.9, 1.0)))
+
+
+const VORTEX_SHADER := """
+shader_type spatial;
+render_mode unshaded, blend_mix, depth_draw_never, cull_disabled, shadows_disabled;
+uniform vec4 col : source_color = vec4(0.7, 0.35, 1.0, 1.0);
+uniform float t = 0.0;
+uniform float fade = 1.0;
+void fragment() {
+	vec2 d = UV - 0.5;
+	float r = length(d) * 2.0;
+	if (r > 1.0) discard;
+	float a = atan(d.y, d.x);
+	// спиральные рукава, закручиваются к центру
+	float arms = sin(a * 3.0 + r * 9.0 - t * 7.0) * 0.5 + 0.5;
+	float rim = smoothstep(1.0, 0.85, r) * smoothstep(0.55, 0.95, r);
+	float core = smoothstep(0.3, 0.0, r);
+	vec3 c = mix(col.rgb * 2.2 * arms, vec3(0.0), core);
+	c += vec3(1.0, 0.55, 0.9) * rim * 0.8;
+	float alpha = (arms * 0.55 * smoothstep(1.0, 0.2, r) + core * 0.95 + rim * 0.6) * fade;
+	ALBEDO = c;
+	ALPHA = clamp(alpha, 0.0, 1.0);
+}
+"""
+static var _vortex_sh: Shader
+
+
+## Воронка на земле: тёмное ядро, неоновые рукава, вращение; гаснет к схлопыванию.
+func _vortex_fx(center: Vector2, r: float, dur: float, col: Color) -> void:
+	if main.get("_mirror_root") == null:
+		Fx.portal(main, center, col, r / 90.0)
+		return
+	if _vortex_sh == null:
+		_vortex_sh = Shader.new()
+		_vortex_sh.code = VORTEX_SHADER
+	var mi := MeshInstance3D.new()
+	var q := PlaneMesh.new()
+	q.size = Vector2.ONE * r * 2.0 * 0.01
+	mi.mesh = q
+	var m := ShaderMaterial.new()
+	m.shader = _vortex_sh
+	m.set_shader_parameter("col", col)
+	m.render_priority = 2
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.position = main._bl(center, 0.03)
+	main._mirror_root.add_child(mi)
+	mi.scale = Vector3.ONE * 0.2
+	var tw := mi.create_tween()
+	tw.tween_property(mi, "scale", Vector3.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_method(func(v: float): m.set_shader_parameter("t", v), 0.0, dur * 1.6, dur + 0.3)
+	tw.parallel().tween_property(mi, "rotation:y", -TAU * 1.5, dur + 0.3)
+	tw.tween_method(func(v: float): m.set_shader_parameter("fade", v), 1.0, 0.0, 0.25)
+	tw.parallel().tween_property(mi, "scale", Vector3.ONE * 0.05, 0.25)
+	tw.tween_callback(mi.queue_free)
 
 
 ## Разрядник-дробовик: веер осколков в ближайшего врага, дальность короткая.

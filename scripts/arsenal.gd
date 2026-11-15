@@ -12,7 +12,7 @@ extends RefCounted
 const Meta := preload("res://scripts/meta.gd")
 
 ## Открыто с самого начала (без героя и без кузницы)
-const START_WEAPONS := ["bolt", "pulse", "scatter", "mines"]
+const START_WEAPONS := ["bolt", "vortex", "scatter", "mines"]
 
 ## Оружие без своего героя: части добываются в бою.
 ## src: chest — сундуки, elite — элитные враги, boss — боссы, cache — тайники, puzzle — загадки.

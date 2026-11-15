@@ -127,7 +127,15 @@ func _ready() -> void:
 			if _panel_id == "":
 				_dialog("prologue", {}, func():
 					Meta.intro_seen = true
-					Meta.save()))
+					Meta.save()
+					# Сразу после пролога — экскурсия: рассказ и показ, ничего делать не нужно
+					get_tree().create_timer(0.6).timeout.connect(func():
+						if _panel_id == "":
+							_tour())))
+	elif not _net_client and not Meta.tour_seen:
+		get_tree().create_timer(1.5).timeout.connect(func():
+			if _panel_id == "":
+				_tour())
 	elif not _net_client and int(Meta.last_reward.get("after_scene", -1)) >= 0:
 		# Разговор после первой победы на уровне
 		var lv := int(Meta.last_reward["after_scene"])
@@ -1254,7 +1262,7 @@ func _update_camera(delta: float) -> void:
 	_cam_target = _cam_target.lerp(_cine_focus if _cine_t > 0.0 else _avatar.position, minf(1.0, delta * (2.5 if _cine_t > 0.0 else 4.0)))
 	_shake = move_toward(_shake, 0.0, delta * 2.0)
 	var jitter := Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * _shake * 0.15
-	_cine_zoom = lerpf(_cine_zoom, 0.5 if _cine_t > 0.0 else 1.0, minf(1.0, delta * 2.5))
+	_cine_zoom = lerpf(_cine_zoom, _cine_zoom_to if _cine_t > 0.0 else 1.0, minf(1.0, delta * 2.5))
 	_camera.position = _cam_target + _cam_off * _cine_zoom + jitter
 	_camera.look_at(_cam_target + Vector3(0, 0.8, 0) + jitter)
 
@@ -1676,6 +1684,12 @@ func _fill_panel() -> void:
 			Sound.play("click")
 			_close_panel())
 		_panel_box.add_child(_centered(cont))
+		var tour := _button("ОБУЧЕНИЕ — КАК ВСЁ УСТРОЕНО", Color(0.5, 1.0, 0.6))
+		tour.pressed.connect(func():
+			Sound.play("click")
+			_close_panel()
+			_tour.call_deferred())
+		_panel_box.add_child(_centered(tour))
 		var sett := _button("НАСТРОЙКИ", GOLD)
 		sett.pressed.connect(func():
 			Sound.play("click")
@@ -2191,6 +2205,7 @@ func _fill_tree_panel(id: String) -> void:
 var _cine_t := 0.0
 var _cine_focus := Vector3.ZERO
 var _cine_zoom := 1.0
+var _cine_zoom_to := 0.5   # приближение камеры в постановочных сценах
 
 
 ## Полоска частей: ▰▰▱ 2 / 3.
@@ -2352,6 +2367,61 @@ func _forge_cinematic(w: String) -> void:
 # ================= Диалоги (визуальная новелла) =================
 
 ## Сцена-диалог поверх убежища. Пока она идёт, охотник стоит, а подсказки скрыты.
+# ================= Экскурсия по Убежищу: базовые механики =================
+## Командир Ворон рассказывает, а камера показывает. Ничего делать не нужно:
+## листать дальше касанием / ПРОБЕЛОМ, ESC — пропустить. Повтор — Пауза → «Обучение».
+func _tour() -> void:
+	if _net_client or (_dlg != null and is_instance_valid(_dlg)):
+		return
+	var mark := Node3D.new()
+	_world.add_child(mark)
+	var ring := MeshInstance3D.new()
+	ring.mesh = _torus(1.35, 1.6)
+	ring.material_override = _emat(Color(0.5, 1.0, 0.6), 3.0)
+	mark.add_child(ring)
+	var beam := MeshInstance3D.new()
+	beam.mesh = _cyl(0.5, 0.5, 6.0, 16)
+	beam.material_override = _emat(Color(0.5, 1.0, 0.6), 1.2, 0.18)
+	beam.position.y = 3.0
+	mark.add_child(beam)
+	mark.visible = false
+	_spinners.append([ring, Vector3.UP, 1.2])
+	var look := func(p, zoom := 0.85):
+		# Точка взгляда чуть ближе к камере — объект оказывается над окном диалога
+		_cine_focus = (p as Vector3) + Vector3(0, 0, 1.6) if p is Vector3 else _avatar.position
+		_cine_t = 999.0
+		_cine_zoom_to = zoom
+		mark.visible = p is Vector3
+		if p is Vector3:
+			mark.position = (p as Vector3) + Vector3(0, 0.06, 0)
+	var B: Dictionary = Meta.BUILDINGS
+	var ab := str(Settings.key("ability"))
+	var mv := "касание и сдвиг пальца" if Settings.input_mode() == "touch" else str(Settings.key("move"))
+	var L := [
+		{"who": "voron", "text": "Охотник, покажу тебе Убежище. Это просто рассказ — ничего делать не нужно. Листай дальше, а «Пропустить» закроет его в любой момент.", "do": func(): look.call(null, 0.8)},
+		{"who": "voron", "text": "Портал — дорога в бой. Там ты только ходишь (%s), а оружие стреляет само. Главное — двигаться и не давать толпе зажать тебя." % mv, "do": func(): look.call(PORTAL_POS)},
+		{"who": "voron", "text": "Враги роняют кристаллы. Собирай — растёт уровень, и на каждом ты выбираешь улучшение: новое оружие или модуль. Оружие + нужный модуль на максимуме = эволюция.", "do": func(): look.call(PORTAL_POS, 0.95)},
+		{"who": "voron", "text": "Способность героя (%s) перезаряжает всё оружие и даёт ударам его стихию. Стихии разных оружий складываются в реакции — огонь, ток, лёд, яд." % (ab if ab != "" else "двойное касание"), "do": func(): look.call(PORTAL_POS, 0.95)},
+		{"who": "voron", "text": "После вылазки ты получаешь осколки ◆ и материалы ⚙ ▣ ✶. Это валюта Убежища. Слева от портала — доска заданий: контракты дают награду сверху. Справа — доска итогов последнего боя.", "do": func(): look.call(BOARD)},
+		{"who": "voron", "text": "%s. Здесь качается оружие: у каждого своё дерево улучшений. Новое оружие куётся из частей, найденных в бою." % B["forge"]["name"], "do": func(): look.call(B["forge"]["pos"])},
+		{"who": "voron", "text": "%s — модули: у каждого тоже своё дерево. %s — сами герои: их сила, способности и личные пути." % [B["lab"]["name"], B["shrine"]["name"]], "do": func(): look.call(B["lab"]["pos"])},
+		{"who": "voron", "text": "Алтарь героев — здесь.", "do": func(): look.call(B["shrine"]["pos"])},
+		{"who": "voron", "text": "Как растут здания: зайди внутрь — внизу кнопка «Здание ур. N». Нужны осколки и материалы из боя, а для старших уровней — пройденные уровни сюжета. Уровень здания даёт бонус и открывает новые ярусы деревьев.", "do": func(): look.call(B["forge"]["pos"], 0.75)},
+		{"who": "voron", "text": "Рынок. Для узлов деревьев нужен товар: сплав (оружие), матрицы (модули), эссенция (герои). Его продают торговцы — у каждого свой товар и свои цены.", "do": func(): look.call(STALLS[0])},
+		{"who": "voron", "text": "%s. Тут отдыхают открытые герои — подойди и возьми любого в бой. У стойки — наёмники и контракты, у Сеты — облики." % B["hall"]["name"], "do": func(): look.call(B["hall"]["pos"])},
+		{"who": "voron", "text": "Жители рады поболтать — у многих есть просьбы. А на краю площади живут истории мира: летопись, кодекс, памятники.", "do": func(): look.call(COMMANDER_POS)},
+		{"who": "voron", "text": "Вот и всё. Иди куда хочешь — в портал, на рынок, в таверну. Перечитать это можно в любой момент: Пауза → «Обучение».", "do": func(): look.call(null, 0.8)},
+	]
+	_dialog(L, {"dim": 0.22}, func():
+		_cine_t = 0.0
+		_cine_zoom_to = 0.5
+		if is_instance_valid(mark):
+			_spinners = _spinners.filter(func(sp): return sp[0] != ring)
+			mark.queue_free()
+		Meta.tour_seen = true
+		Meta.save())
+
+
 func _dialog(scene, opts := {}, after := Callable()) -> void:
 	if _dlg != null and is_instance_valid(_dlg):
 		return
