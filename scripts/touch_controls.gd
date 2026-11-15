@@ -60,8 +60,13 @@ func _buttons() -> Dictionary:
 		out["stats"] = [Vector2(vs.x - 48.0 * k, 200.0 + 18.0 * k + sm[1]), 30.0 * k, "≡", GOLD]
 	elif _ctx == "hub":
 		var scene := _scene()
-		if scene != null and str(scene.get("_near")) != "":
-			out["interact"] = [Vector2(vs.x - 140.0 * k, vs.y - 150.0 * k), 72.0 * k, "ВОЙТИ", GOLD]
+		var talk_i: int = int(scene.get("_near_talk")) if scene != null and scene.get("_near_talk") != null else -1
+		var near := str(scene.get("_near")) if scene != null else ""
+		var both := talk_i >= 0 and near != "" and not near.begins_with("talk:")
+		if near != "":
+			out["interact"] = [Vector2(vs.x - 140.0 * k, vs.y - 150.0 * k), 72.0 * k, "ВОЙТИ" if both or not near.begins_with("talk:") else "ГОВОРИТЬ", GOLD]
+		if both:
+			out["talk"] = [Vector2(vs.x - 290.0 * k, vs.y - 120.0 * k), 60.0 * k, "ГОВОРИТЬ", CYAN]
 		out["pause"] = [Vector2(vs.x - 48.0 * k, 160.0 + sm[1]), 34.0 * k, "II", CYAN]
 	return out
 

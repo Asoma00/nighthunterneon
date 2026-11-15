@@ -25,8 +25,20 @@ const MATERIALS := {
 	"scrap": {"name": "Лом", "icon": "⚙", "color": Color(0.75, 0.75, 0.85)},
 	"chips": {"name": "Микросхемы", "icon": "▣", "color": Color(0.35, 1.0, 0.6)},
 	"cores": {"name": "Ядра", "icon": "✶", "color": Color(1.0, 0.45, 0.9)},
+	# Товары лавок: в бою почти не встречаются — их покупают у торговцев на рынке
+	"alloy": {"name": "Сплав", "icon": "⬢", "color": Color(1.0, 0.6, 0.25), "shop": 16,
+		"for": "ковка и улучшения оружия в кузнице"},
+	"matrix": {"name": "Матрица", "icon": "◈", "color": Color(0.35, 0.85, 1.0), "shop": 22,
+		"for": "улучшения модулей в лаборатории"},
+	"essence": {"name": "Эссенция", "icon": "⚗", "color": Color(0.8, 0.5, 1.0), "shop": 20,
+		"for": "улучшения героев в святилище"},
 }
-static var materials := {"scrap": 0, "chips": 0, "cores": 0}
+static var materials := {"scrap": 0, "chips": 0, "cores": 0, "alloy": 0, "matrix": 0, "essence": 0}
+## Доход осколков после вылазки (было ×1.0): прокачка идёт через покупки у торговцев
+const INCOME_K := 0.65
+## Товара каждого вида на узел дерева по ярусам 1…5
+const GOODS_TIER := [0, 1, 2, 4, 6, 10]
+const TREE_GOOD := {"w:": "alloy", "m:": "matrix", "c:": "essence"}
 static var quests: Array = []        # доска заданий (см. quests.gd)
 static var contracts: Array = []     # взятые контракты таверны
 static var offers: Array = []        # предложения трактирщика
@@ -315,7 +327,10 @@ static func ensure_loaded() -> void:
 	nickname = cfg.get_value("meta", "nickname", nickname)
 	stats = cfg.get_value("meta", "stats", {})
 	var mat: Dictionary = cfg.get_value("meta", "materials", {})
-	materials = {"scrap": int(mat.get("scrap", 0)), "chips": int(mat.get("chips", 0)), "cores": int(mat.get("cores", 0))}
+	materials = {}
+	for mk in MATERIALS:
+		materials[mk] = int(mat.get(mk, 0))
+	shop_bought = cfg.get_value("meta", "shop_bought", {})
 	quests = cfg.get_value("meta", "quests", [])
 	contracts = cfg.get_value("meta", "contracts", [])
 	offers = cfg.get_value("meta", "offers", [])
@@ -365,6 +380,7 @@ static func save() -> void:
 	cfg.set_value("meta", "nickname", nickname)
 	cfg.set_value("meta", "stats", stats)
 	cfg.set_value("meta", "materials", materials)
+	cfg.set_value("meta", "shop_bought", shop_bought)
 	cfg.set_value("meta", "quests", quests)
 	cfg.set_value("meta", "contracts", contracts)
 	cfg.set_value("meta", "rescued", rescued)
@@ -537,6 +553,73 @@ static func pay(cost: Dictionary) -> void:
 	shards -= int(cost.get("shards", 0))
 	for m in MATERIALS:
 		materials[m] = int(materials.get(m, 0)) - int(cost.get(m, 0))
+
+
+# ---------- Лавки торговцев ----------
+static var shop_bought := {}   # "run:товар" -> куплено частей чертежей в эту вылазку
+
+
+## Цена товара у торговца: у каждого лавочника своя наценка, раз в вылазку меняется.
+static func shop_price(good: String, seller := "") -> int:
+	var base: int = int(MATERIALS[good].get("shop", 0))
+	var h := absi(hash(seller + ":" + good + ":" + str(total_runs)))
+	return maxi(1, int(round(float(base) * (0.85 + float(h % 31) / 100.0))))
+
+
+static func shop_buy(good: String, count: int, seller := "") -> bool:
+	var price := shop_price(good, seller) * count
+	if shards < price:
+		return false
+	shards -= price
+	materials[good] = int(materials.get(good, 0)) + count
+	stats["bought"] = int(stats.get("bought", 0)) + count
+	save()
+	return true
+
+
+## Чертежи на прилавке: части модулей и оружия без героя, которые ещё нужны.
+## Набор меняется после каждой вылазки; каждую часть можно купить один раз.
+static func shop_parts(seller := "") -> Array:
+	var A = preload("res://scripts/arsenal.gd")
+	var pool: Array = []
+	for m in A.MODULE_UNLOCK:
+		var u: Array = A.MODULE_UNLOCK[m]
+		if str(u[0]) == "parts" and int(mparts.get(m, 0)) < int(u[1]) and not (m in mods_open):
+			pool.append(["m", m])
+	for w in A.WEAPON_PARTS:
+		if not A.is_forged(w) and A.parts_got(w) < A.parts_need(w):
+			pool.append(["w", w])
+	if pool.is_empty():
+		return []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(seller + str(total_runs))
+	var out: Array = []
+	for i in mini(2, pool.size()):
+		var j := rng.randi_range(0, pool.size() - 1)
+		var it: Array = pool[j]
+		pool.remove_at(j)
+		var key := "%d:%s:%s" % [total_runs, it[0], it[1]]
+		out.append({"kind": it[0], "id": it[1], "key": key, "sold": shop_bought.has(key),
+			"cost": {"shards": 70 if it[0] == "m" else 85, "matrix" if it[0] == "m" else "alloy": 2}})
+	return out
+
+
+static func shop_buy_part(item: Dictionary) -> bool:
+	if item.get("sold", false) or not can_afford(item["cost"]):
+		return false
+	pay(item["cost"])
+	if item["kind"] == "m":
+		mparts[item["id"]] = int(mparts.get(item["id"], 0)) + 1
+	else:
+		wparts[item["id"]] = int(wparts.get(item["id"], 0)) + 1
+	# старые записи прошлых вылазок не нужны
+	for k in shop_bought.keys():
+		if not str(k).begins_with(str(total_runs) + ":"):
+			shop_bought.erase(k)
+	shop_bought[item["key"]] = true
+	stats["bought"] = int(stats.get("bought", 0)) + 1
+	save()
+	return true
 
 
 static func cost_text(cost: Dictionary) -> String:
@@ -918,6 +1001,10 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 	var bonus_k := 1.0 + 0.03 * float(run.get("threat", 0)) + float(CHALLENGES.get(run.get("challenge", ""), {}).get("bonus", 0.0))
 	r["bonus"] = int(round(float(total) * (bonus_k - 1.0)))
 	total += r["bonus"]
+	# Денег меньше: основная прокачка — через товары торговцев
+	var cut := total - int(round(float(total) * INCOME_K))
+	r["tax"] = -cut
+	total -= cut
 	r["total"] = total
 	shards += total
 	total_runs += 1
@@ -1032,7 +1119,16 @@ static func node_state(tree_key: String, n: Dictionary) -> String:
 				return "excl"
 	if not conds_met(n.get("conds", []), tree_hero(tree_key)):
 		return "cond"
-	return "open" if shards >= node_cost(n) else "expensive"
+	return "open" if can_afford(node_price(tree_key, n)) else "expensive"
+
+
+## Полная цена узла: осколки + товар лавки (сплав / матрица / эссенция) по ярусу.
+static func node_price(tree_key: String, n: Dictionary) -> Dictionary:
+	var c := {"shards": node_cost(n)}
+	var g: String = TREE_GOOD.get(tree_key.left(2), "")
+	if g != "":
+		c[g] = GOODS_TIER[clampi(int(n.get("tier", 1)), 0, 5)]
+	return c
 
 
 ## Для дерева героя «c:rin» — id героя (для условий «вылазок этим героем»).
@@ -1043,7 +1139,7 @@ static func tree_hero(tree_key: String) -> String:
 static func buy_node(tree_key: String, n: Dictionary) -> bool:
 	if node_state(tree_key, n) != "open":
 		return false
-	shards -= node_cost(n)
+	pay(node_price(tree_key, n))
 	if not trees.has(tree_key):
 		trees[tree_key] = []
 	trees[tree_key].append(n["id"])

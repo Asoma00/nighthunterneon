@@ -107,8 +107,8 @@ static func weapon_state(w: String) -> String:
 
 static func forge_cost(w: String) -> Dictionary:
 	if weapon_hero(w) != "":
-		return {"shards": 160, "scrap": 14, "chips": 4}
-	return {"shards": 90, "scrap": 10, "chips": 1}
+		return {"shards": 160, "scrap": 14, "chips": 4, "alloy": 4}
+	return {"shards": 90, "scrap": 10, "chips": 1, "alloy": 2}
 
 
 ## Почему нельзя ковать ("" — можно).

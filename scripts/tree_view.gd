@@ -49,7 +49,9 @@ func setup(key: String, color: Color, narrow := false, max_w := 0.0) -> void:
 		b.add_theme_font_size_override("font_size", 11 if narrow else 13)
 		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		b.clip_text = true
-		b.icon = Pixel.icon(_node_icon(key, n["id"]))
+		# Узкие клетки: без значка, чтобы название не рвалось по буквам
+		if btn.x >= 150.0:
+			b.icon = Pixel.icon(_node_icon(key, n["id"]))
 		b.expand_icon = true
 		b.add_theme_constant_override("icon_max_width", 22 if narrow else 28)
 		b.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -79,7 +81,10 @@ func _npos(n: Dictionary) -> Vector2:
 ## Полное описание узла: эффект, цена, ярус и условия.
 func _info_text(n: Dictionary) -> String:
 	var hero := Meta.tree_hero(tree_key)
-	var t := "%s — %s.  Цена %d ◆, ярус %d." % [n["name"], n["desc"], Meta.node_cost(n), int(n["tier"])]
+	var t := "%s — %s.  Цена %s, ярус %d." % [n["name"], n["desc"], Meta.cost_text(Meta.node_price(tree_key, n)), int(n["tier"])]
+	var g: String = Meta.TREE_GOOD.get(tree_key.left(2), "")
+	if g != "":
+		t += "\n%s %s — у вас %d. Покупается у торговцев на рынке." % [Meta.MATERIALS[g]["icon"], Meta.MATERIALS[g]["name"], int(Meta.materials.get(g, 0))]
 	var conds: Array = n.get("conds", [])
 	if not conds.is_empty():
 		var parts: Array = []
@@ -145,6 +150,18 @@ func _box(border: Color, bg: Color, glow: int) -> StyleBoxFlat:
 	return s
 
 
+## Чего не хватает на узел: «мало ◆» или «нужно 2 ⬢».
+func _short_need(n: Dictionary) -> String:
+	var c := Meta.node_price(tree_key, n)
+	if Meta.shards < int(c.get("shards", 0)):
+		return "мало ◆ (%d)" % int(c["shards"])
+	for m in Meta.MATERIALS:
+		var need := int(c.get(m, 0))
+		if int(Meta.materials.get(m, 0)) < need:
+			return "мало %s (%d)" % [Meta.MATERIALS[m]["icon"], need]
+	return Meta.cost_text(c)
+
+
 func refresh() -> void:
 	var hero := Meta.tree_hero(tree_key)
 	for n in _nodes:
@@ -152,7 +169,7 @@ func refresh() -> void:
 		var st := Meta.node_state(tree_key, n)
 		var bg := Color(0.05, 0.03, 0.1, 0.95)
 		var border := Color(0.35, 0.35, 0.45)
-		var line2 := "%d ◆" % Meta.node_cost(n)
+		var line2 := Meta.cost_text(Meta.node_price(tree_key, n))
 		match st:
 			"owned":
 				border = Color(1.0, 0.8, 0.3)
@@ -162,7 +179,7 @@ func refresh() -> void:
 				border = accent
 			"expensive":
 				border = accent.darkened(0.5)
-				line2 = "%d ◆ мало" % Meta.node_cost(n)
+				line2 = _short_need(n)
 			"locked":
 				line2 = "нужны верхние"
 			"tier":

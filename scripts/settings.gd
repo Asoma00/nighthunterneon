@@ -334,6 +334,11 @@ func load_settings() -> void:
 	preset = cfg.get_value("mobile", "preset", preset)
 	adaptive = cfg.get_value("graphics", "adaptive", adaptive)
 	manual_aim = cfg.get_value("controls", "manual_aim", manual_aim)
+	var bd: Dictionary = cfg.get_value("controls", "binds", {})
+	for a in bd:
+		if BIND_DEFAULT.has(a):
+			binds[a] = int(bd[a])
+	apply_binds()
 	pixel_art = int(cfg.get_value("graphics", "pixel_art", pixel_art))
 	fx3d = bool(cfg.get_value("graphics", "fx3d", fx3d))
 	touch_size = cfg.get_value("mobile", "touch_size", touch_size)
@@ -361,6 +366,7 @@ func save_settings() -> void:
 	cfg.set_value("mobile", "preset", preset)
 	cfg.set_value("graphics", "adaptive", adaptive)
 	cfg.set_value("controls", "manual_aim", manual_aim)
+	cfg.set_value("controls", "binds", binds)
 	cfg.set_value("graphics", "pixel_art", pixel_art)
 	cfg.set_value("graphics", "fx3d", fx3d)
 	cfg.set_value("mobile", "touch_size", touch_size)
@@ -570,6 +576,7 @@ const HINTS := {
 	"ability": {"kb": "ПРОБЕЛ", "pad": "A", "touch": "2× ТАП"},
 	"stats": {"kb": "TAB", "pad": "SELECT", "touch": "≡"},
 	"interact": {"kb": "E", "pad": "A", "touch": "ВОЙТИ"},
+	"talk": {"kb": "F", "pad": "Y", "touch": "ГОВОРИТЬ"},
 	"move": {"kb": "WASD", "pad": "левый стик", "touch": "касание и сдвиг пальца"},
 	"pick": {"kb": "клавиши 1, 2, 3", "pad": "крестовина и A", "touch": "коснитесь карточки"},
 	"accept": {"kb": "ENTER", "pad": "A", "touch": ""},
@@ -578,7 +585,84 @@ const HINTS := {
 
 ## Название кнопки для действия в текущей версии управления («» — кнопки нет).
 func key(action: String) -> String:
+	if input_mode() == "kb":
+		if binds.has(action):
+			return key_name(int(binds[action]))
+		if action == "move":
+			var mv := ""
+			for a in ["move_up", "move_left", "move_down", "move_right"]:
+				mv += key_name(int(binds[a]))
+			return mv if mv.length() == 4 else "%s %s %s %s" % [key_name(binds["move_up"]), key_name(binds["move_left"]), key_name(binds["move_down"]), key_name(binds["move_right"])]
 	return str(HINTS.get(action, {}).get(input_mode(), ""))
+
+
+# ---------- Переназначение клавиш (ПК) ----------
+const BIND_ACTIONS := [["move_up", "Идти вверх"], ["move_down", "Идти вниз"], ["move_left", "Идти влево"],
+	["move_right", "Идти вправо"], ["ability", "Способность героя"], ["interact", "Войти / действие"],
+	["talk", "Поговорить с жителем"], ["stats", "Статистика боя"], ["pause", "Пауза"]]
+const BIND_DEFAULT := {"move_up": KEY_W, "move_down": KEY_S, "move_left": KEY_A, "move_right": KEY_D,
+	"ability": KEY_SPACE, "interact": KEY_E, "talk": KEY_F, "stats": KEY_TAB, "pause": KEY_ESCAPE}
+## Запасные клавиши: работают всегда, если не заняты основной клавишей другого действия
+const BIND_EXTRA := {"move_up": [KEY_UP], "move_down": [KEY_DOWN], "move_left": [KEY_LEFT], "move_right": [KEY_RIGHT],
+	"ability": [KEY_SHIFT], "interact": [KEY_ENTER], "pause": [KEY_P]}
+var binds := BIND_DEFAULT.duplicate()
+
+
+static func key_name(code: int) -> String:
+	match code:
+		KEY_SPACE: return "ПРОБЕЛ"
+		KEY_ESCAPE: return "ESC"
+		KEY_ENTER, KEY_KP_ENTER: return "ENTER"
+		KEY_SHIFT: return "SHIFT"
+		KEY_CTRL: return "CTRL"
+		KEY_ALT: return "ALT"
+		KEY_TAB: return "TAB"
+		KEY_BACKSPACE: return "BACKSPACE"
+		KEY_UP: return "↑"
+		KEY_DOWN: return "↓"
+		KEY_LEFT: return "←"
+		KEY_RIGHT: return "→"
+	return OS.get_keycode_string(code).to_upper()
+
+
+## Пересобрать клавиатурные события действий по текущим назначениям.
+func apply_binds() -> void:
+	var primary := {}
+	for a in binds:
+		primary[int(binds[a])] = a
+	for a in BIND_DEFAULT:
+		if not InputMap.has_action(a):
+			InputMap.add_action(a)
+		for ev in InputMap.action_get_events(a):
+			if ev is InputEventKey:
+				InputMap.action_erase_event(a, ev)
+		var keys: Array = [int(binds.get(a, BIND_DEFAULT[a]))]
+		for k in BIND_EXTRA.get(a, []):
+			if not primary.has(int(k)) and not (int(k) in keys):
+				keys.append(int(k))
+		for k in keys:
+			var e := InputEventKey.new()
+			e.physical_keycode = k
+			InputMap.action_add_event(a, e)
+
+
+## Назначить клавишу. Если она занята другим действием — они меняются клавишами.
+func set_bind(action: String, code: int) -> void:
+	var old := int(binds.get(action, 0))
+	for a in binds:
+		if a != action and int(binds[a]) == code:
+			binds[a] = old
+	binds[action] = code
+	apply_binds()
+	save_settings()
+	input_mode_changed.emit(input_mode())
+
+
+func reset_binds() -> void:
+	binds = BIND_DEFAULT.duplicate()
+	apply_binds()
+	save_settings()
+	input_mode_changed.emit(input_mode())
 
 
 ## «ЗАКРЫТЬ  [ESC]» на ПК, «ЗАКРЫТЬ  [B]» на Deck, просто «ЗАКРЫТЬ» на телефоне.
@@ -695,22 +779,7 @@ func _input(event: InputEvent) -> void:
 
 
 func _setup_input() -> void:
-	var map := {
-		"move_left": [KEY_A, KEY_LEFT],
-		"move_right": [KEY_D, KEY_RIGHT],
-		"move_up": [KEY_W, KEY_UP],
-		"move_down": [KEY_S, KEY_DOWN],
-		"ability": [KEY_SPACE, KEY_SHIFT],
-		"pause": [KEY_ESCAPE, KEY_P],
-		"interact": [KEY_E, KEY_ENTER],
-	}
-	for action in map:
-		if not InputMap.has_action(action):
-			InputMap.add_action(action)
-		for key in map[action]:
-			var ev := InputEventKey.new()
-			ev.physical_keycode = key
-			InputMap.action_add_event(action, ev)
+	apply_binds()
 	# Геймпад (любой): стик и крестовина — движение, A/X/RB — способность,
 	# A — взаимодействие, Start — пауза. В меню работают стандартные ui_* (стик, A, B).
 	var joy_axes := {"move_left": [JOY_AXIS_LEFT_X, -1.0], "move_right": [JOY_AXIS_LEFT_X, 1.0],
@@ -718,7 +787,7 @@ func _setup_input() -> void:
 	var joy_btns := {"move_left": [JOY_BUTTON_DPAD_LEFT], "move_right": [JOY_BUTTON_DPAD_RIGHT],
 		"move_up": [JOY_BUTTON_DPAD_UP], "move_down": [JOY_BUTTON_DPAD_DOWN],
 		"ability": [JOY_BUTTON_A, JOY_BUTTON_X, JOY_BUTTON_RIGHT_SHOULDER],
-		"interact": [JOY_BUTTON_A], "pause": [JOY_BUTTON_START]}
+		"interact": [JOY_BUTTON_A], "talk": [JOY_BUTTON_Y], "stats": [JOY_BUTTON_BACK], "pause": [JOY_BUTTON_START]}
 	# В меню и окнах: A — выбрать, B — назад (на любом геймпаде)
 	for pair in [["ui_accept", JOY_BUTTON_A], ["ui_cancel", JOY_BUTTON_B]]:
 		var jb := InputEventJoypadButton.new()

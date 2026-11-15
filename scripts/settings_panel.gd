@@ -61,7 +61,14 @@ func _update_memory() -> void:
 
 ## Вкладки: Видео (экран, кадры), Графика (качество картинки), Звук.
 static var tab := "video"
-const TABS := [["video", "ВИДЕО"], ["graphics", "ГРАФИКА"], ["sound", "ЗВУК"]]
+const TABS := [["video", "ВИДЕО"], ["graphics", "ГРАФИКА"], ["sound", "ЗВУК"], ["controls", "УПРАВЛЕНИЕ"]]
+
+
+## Вкладка «Управление» — только там, где есть клавиатура (ПК, Steam Deck)
+func _tabs() -> Array:
+	if Settings.is_mobile():
+		return TABS.slice(0, 3)
+	return TABS
 const TAB_OF := {
 	"Режим экрана": "video", "Формат": "video", "Разрешение 3D": "video", "Чёткость 3D": "video",
 	"Пиксельный 3D": "video", "Кадры в секунду": "video", "Вертикальная синхр.": "video",
@@ -106,9 +113,13 @@ func _build() -> void:
 	tabs.alignment = FlowContainer.ALIGNMENT_CENTER
 	tabs.add_theme_constant_override("h_separation", 12)
 	tabs.add_theme_constant_override("v_separation", 8)
-	for t in TABS:
+	if tab == "controls" and Settings.is_mobile():
+		tab = "video"
+	for t in _tabs():
 		var on: bool = t[0] == tab
-		var tb := _button(t[1], CYAN if on else Color(0.55, 0.55, 0.7), 190)
+		var tb := _button(t[1], CYAN if on else Color(0.55, 0.55, 0.7), 190 if _tabs().size() <= 3 else 158)
+		if _tabs().size() > 3:
+			tb.add_theme_font_size_override("font_size", 18)
 		if on:
 			tb.add_theme_stylebox_override("normal", _box(CYAN, Color(0.1, 0.25, 0.32, 0.95), 3, 14))
 		var key: String = t[0]
@@ -121,7 +132,8 @@ func _build() -> void:
 	v.add_child(tabs)
 	# Ширина окна одна для всех вкладок: вкладки в одну строку, окно не «прыгает»
 	var vw := get_viewport().get_visible_rect().size.x
-	tabs.custom_minimum_size.x = minf(3.0 * 190.0 + 2.0 * 12.0, vw - 40.0)
+	var tbw := 190.0 if _tabs().size() <= 3 else 158.0
+	tabs.custom_minimum_size.x = minf(float(_tabs().size()) * tbw + float(_tabs().size() - 1) * 12.0, vw - 40.0)
 
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size.x = minf(860.0 if vw >= 1180.0 and not Settings.is_portrait() else 620.0, vw - 40.0)
@@ -308,6 +320,8 @@ func _build_common_rows(grid: GridContainer) -> void:
 	_filter_tab(grid)
 	if tab == "sound":
 		grid.columns = 2
+	if tab == "controls":
+		_build_binds(grid)
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	buttons.add_theme_constant_override("separation", 20)
@@ -329,6 +343,84 @@ var _mode_opt: OptionButton
 var _aspect_opt: OptionButton
 var _res_opt: OptionButton
 var _res_values: Array[Vector2i] = []
+
+
+# ---------- Управление: переназначение клавиш ----------
+var _capture := ""            # действие, для которого ждём клавишу
+var _bind_btns := {}
+
+
+func _build_binds(grid: GridContainer) -> void:
+	grid.columns = 2 if (Settings.is_portrait() or get_viewport().get_visible_rect().size.x < 1180.0) else 4
+	_bind_btns = {}
+	for pair in Settings.BIND_ACTIONS:
+		var a: String = pair[0]
+		grid.add_child(_row_label(pair[1]))
+		var b := _button(_bind_text(a), CYAN, 220)
+		b.custom_minimum_size = Vector2(220, 44)
+		b.add_theme_font_size_override("font_size", 18)
+		b.pressed.connect(func():
+			Sound.play("click")
+			_capture = a
+			_refresh_binds())
+		_bind_btns[a] = b
+		grid.add_child(b)
+	grid.add_child(_row_label("Запасные клавиши"))
+	var ex := _row_label("стрелки, SHIFT, ENTER, P")
+	ex.add_theme_color_override("font_color", Color(0.7, 0.7, 0.85))
+	grid.add_child(ex)
+	grid.add_child(_row_label("Меню и окна"))
+	var nav := _row_label("стрелки или %s — выбор, ENTER / ПРОБЕЛ — нажать, ESC — назад" % Settings.key("move"))
+	nav.add_theme_color_override("font_color", Color(0.7, 0.7, 0.85))
+	nav.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	nav.custom_minimum_size.x = 220
+	grid.add_child(nav)
+	grid.add_child(_row_label("Сброс"))
+	var rs := _button("ПО УМОЛЧАНИЮ", MAGENTA, 220)
+	rs.custom_minimum_size = Vector2(220, 44)
+	rs.add_theme_font_size_override("font_size", 18)
+	rs.pressed.connect(func():
+		Sound.play("click")
+		_capture = ""
+		Settings.reset_binds()
+		_refresh_binds())
+	grid.add_child(rs)
+
+
+func _bind_text(a: String) -> String:
+	if _capture == a:
+		return "▸ нажмите клавишу…"
+	return Settings.key_name(int(Settings.binds.get(a, 0)))
+
+
+func _refresh_binds() -> void:
+	for a in _bind_btns:
+		if is_instance_valid(_bind_btns[a]):
+			(_bind_btns[a] as Button).text = _bind_text(a)
+
+
+func _input(event: InputEvent) -> void:
+	if _capture == "" or not is_visible_in_tree():
+		return
+	if event is InputEventMouseButton and event.pressed:
+		# щелчок мимо — отмена
+		_capture = ""
+		_refresh_binds()
+		return
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	get_viewport().set_input_as_handled()
+	var code: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
+	var a := _capture
+	_capture = ""
+	if code == KEY_ESCAPE and a != "pause":
+		_refresh_binds()   # ESC — отмена
+		return
+	Settings.set_bind(a, code)
+	Sound.play("levelup", -8.0)
+	_refresh_binds()
+	if _bind_btns.has(a) and is_instance_valid(_bind_btns[a]):
+		(_bind_btns[a] as Button).grab_focus()
 
 
 func _row_label(text: String) -> Label:

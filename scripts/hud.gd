@@ -220,7 +220,7 @@ var _stats_t := 0.0
 
 var force_stats := false
 func _stats_held() -> bool:
-	if force_stats or Input.is_key_pressed(KEY_TAB):
+	if force_stats or Input.is_action_pressed("stats"):
 		return true
 	for d in Input.get_connected_joypads():
 		if Input.is_joy_button_pressed(d, JOY_BUTTON_BACK):
@@ -1134,6 +1134,7 @@ func show_game_over(victory: bool, time_alive: float, kills: int, level: int, re
 	_over_stats.text = after + "%s  •  %s\n\nВремя:  %s\nУничтожено:  %d\nУровень:  %d\nРеакций:  %d" % [
 		_me().char_data["name"], _me().char_data["title"], _fmt_time(time_alive), kills, _me().level, reactions]
 	if not main.reward.is_empty():
+		preload("res://scripts/ach_toast.gd").show_unlocks(main.reward.get("unlocks", []))
 		_over_stats.text += "\n\nНаграда:  +%d ◆ осколков" % main.reward["total"]
 		if main.reward.get("first", 0) > 0:
 			_over_stats.text += "\nПервое прохождение:  +%d ◆" % main.reward["first"]

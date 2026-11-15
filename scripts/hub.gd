@@ -218,18 +218,18 @@ var _hint_l: Label
 
 
 ## Префикс подсказки у здания: «[E]  » / «[A]  »; на телефоне — кнопка «ВОЙТИ» на экране
-func _pk() -> String:
-	return "" if Settings.input_mode() == "touch" else "[%s]  " % Settings.key("interact")
+func _pk(action := "interact") -> String:
+	return "" if Settings.input_mode() == "touch" else "[%s]  " % Settings.key(action)
 
 
 ## Нижняя подсказка управления в убежище — под текущее устройство
 func _hint_text() -> String:
 	match Settings.input_mode():
 		"touch":
-			return "Касание и сдвиг пальца — ходить   •   ВОЙТИ — войти / говорить   •   II — пауза"
+			return "Касание и сдвиг пальца — ходить   •   ВОЙТИ / ГОВОРИТЬ   •   II — пауза"
 		"pad":
-			return "Левый стик — ходить   •   A — войти / говорить   •   START — пауза   •   B — назад"
-	return "WASD — ходить   •   E — войти / говорить   •   ESC — пауза / назад"
+			return "Левый стик — ходить   •   A — войти   •   Y — поговорить   •   START — пауза   •   B — назад"
+	return "%s — ходить   •   %s — войти   •   %s — поговорить   •   %s — пауза / назад" % [Settings.key("move"), Settings.key("interact"), Settings.key("talk"), Settings.key("pause")]
 
 
 func _on_input_mode(_m: String) -> void:
@@ -1142,7 +1142,12 @@ func _process(delta: float) -> void:
 	_update_camera(delta)
 	_update_interaction()
 	_shards_label.text = str(Meta.shards)
-	_mats_label.text = "   ⚙ %d   ▣ %d   ✶ %d" % [int(Meta.materials.get("scrap", 0)), int(Meta.materials.get("chips", 0)), int(Meta.materials.get("cores", 0))]
+	var mt := ""
+	for mk in Meta.MATERIALS:
+		var mv := int(Meta.materials.get(mk, 0))
+		if mv > 0 or not Meta.MATERIALS[mk].has("shop"):
+			mt += "   %s %d" % [Meta.MATERIALS[mk]["icon"], mv]
+	_mats_label.text = mt
 	_net_tick(delta)
 
 
@@ -1232,6 +1237,8 @@ func _update_camera(delta: float) -> void:
 
 
 func _update_interaction() -> void:
+	_near_talk = -1
+	_prompt.offset_top = -110.0
 	if _panel_id != "" or _cine_t > 0.0:
 		_prompt.visible = false
 		return
@@ -1239,13 +1246,29 @@ func _update_interaction() -> void:
 		_near = _interior_interaction()
 		_prompt.visible = _near != ""
 		return
+	# Житель рядом — отдельная кнопка «Поговорить» [F]; здание или место — «Войти» [E]
 	var ti := _talk_target()
-	if ti >= 0 and not _net_client:
-		var tv: Dictionary = _villagers[ti]
-		_near = "talk:%d" % ti
-		_prompt.text = _pk() + "Поговорить: %s, %s" % [tv["profile"]["name"], tv["profile"]["title"]]
+	_near_talk = ti if not _net_client else -1
+	_update_place()
+	if _near_talk >= 0:
+		var tv: Dictionary = _villagers[_near_talk]
+		var tl := "Поговорить: %s, %s%s" % [tv["profile"]["name"], tv["profile"]["title"],
+			"  (лавка)" if tv["role"] == "merchant" else ""]
+		if _near == "":
+			_near = "talk:%d" % _near_talk
+			_prompt.text = _pk() + tl
+		else:
+			_prompt.text = _pk() + _prompt.text.trim_prefix(_pk()) + "\n" + _pk("talk") + tl
 		_prompt.visible = true
-		return
+	# Две строки — подсказка растёт вверх и не наезжает на строку управления
+	_prompt.offset_top = -150.0 if _prompt.text.contains("\n") else -110.0
+
+
+var _near_talk := -1
+
+
+## Ближайшее здание или место для дела (без жителей).
+func _update_place() -> void:
 	var best := ""
 	var best_d := 999.0
 	var p := _avatar.position
@@ -1318,6 +1341,10 @@ func _update_interaction() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("talk") and _inside == "" and _panel_id == "" and _near_talk >= 0:
+		get_viewport().set_input_as_handled()
+		_talk_dialog(_near_talk)
+		return
 	if event.is_action_pressed("interact"):
 		get_viewport().set_input_as_handled()
 		if _panel_id == "" and _near != "":
@@ -1566,7 +1593,7 @@ func _show_reward(r: Dictionary) -> void:
 		t += "\n★ Новый ранг охотника: %d — %s. Загляните к Монументу!" % [int(pr["rank"]), Lore.rank_title(int(pr["rank"]))]
 	elif not pr.is_empty():
 		t += "\nОпыт охотника +%d" % int(pr.get("rank_xp", 0))
-	for line in Arsenal.unlock_lines(r.get("unlocks", [])).slice(0, 3):
+	for line in Arsenal.unlock_lines((r.get("unlocks", []) as Array).filter(func(u): return str(u[0]) != "a")).slice(0, 3):
 		t += "\n" + line
 	_toast_text(t)
 
@@ -1579,6 +1606,11 @@ func _check_unlocks() -> void:
 	if list.is_empty():
 		return
 	Meta.save()
+	# Достижения — отдельными уведомлениями с медалью
+	preload("res://scripts/ach_toast.gd").show_unlocks(list)
+	list = list.filter(func(u): return str(u[0]) != "a")
+	if list.is_empty():
+		return
 	var lines := Arsenal.unlock_lines(list)
 	_toast_text("\n".join(lines.slice(0, 4)) + ("\n…и ещё %d — см. Монумент" % (lines.size() - 4) if lines.size() > 4 else ""))
 	Sound.play("evolve", -4.0, 1.2)
@@ -1677,6 +1709,9 @@ func _fill_panel() -> void:
 		return
 	if id.begins_with("talk:"):
 		_fill_talk(int(id.substr(5)))
+		return
+	if id.begins_with("shop:"):
+		_fill_shop(int(id.substr(5)))
 		return
 	if id == "story":
 		_fill_story()
@@ -2306,6 +2341,90 @@ func _dialog(scene, opts := {}, after := Callable()) -> void:
 			after.call())
 
 
+var _shop_pending := -1
+
+
+## Лавка торговца: товары для улучшений оружия, модулей и героев + чертежи.
+func _fill_shop(i: int) -> void:
+	var seller := ""
+	if i >= 0 and i < _villagers.size():
+		seller = str(_villagers[i].get("profile", {}).get("name", ""))
+	_panel_box.add_child(_centered(_label("ЛАВКА — " + seller.to_upper(), 32, Color.WHITE, Color(GOLD, 0.8))))
+	var sub := _label("У вас ◆ %d осколков. Товар нужен для ковки и улучшений в кузнице, лаборатории и святилище." % Meta.shards, 15, Color(0.85, 0.85, 1.0))
+	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sub.custom_minimum_size = Vector2(minf(620, _avail()), 0)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_panel_box.add_child(_centered(sub))
+	for g in Meta.MATERIALS:
+		var md: Dictionary = Meta.MATERIALS[g]
+		if not md.has("shop"):
+			continue
+		var price := Meta.shop_price(g, seller)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 12)
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		var ic := _label(md["icon"], 34, md["color"], Color(md["color"], 0.6))
+		ic.custom_minimum_size = Vector2(44, 0)
+		ic.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		row.add_child(ic)
+		var info := _label("%s  •  у вас %d\n%s" % [md["name"], int(Meta.materials.get(g, 0)), md["for"]], 15, Color(0.92, 0.92, 1.0))
+		info.custom_minimum_size = Vector2(minf(280, _avail() - 260), 0)
+		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		row.add_child(info)
+		for cnt in [1, 5]:
+			var c: int = cnt
+			var b := _button("×%d — %d ◆" % [c, price * c], md["color"], Meta.shards >= price * c)
+			b.custom_minimum_size = Vector2(minf(140, _avail() * 0.3), 44)
+			b.add_theme_font_size_override("font_size", 16)
+			b.pressed.connect(func():
+				if Meta.shop_buy(g, c, seller):
+					Sound.play("gem", -2.0, 1.2)
+					_toast_text("Куплено: %d %s %s" % [c, md["icon"], md["name"]])
+					_fill_panel())
+			row.add_child(b)
+		_panel_box.add_child(_centered(row))
+	var parts := Meta.shop_parts(seller)
+	if not parts.is_empty():
+		_panel_box.add_child(_centered(_label("— ЧЕРТЕЖИ НА ПРИЛАВКЕ (меняются после вылазки) —", 16, GOLD)))
+		for it in parts:
+			var item: Dictionary = it
+			var nm := ""
+			var have := 0
+			var need := 0
+			if item["kind"] == "m":
+				nm = "Часть чертежа модуля «%s»" % str(Data.PASSIVES.get(item["id"], {}).get("name", item["id"]))
+				have = int(Meta.mparts.get(item["id"], 0))
+				need = int(Arsenal.MODULE_UNLOCK[item["id"]][1])
+			else:
+				nm = "Часть оружия «%s»" % str(Data.WEAPONS.get(item["id"], {}).get("name", item["id"]))
+				have = Arsenal.parts_got(item["id"])
+				need = Arsenal.parts_need(item["id"])
+			var pr := HBoxContainer.new()
+			pr.add_theme_constant_override("separation", 12)
+			pr.alignment = BoxContainer.ALIGNMENT_CENTER
+			var pl := _label("%s  (%d / %d)" % [nm, have, need], 15, Color(0.92, 0.92, 1.0))
+			pl.custom_minimum_size = Vector2(minf(330, _avail() - 230), 0)
+			pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			pr.add_child(pl)
+			var sold: bool = item["sold"]
+			var pb := _button("✓ куплено" if sold else Meta.cost_text(item["cost"]), GOLD, not sold and Meta.can_afford(item["cost"]))
+			pb.custom_minimum_size = Vector2(minf(210, _avail() * 0.4), 44)
+			pb.add_theme_font_size_override("font_size", 16)
+			pb.pressed.connect(func():
+				if Meta.shop_buy_part(item):
+					Sound.play("levelup", -6.0)
+					_toast_text("Куплено: " + nm)
+					get_tree().create_timer(0.6).timeout.connect(_check_unlocks)
+					_fill_panel())
+			pr.add_child(pb)
+			_panel_box.add_child(_centered(pr))
+	var close := _button(Settings.with_key("УЙТИ", "back"), Color(0.6, 0.6, 0.75))
+	close.pressed.connect(func():
+		Sound.play("click")
+		_close_panel())
+	_panel_box.add_child(_centered(close))
+
+
 ## Разговор с жителем: реплика, его история, просьба — как сцена новеллы.
 func _talk_dialog(i: int) -> void:
 	if i < 0 or i >= _villagers.size():
@@ -2356,10 +2475,24 @@ func _talk_dialog(i: int) -> void:
 					Meta.save()
 					Sound.play("levelup", -6.0)},
 			{"t": "Не сейчас", "lines": [["player", "Не сейчас. Может, потом."]]}]
+	# Торговцы продают товары для улучшений: сплав, матрицы, эссенцию и чертежи
+	_shop_pending = -1
+	if v["role"] == "merchant":
+		var sc := {"t": "Посмотреть товар", "lines": [[who, ["Гляди, всё свежее! Сплав, матрицы, эссенция.", "Для кузни, лаборатории, святилища — всё здесь.", "Бери, пока не разобрали!"][randi() % 3]]],
+			"do": func(): _shop_pending = i}
+		if choices.is_empty():
+			L.append([who, "Ну что, охотник, посмотришь товар?"])
+			choices = [sc, {"t": "В другой раз", "lines": [["player", "В другой раз."]]}]
+		else:
+			choices.push_front(sc)
 	if not choices.is_empty():
 		var last: Array = L.pop_back()
 		L.append({"who": last[0], "text": last[1], "choices": choices})
-	_dialog(L, {"cast": cast, "frames": fr})
+	_dialog(L, {"cast": cast, "frames": fr}, func():
+		if _shop_pending >= 0:
+			var si := _shop_pending
+			_shop_pending = -1
+			_open_panel("shop:%d" % si))
 
 
 ## Командир Ворон: сюжетная линия целиком через разговор.
