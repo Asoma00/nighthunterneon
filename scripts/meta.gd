@@ -563,11 +563,32 @@ static func pay(cost: Dictionary) -> void:
 static var shop_bought := {}   # "run:товар" -> куплено частей чертежей в эту вылазку
 
 
-## Цена товара у торговца: у каждого лавочника своя наценка, раз в вылазку меняется.
+## Базовая цена за штуку (осколки) и зачем это нужно
+const BASE_PRICE := {"scrap": 5, "chips": 12, "cores": 34, "alloy": 16, "matrix": 22, "essence": 20}
+const GOOD_FOR := {"scrap": "стройка и улучшение зданий", "chips": "стройка зданий и ковка",
+	"cores": "высокие уровни зданий"}
+## У каждого торговца свой товар и свои цены (множитель к базовой цене) и свои чертежи
+const SELLERS := {
+	"Лиса": {"tag": "кристаллы, матрицы, ядра", "goods": {"matrix": 0.85, "chips": 0.9, "cores": 1.15}, "parts": "m"},
+	"Борис": {"tag": "лом, микросхемы, сплав подешёвке", "goods": {"scrap": 0.75, "chips": 1.05, "alloy": 1.1}, "parts": ""},
+	"Мира": {"tag": "эссенция и ядра", "goods": {"essence": 0.8, "cores": 0.95, "matrix": 1.25}, "parts": ""},
+	"Гек": {"tag": "сплав и чертежи оружия", "goods": {"alloy": 0.8, "essence": 1.3, "scrap": 1.2}, "parts": "w"},
+}
+
+
+static func seller_goods(seller: String) -> Array:
+	var sd: Dictionary = SELLERS.get(seller, {})
+	if sd.is_empty():
+		return ["alloy", "matrix", "essence"]
+	return (sd["goods"] as Dictionary).keys()
+
+
+## Цена товара у торговца: своя наценка лавочника и колебание раз в вылазку (±8%).
 static func shop_price(good: String, seller := "") -> int:
-	var base: int = int(MATERIALS[good].get("shop", 0))
+	var base := float(BASE_PRICE.get(good, int(MATERIALS[good].get("shop", 10))))
+	var mul := float((SELLERS.get(seller, {}).get("goods", {}) as Dictionary).get(good, 1.0))
 	var h := absi(hash(seller + ":" + good + ":" + str(total_runs)))
-	return maxi(1, int(round(float(base) * (0.85 + float(h % 31) / 100.0))))
+	return maxi(1, int(round(base * mul * (0.92 + float(h % 17) / 100.0))))
 
 
 static func shop_buy(good: String, count: int, seller := "") -> bool:
@@ -586,19 +607,22 @@ static func shop_buy(good: String, count: int, seller := "") -> bool:
 static func shop_parts(seller := "") -> Array:
 	var A = preload("res://scripts/arsenal.gd")
 	var pool: Array = []
+	var only: String = str(SELLERS.get(seller, {}).get("parts", "mw"))
+	if only == "":
+		return []
 	for m in A.MODULE_UNLOCK:
 		var u: Array = A.MODULE_UNLOCK[m]
-		if str(u[0]) == "parts" and int(mparts.get(m, 0)) < int(u[1]) and not (m in mods_open):
+		if "m" in only and str(u[0]) == "parts" and int(mparts.get(m, 0)) < int(u[1]) and not (m in mods_open):
 			pool.append(["m", m])
 	for w in A.WEAPON_PARTS:
-		if not A.is_forged(w) and A.parts_got(w) < A.parts_need(w):
+		if "w" in only and not A.is_forged(w) and A.parts_got(w) < A.parts_need(w):
 			pool.append(["w", w])
 	if pool.is_empty():
 		return []
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(seller + str(total_runs))
 	var out: Array = []
-	for i in mini(2, pool.size()):
+	for i in mini(3 if only.length() == 1 else 2, pool.size()):
 		var j := rng.randi_range(0, pool.size() - 1)
 		var it: Array = pool[j]
 		pool.remove_at(j)

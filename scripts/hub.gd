@@ -2361,16 +2361,16 @@ func _fill_shop(i: int) -> void:
 	if i >= 0 and i < _villagers.size():
 		seller = str(_villagers[i].get("profile", {}).get("name", ""))
 	_panel_box.add_child(_centered(_label("ЛАВКА — " + seller.to_upper(), 32, Color.WHITE, Color(GOLD, 0.8))))
-	var sub := _label("У вас ◆ %d осколков. Товар нужен для ковки и улучшений в кузнице, лаборатории и святилище." % Meta.shards, 15, Color(0.85, 0.85, 1.0))
+	var tag := str(Meta.SELLERS.get(seller, {}).get("tag", ""))
+	var sub := _label(("Здесь: %s.  " % tag if tag != "" else "") + "У вас ◆ %d осколков. Цены у каждого торговца свои и меняются после вылазки." % Meta.shards, 15, Color(0.85, 0.85, 1.0))
 	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	sub.custom_minimum_size = Vector2(minf(620, _avail()), 0)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_panel_box.add_child(_centered(sub))
-	for g in Meta.MATERIALS:
+	for g in Meta.seller_goods(seller):
 		var md: Dictionary = Meta.MATERIALS[g]
-		if not md.has("shop"):
-			continue
 		var price := Meta.shop_price(g, seller)
+		var mul := float((Meta.SELLERS.get(seller, {}).get("goods", {}) as Dictionary).get(g, 1.0))
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 12)
 		row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -2378,7 +2378,8 @@ func _fill_shop(i: int) -> void:
 		ic.custom_minimum_size = Vector2(44, 0)
 		ic.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		row.add_child(ic)
-		var info := _label("%s  •  у вас %d\n%s" % [md["name"], int(Meta.materials.get(g, 0)), md["for"]], 15, Color(0.92, 0.92, 1.0))
+		var deal := "  ▼ выгодно" if mul < 0.9 else ("  ▲ дорого" if mul > 1.1 else "")
+		var info := _label("%s%s  •  у вас %d\n%s" % [md["name"], deal, int(Meta.materials.get(g, 0)), str(md.get("for", Meta.GOOD_FOR.get(g, "")))], 15, Color(0.92, 0.92, 1.0))
 		info.custom_minimum_size = Vector2(minf(280, _avail() - 260), 0)
 		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		row.add_child(info)
