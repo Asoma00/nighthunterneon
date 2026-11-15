@@ -16,6 +16,7 @@ const PANEL_BG := Color(0.05, 0.03, 0.1, 0.97)
 const SPRITE_PX := 0.045
 const PORTAL_POS := Vector3(0, 0, -2.5)
 const BOARD := Vector3(-3.6, 0, -1.0)   # доска заданий у портала
+const RESULTS_BOARD := Vector3(3.6, 0, -1.0)   # доска итогов последней вылазки — справа от портала
 const Quests := preload("res://scripts/quests.gd")
 const Lore := preload("res://scripts/lore.gd")
 const Arsenal := preload("res://scripts/arsenal.gd")
@@ -1296,6 +1297,10 @@ func _update_place() -> void:
 	if dm < 3.2 and dm < best_d:
 		best = "path"
 		best_d = dm
+	var dr2 := Vector2(p.x - RESULTS_BOARD.x, p.z - RESULTS_BOARD.z).length()
+	if dr2 < 1.9 and dr2 < best_d:
+		best = "results"
+		best_d = dr2
 	var db := Vector2(p.x - BOARD.x, p.z - BOARD.z).length()
 	if db < 2.2 and db < best_d:
 		best = "board"
@@ -1323,6 +1328,8 @@ func _update_place() -> void:
 			"train": "Размяться на плацу — %s", "garden": "Сорвать светоцвет — %s", "robot": "Похлопать робота по корпусу%s"}[act]
 		var eff := "" if act == "robot" else "на вылазку: " + str(Lore.BUFFS[act]["d"]) + ("  (сейчас: %s)" % Lore.BUFFS[cur]["name"] if cur != "" and cur != act else ("  ✓ уже есть" if cur == act else ""))
 		_prompt.text = _pk() + txt % eff
+	elif best == "results":
+		_prompt.text = _pk() + "Доска итогов — последняя вылазка" + ("" if not Meta.last_run.is_empty() else "  (пока пусто)")
 	elif best == "path":
 		var pp := Lore.perk_points()
 		_prompt.text = _pk() + "Монумент охотников — путь, навыки, летопись" + ("  (очков: %d)" % pp if pp > 0 else "")
@@ -1684,6 +1691,9 @@ func _fill_panel() -> void:
 	if id == "board":
 		_fill_board()
 		return
+	if id == "results":
+		_fill_results()
+		return
 	if id == "path":
 		_fill_path()
 		return
@@ -1936,7 +1946,8 @@ func _start_run() -> void:
 	fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_hud.add_child(fade)
 	var tw := create_tween()
-	tw.tween_property(fade, "color", Color(0.3, 0.1, 0.5, 1.0), 0.5)
+	# Вспышка портала, а не затемнение: кадр растворится неоновой волной в загрузку
+	tw.tween_property(fade, "color", Color(0.45, 0.2, 0.75, 0.45), 0.45)
 	tw.tween_callback(func(): Loader.go("res://main.tscn"))
 
 
@@ -3528,14 +3539,16 @@ func _build_places() -> void:
 	_label3d(_world, "САД СВЕТОЦВЕТОВ", GARDEN + Vector3(0, 2.0, 0), Color(0.6, 1.0, 0.7), 28)
 	_obstacles.append([GARDEN, 2.4])
 
-	# Доска объявлений у портала
-	var nb := PORTAL_POS + Vector3(3.6, 0, 1.5)
+	# Доска итогов вылазки у портала (справа)
+	var nb := RESULTS_BOARD
 	for x in [-0.6, 0.6]:
 		_add(_world, _cyl(0.05, 0.05, 1.8, 5), wood, nb + Vector3(x, 0.9, 0))
 	_add(_world, _box(1.5, 1.0, 0.08), wood, nb + Vector3(0, 1.5, 0))
 	for k in 4:
 		var paper := _add(_world, _box(0.3, 0.35, 0.02), _emat([GOLD, CYAN, Color(1, 1, 1), MAGENTA][k] as Color, 0.6), nb + Vector3(-0.45 + k * 0.3, 1.5 + (0.12 if k % 2 == 0 else -0.12), 0.05))
 		paper.rotation.z = randf_range(-0.15, 0.15)
+		_flicker.append([paper.material_override, 0.6, randf() * 10.0])
+	_label3d(_world, "ИТОГИ ВЫЛАЗКИ", nb + Vector3(0, 2.5, 0), CYAN.lightened(0.2), 24)
 	_obstacles.append([nb, 0.6])
 
 
@@ -3613,6 +3626,88 @@ func _build_board() -> void:
 	_light(root, Vector3(0, 2.2, 0.8), GOLD, 0.9, 4.0)
 	_label3d(_world, "ДОСКА ЗАДАНИЙ", BOARD + Vector3(0, 2.9, 0), GOLD.lightened(0.2), 28)
 	_obstacles.append([BOARD, 0.9])
+
+
+## Доска итогов: как прошла последняя вылазка.
+func _fill_results() -> void:
+	var r: Dictionary = Meta.last_run
+	_panel_box.add_child(_centered(_label("ИТОГИ ВЫЛАЗКИ", 34, Color.WHITE, Color(CYAN, 0.8))))
+	if r.is_empty():
+		var e := _label("Здесь вывешивают итоги вылазок. Пока листки пусты — сходите через портал.", 17, Color(0.85, 0.85, 1.0))
+		e.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		e.custom_minimum_size = Vector2(minf(520, _avail()), 0)
+		e.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_panel_box.add_child(_centered(e))
+	else:
+		var win: bool = r.get("victory", false)
+		var lv := int(r.get("level", -1))
+		var head := ("УРОВЕНЬ %d ПРОЙДЕН" % (lv + 1)) if win else "СИГНАЛ ПОТЕРЯН"
+		if int(r.get("endless", 0)) > 0:
+			head += "  •  БЕСКОНЕЧНЫЙ РЕЖИМ %d МИН" % int(r["endless"])
+		_panel_box.add_child(_centered(_label(head, 24, GOLD if win else MAGENTA)))
+		var hc: Dictionary = Data.CHARACTERS.get(str(r.get("hero", "")), {})
+		var top := HBoxContainer.new()
+		top.add_theme_constant_override("separation", 16)
+		top.alignment = BoxContainer.ALIGNMENT_CENTER
+		if not hc.is_empty():
+			top.add_child(_pic(Pixel.portrait(Meta.hero_sprite(str(r["hero"]))), 2.0))
+		var t := int(r.get("time", 0.0))
+		var sub := "Вылазка №%d  •  %s\n%s — %s, ур. %d\nВремя %d:%02d  •  уничтожено %d  •  элита %d  •  боссы %d\nСундуки %d  •  реакции %d  •  угроза %d" % [
+			int(r.get("run_no", 0)), str(r.get("date", "")).replace("T", " "), hc.get("name", "?"), hc.get("title", ""),
+			int(r.get("plevel", 1)), t / 60, t % 60, int(r.get("kills", 0)), int(r.get("elites", 0)), int(r.get("bosses", 0)),
+			int(r.get("chests", 0)), int(r.get("reactions", 0)), int(r.get("threat", 0))]
+		var ch: Dictionary = Meta.CHALLENGES.get(str(r.get("challenge", "")), {})
+		if not ch.is_empty():
+			sub += "\nИспытание: %s — %s" % [ch["name"], ch["desc"]]
+		var sl := _label(sub, 16, Color(0.9, 0.9, 1.0))
+		sl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		sl.custom_minimum_size = Vector2(minf(460, _avail() - 120), 0)
+		top.add_child(sl)
+		_panel_box.add_child(_centered(top))
+		# Снаряжение: оружие и модули с уровнями
+		var gear := HFlowContainer.new()
+		gear.alignment = FlowContainer.ALIGNMENT_CENTER
+		gear.add_theme_constant_override("h_separation", 10)
+		gear.custom_minimum_size = Vector2(minf(620, _avail()), 0)
+		for pair in [[r.get("wlv", {}), Data.WEAPONS], [r.get("mlv", {}), Data.PASSIVES]]:
+			var d: Dictionary = pair[0]
+			for id in d:
+				var cell := HBoxContainer.new()
+				cell.add_theme_constant_override("separation", 4)
+				cell.add_child(_pic(Pixel.icon(str(id)), 1.0))
+				cell.add_child(_label("%s %d" % [str((pair[1] as Dictionary).get(id, {}).get("name", id)), int(d[id])], 14, Color(0.85, 0.9, 1.0)))
+				gear.add_child(cell)
+		if gear.get_child_count() > 0:
+			_panel_box.add_child(_centered(_label("— СНАРЯЖЕНИЕ —", 15, CYAN)))
+			_panel_box.add_child(_centered(gear))
+		var rw := "Награда: +%d ◆" % int(r.get("total", 0))
+		if int(r.get("first", 0)) > 0:
+			rw += "  (первое прохождение +%d)" % int(r["first"])
+		var mats: Dictionary = r.get("materials", {})
+		for m in mats:
+			rw += "   +%d %s" % [int(mats[m]), Meta.MATERIALS[m]["icon"]]
+		if int(r.get("rank_xp", 0)) > 0:
+			rw += "   •   опыт охотника +%d" % int(r["rank_xp"])
+		var rl := _label(rw, 17, GOLD)
+		rl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		rl.custom_minimum_size = Vector2(minf(600, _avail()), 0)
+		rl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_panel_box.add_child(_centered(rl))
+		var extra: Array = []
+		for q in r.get("quests", []):
+			extra.append("✓ Задание «%s»: %s" % [q[0], q[1]])
+		extra.append_array(Arsenal.unlock_lines(r.get("unlocks", [])))
+		if not extra.is_empty():
+			var xl := _label("\n".join(extra.slice(0, 8)), 15, Color(0.75, 1.0, 0.8))
+			xl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			xl.custom_minimum_size = Vector2(minf(600, _avail()), 0)
+			xl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			_panel_box.add_child(_centered(xl))
+	var close := _button(Settings.with_key("ЗАКРЫТЬ", "back"), Color(0.6, 0.6, 0.75))
+	close.pressed.connect(func():
+		Sound.play("click")
+		_close_panel())
+	_panel_box.add_child(_centered(close))
 
 
 func _fill_board() -> void:

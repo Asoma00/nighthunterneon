@@ -403,6 +403,8 @@ func speed_mult() -> float:
 var _k := 1.0          # масштаб детальных спрайтов (холст крупнее — на экране тот же размер)
 var _beast := false     # кибер-тварь с кадрами ходьбы/атаки/урона
 var atk_anim := 0.0
+const POSE_BASE := {"windup": 20, "run": 24, "cast": 28, "summon": 32, "vanish": 28}
+const POSE_FPS := {"windup": 7.0, "run": 13.0, "cast": 9.0, "summon": 8.0, "vanish": 16.0}
 
 
 func _animate(dir: Vector2) -> void:
@@ -420,6 +422,10 @@ func _animate(dir: Vector2) -> void:
 			f = 18 + int(_t * 8.0) % 2
 		elif _flash > 0.0:
 			f = 16 + int(_t * 12.0) % 2
+		elif count >= 36 and str(get("pose")) in POSE_BASE:
+			# Читаемые позы босса: замах, рывок, заклинание, призыв
+			var ps := str(get("pose"))
+			f = int(POSE_BASE[ps]) + int(_t * float(POSE_FPS[ps])) % 4
 		elif sa > 0.0:
 			f = 12 + clampi(int((1.0 - sa / 0.7) * 4.0), 0, 3)
 		elif atk_anim > 0.0 or _dash_t > 0.0 or (get("_charge_t") != null and float(get("_charge_t")) > 0.0):

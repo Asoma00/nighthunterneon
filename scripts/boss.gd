@@ -29,6 +29,29 @@ var _marks: Array = []    # метки на земле: {pos, t, r, kind}
 var _ability_i := 0
 var _tele_node: Node2D
 var spc_anim := 0.0   # кадры особого приёма
+## Читаемые позы: по ним видно, что босс сейчас сделает
+## windup — замах (таран, удар о землю), run — рывок, cast — заклинание (снаряды, луч),
+## summon — призыв свиты, vanish — сейчас исчезнет (место появления отмечено)
+var pose := ""
+var _pend := ""            # приём, который босс готовит (сработает по окончании позы)
+var _pend_t := 0.0
+var _pend_t0 := 1.0
+var _pend_dir := Vector2.ZERO
+var _pend_dest := Vector2.ZERO
+var _pend_basic := false
+var _hold := ""            # поза держится чуть после приёма
+var _hold_t := 0.0
+var _step_f := -1
+
+const POSE_OF := {"ring": "cast", "fan": "cast", "skulls": "cast", "meteors": "cast", "stream": "cast",
+	"beam": "cast", "swirl": "cast", "homing_burst": "cast", "shield": "cast", "pull": "cast",
+	"summon_imp": "summon", "summon_wraith": "summon", "summon_bat": "summon", "summon_spider": "summon",
+	"summon_guard": "summon", "eggs": "summon",
+	"stomp": "windup", "waves": "windup", "rockfall": "windup", "mines": "windup",
+	"teleport": "vanish"}
+const POSE_COLOR := {"cast": Color(0.75, 0.4, 1.0), "summon": Color(0.4, 1.0, 0.55),
+	"windup": Color(1.0, 0.3, 0.2), "vanish": Color(0.35, 0.9, 1.0)}
+const POSE_WORD := {"cast": "заклинание", "summon": "призыв", "windup": "удар", "vanish": "исчезает"}
 
 const PHASE_NAMES := {
 	"lich": ["", "Пробуждение", "Буря душ", "Последний ритуал"],
@@ -92,6 +115,47 @@ func _process(delta: float) -> void:
 		_phase_t = maxf(0.0, _phase_t - delta)
 		_tele_node.queue_redraw()
 	super._process(delta)
+	if not dead and _body != null and _spawn <= 0.0:
+		_pose_body(delta)
+
+
+## Поза меняет силуэт: присед перед ударом, наклон в рывке, подъём при заклинании,
+## присед с зелёным свечением при призыве, мерцание перед исчезновением.
+var _pk := {"sx": 1.0, "sy": 1.0, "ox": 0.0, "oy": 0.0, "glow": 0.0}
+func _pose_body(delta: float) -> void:
+	var face := -1.0 if _body.flip_h else 1.0
+	var want := {"sx": 1.0, "sy": 1.0, "ox": 0.0, "oy": 0.0, "glow": 0.0}
+	var pulse := 0.5 + 0.5 * sin(_t * 14.0)
+	match pose:
+		"windup":
+			want = {"sx": 1.1, "sy": 0.86, "ox": -10.0 * face, "oy": 0.0, "glow": 0.6 + 0.4 * pulse}
+		"run":
+			want = {"sx": 1.14, "sy": 0.93, "ox": 12.0 * face, "oy": 0.0, "glow": 0.4}
+		"cast":
+			want = {"sx": 0.96, "sy": 1.08, "ox": 0.0, "oy": -16.0, "glow": 0.5 + 0.5 * pulse}
+		"summon":
+			want = {"sx": 1.12, "sy": 0.84, "ox": 0.0, "oy": 0.0, "glow": 0.5 + 0.5 * pulse}
+		"vanish":
+			want = {"sx": 0.9, "sy": 1.12, "ox": 0.0, "oy": -10.0, "glow": 1.0}
+	var k := 1.0 - exp(-14.0 * delta)
+	for key in _pk:
+		_pk[key] = lerpf(float(_pk[key]), float(want[key]), k)
+	var sc := Vector2(float(_pk["sx"]), float(_pk["sy"]))
+	_body.scale *= sc
+	_emit.scale = _body.scale
+	var base_y := _body.position.y if _hover else 0.0
+	_body.position = Vector2(float(_pk["ox"]), base_y + float(_pk["oy"]) * Pixel.STAND)
+	_emit.position = _body.position
+	var g := float(_pk["glow"])
+	if g > 0.02 and pose != "":
+		var pc: Color = POSE_COLOR.get(pose, color)
+		_emit.modulate = Pixel.hdr(Color.WHITE.lerp(pc, 0.7), 1.3 + 1.6 * g)
+	if pose == "vanish":
+		var fade := clampf(_pend_t / maxf(0.01, _pend_t0), 0.15, 1.0)
+		_body.modulate.a = fade if int(_t * 18.0) % 3 != 0 else fade * 0.4
+		_emit.modulate.a = _body.modulate.a
+	elif _body.modulate.a < 1.0 and _flash <= 0.0:
+		_body.modulate.a = minf(1.0, _body.modulate.a + delta * 3.0)
 
 
 func _speed_k() -> float:
@@ -105,6 +169,7 @@ func _ai(delta: float) -> Vector2:
 	var dist := to_player.length()
 	var dir := to_player / maxf(dist, 0.001)
 	_check_phase()
+	_update_pose()
 	_tick_marks(delta)
 	_shield_t = maxf(0.0, _shield_t - delta)
 	# Ушли далеко — босс телепортируется ближе к герою
@@ -143,25 +208,107 @@ func _ai(delta: float) -> Vector2:
 				_charge(dir, 0.45)
 		_tele_node.queue_redraw()
 		return dir
+	# Подготовка приёма: босс стоит в позе, по которой видно, что будет дальше
+	if _pend != "" or _pend_basic:
+		_pend_t -= delta
+		if _pend_t <= 0.0:
+			_release(dir)
+		_tele_node.queue_redraw()
+		return dir
 	_move(delta, dir, dist)
-	# Основная атака — своя у каждого
+	# Основная атака — своя у каждого (таран Колосса предупреждает сам)
 	if _attack_t <= 0.0:
 		_attack_t = [0, 2.0, 1.6, 1.25][phase]
-		atk_anim = 0.55
-		_basic(dir)
+		if kind == "colossus":
+			atk_anim = 0.55
+			_basic(dir)
+		else:
+			_prepare("", dir, true)
 	# Особые приёмы — по кругу из доступных в этой фазе
-	if _special_t <= 0.0:
+	elif _special_t <= 0.0:
 		_special_t = [0, 5.0, 4.0, 3.0][phase]
 		var pool := _pool()
 		var ab: String = pool[_ability_i % pool.size()]
 		_ability_i += 1 + randi() % 2
-		spc_anim = 0.7
-		_use(ab, dir)
-		# Омега в третьей фазе применяет два приёма сразу
-		if kind == "omega" and phase == 3:
-			_use(pool[(_ability_i + 1) % pool.size()], dir)
+		if ab in ["charge", "multi_charge"]:
+			spc_anim = 0.7
+			_use(ab, dir)
+		else:
+			_prepare(ab, dir, false)
 	_tele_node.queue_redraw()
 	return dir
+
+
+## Начать подготовку приёма: поза + знак на земле. Сам приём — через _pend_t.
+func _prepare(ab: String, dir: Vector2, basic: bool) -> void:
+	_pend = ab
+	_pend_basic = basic
+	_pend_dir = dir
+	_pend_t0 = [0.0, 0.6, 0.5, 0.4][phase] * (0.8 if is_super else 1.0)
+	if basic:
+		_pend_t0 *= 0.75
+	_pend_t = _pend_t0
+	if ab == "teleport":
+		_pend_dest = player.position + Vector2.RIGHT.rotated(randf() * TAU) * 320.0
+		_pend_t = _pend_t0 + 0.25
+		_pend_t0 = _pend_t
+	var ps := _pend_pose()
+	Sound.play({"cast": "zap", "summon": "ability", "windup": "slam", "vanish": "ability"}.get(ps, "zap"), -14.0, 0.5)
+
+
+func _pend_pose() -> String:
+	if _pend_basic:
+		return "windup" if kind == "queen" else "cast"
+	return str(POSE_OF.get(_pend, "cast"))
+
+
+## Приём сработал.
+func _release(dir: Vector2) -> void:
+	var was := _pend_pose()
+	if _pend_basic:
+		atk_anim = 0.55
+		_basic(_pend_dir if _pend_dir != Vector2.ZERO else dir)
+	if _pend != "":
+		spc_anim = 0.7
+		_use(_pend, dir)
+		# Омега в третьей фазе применяет два приёма сразу
+		if kind == "omega" and phase == 3:
+			var pool := _pool()
+			var second: String = pool[(_ability_i + 1) % pool.size()]
+			if not (second in ["charge", "multi_charge"]):
+				_use(second, dir)
+	_pend = ""
+	_pend_basic = false
+	_hold = "" if was == "vanish" else was
+	_hold_t = 0.35
+
+
+func _update_pose() -> void:
+	var dt := get_process_delta_time()
+	_hold_t = maxf(0.0, _hold_t - dt)
+	if _phase_t > 0.0:
+		pose = ""
+	elif _telegraph > 0.0:
+		pose = "windup"
+	elif _charge_t > 0.0:
+		pose = "run"
+	elif _pend != "" or _pend_basic:
+		pose = _pend_pose()
+	elif _beam_warn > 0.0 or _beam_t > 0.0 or _stream_t > 0.0 or _pull_t > 0.0:
+		pose = "cast"
+	elif _hold_t > 0.0:
+		pose = _hold
+	else:
+		pose = ""
+	# Тяжёлая поступь Колосса: пыль и дрожь на каждом шаге
+	if kind == "colossus" and pose == "" and not puppet:
+		var sf := int(_t * _fps * speed_mult()) % 6
+		if sf != _step_f and (sf == 0 or sf == 3):
+			Fx.burst(main, position + Vector2(randf_range(-30, 30), 4), [Color(0.6, 0.5, 0.45, 0.7), Color(0.3, 0.25, 0.2, 0.0)], 6, 90.0, 0.5, 5.0, false)
+			main.shake(1.5)
+			Sound.play("slam", -20.0, 0.6, 0.1)
+		_step_f = sf
+
 
 
 func _pool() -> Array:
@@ -226,6 +373,10 @@ func _enter_phase(want: int) -> void:
 	_telegraph = 0.0
 	_charge_t = 0.0
 	_charges_left = 0
+	_pend = ""
+	_pend_basic = false
+	_pend_dest = Vector2.ZERO
+	pose = ""
 	_special_t = 1.6
 	_attack_t = 2.0
 	var pname: String = PHASE_NAMES.get(kind, PHASE_NAMES["lich"])[phase]
@@ -278,7 +429,8 @@ func _use(ab: String, dir: Vector2) -> void:
 				main.spawn_enemy(["knight", "caster", "bomber"][i], position + Vector2.RIGHT.rotated(TAU * i / 3.0) * 90.0)
 		"teleport":
 			Fx.portal(main, position, color, 3.0)
-			position = player.position + Vector2.RIGHT.rotated(randf() * TAU) * 320.0
+			position = _pend_dest if _pend_dest != Vector2.ZERO else player.position + Vector2.RIGHT.rotated(randf() * TAU) * 320.0
+			_pend_dest = Vector2.ZERO
 			Fx.portal(main, position, color, 3.0)
 			Sound.play("ability", -4.0, 0.6)
 			_ring(10, 150.0, color)
@@ -463,6 +615,21 @@ func _draw_telegraph(canvas: Node2D) -> void:
 		var w := 60.0 + 10.0 * sin(_t * 40.0)
 		canvas.draw_line(Vector2.ZERO, _beam_dir * 760.0, Color(color, 0.35), w)
 		canvas.draw_line(Vector2.ZERO, _beam_dir * 760.0, Pixel.hdr(Color.WHITE, 2.0), w * 0.25)
+	if _pend != "" or _pend_basic:
+		# Знак подготовки: сужающееся кольцо цвета приёма под ногами
+		var ps := _pend_pose()
+		var pc: Color = POSE_COLOR.get(ps, color)
+		var pk := clampf(1.0 - _pend_t / maxf(0.01, _pend_t0), 0.0, 1.0)
+		canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0, 0.55))
+		canvas.draw_arc(Vector2.ZERO, 150.0 - 90.0 * pk, 0.0, TAU, 40, Color(pc, 0.4 + 0.5 * pk), 5.0)
+		canvas.draw_circle(Vector2.ZERO, 60.0 + 20.0 * pk, Color(pc, 0.12 + 0.18 * pk))
+		canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		if _pend == "teleport" and _pend_dest != Vector2.ZERO:
+			var dp := _pend_dest - position
+			canvas.draw_set_transform(dp, 0.0, Vector2(1.0, 0.55))
+			canvas.draw_arc(Vector2.ZERO, 40.0 + 50.0 * pk, 0.0, TAU, 32, Color(pc, 0.8), 4.0)
+			canvas.draw_circle(Vector2.ZERO, 90.0 * pk, Color(pc, 0.2))
+			canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if _shield_t > 0.0:
 		canvas.draw_arc(Vector2(0, -40), 70.0 + 4.0 * sin(_t * 10.0), 0.0, TAU, 32, Color(0.5, 0.8, 1.0, 0.7), 4.0)
 	if _phase_t > 0.0:

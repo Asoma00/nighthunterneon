@@ -2198,6 +2198,8 @@ func run_for_meta() -> Dictionary:
 	var r := run.duplicate(true)
 	r["weapons"] = player.weapons.keys()
 	r["modules"] = player.passives.keys()
+	r["wlv"] = player.weapons.duplicate()
+	r["mlv"] = player.passives.duplicate()
 	return r
 
 
@@ -2912,6 +2914,13 @@ func _build_snapshot() -> Dictionary:
 		e_hp.append(clampf(e.hp / maxf(e.max_hp, 1.0), 0.0, 1.0))
 		e_st.append(e.net_bits() | (64 if e.is_elite else 0) | (128 if e.is_boss else 0))
 	s["e"] = [e_id, e_k, e_xy, e_hp, e_st]
+	# Позы боссов (замах, заклинание, призыв…) — чтобы и второй игрок читал их действия
+	var bp := {}
+	for e in enemies_node.get_children():
+		if e.is_boss and not e.dead and str(e.get("pose")) != "":
+			bp[e.get_instance_id()] = str(e.get("pose"))
+	if not bp.is_empty():
+		s["bp"] = bp
 	if boss != null and is_instance_valid(boss):
 		s["boss"] = [boss.get_instance_id(), boss.boss_name, boss.hp, boss.max_hp, boss.color]
 	# Снаряды (и пули врагов)
@@ -3021,6 +3030,11 @@ func net_apply(s: Dictionary) -> void:
 			else:
 				players[i].net_inventory(inv[0], inv[1], inv[2])
 	_apply_enemies(s["e"])
+	var bps: Dictionary = s.get("bp", {})
+	for bid in _puppets["e"]:
+		var bn = _puppets["e"][bid]
+		if is_instance_valid(bn) and bn.is_boss:
+			bn.set("pose", str(bps.get(bid, "")))
 	if s.has("boss"):
 		var b: Array = s["boss"]
 		var node = _puppets["e"].get(b[0])

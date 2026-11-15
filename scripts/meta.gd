@@ -15,6 +15,7 @@ static var followers: Array = []
 static var total_runs := 0
 static var best_time := 0.0
 static var last_reward := {}
+static var last_run := {}   # итоги последней вылазки — для доски у портала (сохраняются)
 static var levels_cleared := 0
 static var level_best := {}
 static var nickname := "Охотник"
@@ -249,6 +250,7 @@ static func reset() -> void:
 	total_runs = 0
 	best_time = 0.0
 	last_reward = {}
+	last_run = {}
 	levels_cleared = 0
 	level_best = {}
 	nickname = "Охотник"
@@ -331,6 +333,7 @@ static func ensure_loaded() -> void:
 	for mk in MATERIALS:
 		materials[mk] = int(mat.get(mk, 0))
 	shop_bought = cfg.get_value("meta", "shop_bought", {})
+	last_run = cfg.get_value("meta", "last_run", {})
 	quests = cfg.get_value("meta", "quests", [])
 	contracts = cfg.get_value("meta", "contracts", [])
 	offers = cfg.get_value("meta", "offers", [])
@@ -381,6 +384,7 @@ static func save() -> void:
 	cfg.set_value("meta", "stats", stats)
 	cfg.set_value("meta", "materials", materials)
 	cfg.set_value("meta", "shop_bought", shop_bought)
+	cfg.set_value("meta", "last_run", last_run)
 	cfg.set_value("meta", "quests", quests)
 	cfg.set_value("meta", "contracts", contracts)
 	cfg.set_value("meta", "rescued", rescued)
@@ -1022,6 +1026,14 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 	r["after_scene"] = after_scene
 	stats.erase("buff")   # благословение убежища действует одну вылазку
 	last_reward = r
+	last_run = {"victory": victory, "level": level, "time": time_alive, "kills": kills, "bosses": bosses,
+		"endless": endless_min, "hero": str(run.get("hero", "")), "plevel": int(run.get("level", 1)),
+		"wlv": run.get("wlv", {}), "mlv": run.get("mlv", {}), "elites": int(run.get("elites", 0)),
+		"chests": int(run.get("chests", 0)), "reactions": int(run.get("reactions", 0)),
+		"challenge": str(run.get("challenge", "")), "threat": int(run.get("threat", 0)),
+		"total": total, "first": first, "materials": extra.get("materials", {}),
+		"quests": extra.get("quests", []), "unlocks": r["unlocks"], "rank_xp": int((r["prog"] as Dictionary).get("rank_xp", 0)) if r["prog"] is Dictionary else 0,
+		"run_no": total_runs, "date": Time.get_datetime_string_from_system(false, true)}
 	save()
 	return r
 

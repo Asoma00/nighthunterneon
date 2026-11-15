@@ -159,11 +159,20 @@ func go(path: String) -> void:
 	var stats_k: String = Settings.key("stats")
 	_tip.text = "Совет: " + str(TIPS[randi() % TIPS.size()]).replace("{stats}", ("Кнопка " + stats_k) if Settings.input_mode() == "touch" else stats_k)
 	_setp(0.0, "Загрузка сцены…")
+	# Переход: застывший кадр прошлого экрана растворяется неоновой волной,
+	# открывая экран загрузки (как между заставкой и меню)
+	var T := preload("res://scripts/transition.gd")
+	var shot := T.capture(get_viewport())
 	_root.visible = true
-	_root.modulate.a = 0.0
-	var tw := create_tween()
-	tw.tween_property(_root, "modulate:a", 1.0, 0.18)
-	await tw.finished
+	_root.modulate.a = 1.0
+	if shot != null:
+		var tr = T.play(shot, 129, 0.9, CYAN)
+		await tr.done
+	else:
+		_root.modulate.a = 0.0
+		var tw := create_tween()
+		tw.tween_property(_root, "modulate:a", 1.0, 0.18)
+		await tw.finished
 	await tree.process_frame
 	# 1. Сцена — в основном потоке. Фоновая загрузка скриптов на ПК (Vulkan, много ядер)
 	# иногда роняла игру при нажатии «Играть»: гонка при компиляции GDScript в потоке.
@@ -225,10 +234,17 @@ func go(path: String) -> void:
 	if OS.is_debug_build():
 		print("[Загрузка] %s: %d мс (кадров прогрева %d)" % [path, Time.get_ticks_msec() - _t_go, frames])
 	await tree.process_frame
-	var tw2 := create_tween()
-	tw2.tween_property(_root, "modulate:a", 0.0, 0.25)
-	await tw2.finished
-	_root.visible = false
+	# Переход: экран загрузки растворяется той же волной, открывая новую сцену
+	var shot2 := T.capture(get_viewport())
+	if shot2 != null:
+		T.play(shot2, 129, 1.1)
+		_root.visible = false
+		_spin = 0.0
+	else:
+		var tw2 := create_tween()
+		tw2.tween_property(_root, "modulate:a", 0.0, 0.25)
+		await tw2.finished
+		_root.visible = false
 	busy = false
 
 

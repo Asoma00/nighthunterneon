@@ -84,53 +84,11 @@ func _ready() -> void:
 
 static var _ignited_once := false
 
-const DISSOLVE_SHADER := """
-shader_type canvas_item;
-uniform float p = 0.0;
-uniform float aspect = 1.0;
-uniform vec4 edge : source_color = vec4(1.0, 0.25, 0.85, 1.0);
-void fragment() {
-	vec2 d = (UV - 0.5) * vec2(aspect, 1.0);
-	float r = length(d) / (0.5 * length(vec2(aspect, 1.0)));
-	// рваная кромка: волна идёт от центра наружу
-	float n = sin(atan(d.y, d.x) * 9.0 + p * 6.0) * 0.025 + sin(UV.y * 80.0) * 0.006;
-	float front = p * 1.35 - 0.12;
-	float k = smoothstep(front - 0.02, front + 0.1, r + n);
-	vec4 c = texture(TEXTURE, UV);
-	float glow = smoothstep(0.12, 0.0, abs(r + n - front - 0.03)) * (1.0 - p);
-	COLOR = vec4(mix(c.rgb, edge.rgb * 2.0, glow * 0.8), max(c.a * k, glow * 0.9));
-}
-"""
-
-
 ## Кадр заставки растворяется поверх меню неоновым кольцом, слегка приближаясь.
 func _dissolve_splash() -> void:
 	var tex: Texture2D = preload("res://scripts/splash.gd").handoff
 	preload("res://scripts/splash.gd").handoff = null
-	if tex == null:
-		return
-	var layer := CanvasLayer.new()
-	layer.layer = 110
-	add_child(layer)
-	var r := TextureRect.new()
-	r.texture = tex
-	r.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	r.stretch_mode = TextureRect.STRETCH_SCALE
-	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var vs := get_viewport_rect().size
-	r.pivot_offset = vs / 2.0
-	var sh := Shader.new()
-	sh.code = DISSOLVE_SHADER
-	var m := ShaderMaterial.new()
-	m.shader = sh
-	m.set_shader_parameter("aspect", vs.x / maxf(1.0, vs.y))
-	r.material = m
-	layer.add_child(r)
-	var tw := create_tween().set_parallel(true)
-	tw.tween_method(func(v: float): m.set_shader_parameter("p", v), 0.0, 1.0, 1.3).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	tw.tween_property(r, "scale", Vector2.ONE * 1.12, 1.3).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	tw.chain().tween_callback(layer.queue_free)
+	preload("res://scripts/transition.gd").play(tex, 110, 1.3)
 var _ign: Array = []      # [узел, начало, длительность, зерно, горит]
 var _ign_t := -1.0
 
@@ -500,7 +458,7 @@ func _build_main_page() -> void:
 		Data.world_seed = 0
 		Sound.play("click")
 		var tw := create_tween()
-		tw.tween_property(self, "modulate", Color(0, 0, 0, 1), 0.35)
+		tw.tween_interval(0.12)   # без затемнения: кадр растворится неоновой волной
 		tw.tween_callback(func(): Loader.go("res://hub.tscn")))
 	v.add_child(play)
 	var coop := _main_btn("ИГРАТЬ ВДВОЁМ", Color(1.0, 0.4, 0.75))
@@ -646,7 +604,7 @@ func _start_game() -> void:
 	Sound.play("levelup", 0.0)
 	Data.selected_character = _selected
 	var tw := create_tween()
-	tw.tween_property(self, "modulate", Color(0, 0, 0, 1), 0.35)
+	tw.tween_interval(0.12)   # без затемнения: кадр растворится неоновой волной
 	tw.tween_callback(func(): Loader.go("res://main.tscn"))
 
 
@@ -931,7 +889,7 @@ func _profile_back() -> void:
 	if Data.menu_return == "hub":
 		Data.menu_return = ""
 		var tw := create_tween()
-		tw.tween_property(self, "modulate", Color(0, 0, 0, 1), 0.25)
+		tw.tween_interval(0.12)   # без затемнения: кадр растворится неоновой волной
 		tw.tween_callback(func(): Loader.go("res://hub.tscn"))
 		return
 	_show("main")
@@ -1231,7 +1189,7 @@ func _coop_launch() -> void:
 	_page_name = ""
 	Sound.play("levelup", 0.0)
 	var tw := create_tween()
-	tw.tween_property(self, "modulate", Color(0, 0, 0, 1), 0.35)
+	tw.tween_interval(0.12)   # без затемнения: кадр растворится неоновой волной
 	tw.tween_callback(func(): Loader.go("res://main.tscn"))
 
 
