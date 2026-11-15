@@ -1225,53 +1225,99 @@ func _setup_weather() -> void:
 	_pick_weather()
 	if not Settings.weather_enabled():
 		return   # телефон: погода выключена в настройках
-	var half := WEATHER_CELL * PLANE_TEXEL * 0.5
-	for ix in 4:
-		for iy in 4:
-			var root := Node3D.new()
-			_view3d.add_child(root)
-			match weather:
-				"rain", "storm":
-					var heavy := weather == "storm"
-					_particles3d(Vector3(0, 9, 0), [Color(0.4, 0.8, 1.0, 0.0), Color(0.5, 0.85, 1.0, 0.45), Color(0.9, 0.5, 1.0, 0.3)],
-						110 if heavy else 60, Vector3(half, 0.5, half), Vector3(6.0 if heavy else 1.5, -40, 0), 0.6, Vector2(0.02, 0.35), Vector2.ZERO, root, true)
-					_particles3d(Vector3(0, 0.05, 0), [Color(0.6, 0.85, 1.0, 0.0), Color(0.6, 0.85, 1.0, 0.4), Color(0.6, 0.85, 1.0, 0.0)],
-						24 if heavy else 16, Vector3(half, 0.02, half), Vector3.ZERO, 0.25, Vector2(0.06, 0.03), Vector2.ZERO, root)
-				"snow":
-					# Хлопья медленно кружат и падают
-					_particles3d(Vector3(0, 7, 0), [Color(1, 1, 1, 0.0), Color(0.95, 0.97, 1.0, 0.9), Color(0.9, 0.95, 1.0, 0.0)],
-						70, Vector3(half, 0.5, half), Vector3(0.6, -1.4, 0.3), 5.0, Vector2(0.07, 0.07), Vector2(0.1, 0.5), root)
-				"fog":
-					# Низкие клубы тумана: мягкие облака разной высоты медленно плывут
-					var cloud := _cloud_tex()
-					_particles3d(Vector3(0, 0.35, 0), [Color(0.62, 0.6, 0.78, 0.0), Color(0.62, 0.6, 0.78, 0.2), Color(0.58, 0.56, 0.74, 0.16), Color(0.6, 0.58, 0.76, 0.0)],
-						16, Vector3(half, 0.25, half), Vector3(0.12, 0.0, 0.04), 14.0, Vector2(5.5, 3.2), Vector2(0.03, 0.12), root, false, cloud)
-					_particles3d(Vector3(0, 1.4, 0), [Color(0.55, 0.55, 0.72, 0.0), Color(0.55, 0.55, 0.72, 0.1), Color(0.55, 0.55, 0.72, 0.0)],
-						8, Vector3(half, 0.6, half), Vector3(0.18, 0.0, 0.06), 18.0, Vector2(8.0, 4.0), Vector2(0.02, 0.1), root, false, cloud)
-				"ash":
-					# Пепел и тлеющие искры
-					_particles3d(Vector3(0, 7, 0), [Color(0.5, 0.45, 0.45, 0.0), Color(0.55, 0.5, 0.5, 0.6), Color(0.4, 0.35, 0.35, 0.0)],
-						40, Vector3(half, 0.5, half), Vector3(0.4, -1.0, 0.2), 6.0, Vector2(0.05, 0.05), Vector2(0.1, 0.4), root)
-					_particles3d(Vector3(0, 0.3, 0), [Color(1.0, 0.5, 0.1, 0.0), Color(1.8, 0.8, 0.2, 0.9), Color(1.0, 0.3, 0.1, 0.0)],
-						8, Vector3(half, 0.2, half), Vector3(0, 0.5, 0), 3.0, Vector2(0.04, 0.04), Vector2(0.2, 0.8), root)
-			# Светлячки-данные
-			_particles3d(Vector3(0, 1.5, 0), [Color(1.0, 0.3, 0.8, 0.0), Color(1.4, 0.5, 1.6, 0.9), Color(0.4, 1.2, 1.6, 0.8), Color(0.3, 0.9, 1.0, 0.0)],
-				6, Vector3(half, 1.5, half), Vector3(0, 0.15, 0), 5.0, Vector2(0.05, 0.05), Vector2(0.05, 0.3), root)
-			_weather_tiles.append([root, ix, iy])
+	_weather_on = true
+	for k in 16:
+		_weather_tiles.append([_make_weather_tile(), null])
 	_update_weather()
 
 
+## Одна клетка погоды (дождь / снег / туман / пепел + светлячки) — своя для каждого
+## участка мира, который сейчас виден; при делении экрана клеток больше.
+func _make_weather_tile() -> Node3D:
+	var half := WEATHER_CELL * PLANE_TEXEL * 0.5
+	var root := Node3D.new()
+	_view3d.add_child(root)
+	match weather:
+		"rain", "storm":
+			var heavy := weather == "storm"
+			_particles3d(Vector3(0, 9, 0), [Color(0.4, 0.8, 1.0, 0.0), Color(0.5, 0.85, 1.0, 0.45), Color(0.9, 0.5, 1.0, 0.3)],
+				110 if heavy else 60, Vector3(half, 0.5, half), Vector3(6.0 if heavy else 1.5, -40, 0), 0.6, Vector2(0.02, 0.35), Vector2.ZERO, root, true)
+			_particles3d(Vector3(0, 0.05, 0), [Color(0.6, 0.85, 1.0, 0.0), Color(0.6, 0.85, 1.0, 0.4), Color(0.6, 0.85, 1.0, 0.0)],
+				24 if heavy else 16, Vector3(half, 0.02, half), Vector3.ZERO, 0.25, Vector2(0.06, 0.03), Vector2.ZERO, root)
+		"snow":
+			# Хлопья медленно кружат и падают
+			_particles3d(Vector3(0, 7, 0), [Color(1, 1, 1, 0.0), Color(0.95, 0.97, 1.0, 0.9), Color(0.9, 0.95, 1.0, 0.0)],
+				70, Vector3(half, 0.5, half), Vector3(0.6, -1.4, 0.3), 5.0, Vector2(0.07, 0.07), Vector2(0.1, 0.5), root)
+		"fog":
+			# Низкие клубы тумана: мягкие облака разной высоты медленно плывут
+			var cloud := _cloud_tex()
+			_particles3d(Vector3(0, 0.35, 0), [Color(0.62, 0.6, 0.78, 0.0), Color(0.62, 0.6, 0.78, 0.2), Color(0.58, 0.56, 0.74, 0.16), Color(0.6, 0.58, 0.76, 0.0)],
+				16, Vector3(half, 0.25, half), Vector3(0.12, 0.0, 0.04), 14.0, Vector2(5.5, 3.2), Vector2(0.03, 0.12), root, false, cloud)
+			_particles3d(Vector3(0, 1.4, 0), [Color(0.55, 0.55, 0.72, 0.0), Color(0.55, 0.55, 0.72, 0.1), Color(0.55, 0.55, 0.72, 0.0)],
+				8, Vector3(half, 0.6, half), Vector3(0.18, 0.0, 0.06), 18.0, Vector2(8.0, 4.0), Vector2(0.02, 0.1), root, false, cloud)
+		"ash":
+			# Пепел и тлеющие искры
+			_particles3d(Vector3(0, 7, 0), [Color(0.5, 0.45, 0.45, 0.0), Color(0.55, 0.5, 0.5, 0.6), Color(0.4, 0.35, 0.35, 0.0)],
+				40, Vector3(half, 0.5, half), Vector3(0.4, -1.0, 0.2), 6.0, Vector2(0.05, 0.05), Vector2(0.1, 0.4), root)
+			_particles3d(Vector3(0, 0.3, 0), [Color(1.0, 0.5, 0.1, 0.0), Color(1.8, 0.8, 0.2, 0.9), Color(1.0, 0.3, 0.1, 0.0)],
+				8, Vector3(half, 0.2, half), Vector3(0, 0.5, 0), 3.0, Vector2(0.04, 0.04), Vector2(0.2, 0.8), root)
+	# Светлячки-данные
+	_particles3d(Vector3(0, 1.5, 0), [Color(1.0, 0.3, 0.8, 0.0), Color(1.4, 0.5, 1.6, 0.9), Color(0.4, 1.2, 1.6, 0.8), Color(0.3, 0.9, 1.0, 0.0)],
+		6, Vector3(half, 1.5, half), Vector3(0, 0.15, 0), 5.0, Vector2(0.05, 0.05), Vector2(0.05, 0.3), root)
+	return root
+
+
+var _weather_on := false
+
+
+## Клетки погоды раскладываются вокруг каждого видимого вида: основная камера и, при
+## делении экрана, отдельные камеры игроков. Клетка, которая остаётся нужной, не
+## перескакивает (частицы не обрываются); общие для двух видов клетки не дублируются.
 func _update_weather() -> void:
-	if _weather_tiles.is_empty() or camera == null:
+	if not _weather_on or camera == null:
 		return
-	var c := camera.get_screen_center_position()
-	var bx := floori(c.x / WEATHER_CELL)
-	var by := floori(c.y / WEATHER_CELL)
+	var cc := camera.get_screen_center_position()
+	var centers: Array = [cc]
+	if _split_on and not _vc.is_empty():
+		for i in range(1, _vc.size()):
+			var off: Vector2 = _vc[i] - _vc[0]
+			if off.length() > 1.0:
+				centers.append(cc + off)
+	var needed := {}
+	for c in centers:
+		var bx := floori(c.x / WEATHER_CELL)
+		var by := floori(c.y / WEATHER_CELL)
+		for dx in range(-1, 3):
+			for dy in range(-1, 3):
+				needed[Vector2i(bx + dx, by + dy)] = true
+	var taken := {}
+	var free: Array = []
 	for t in _weather_tiles:
-		# Клетка мира с тем же остатком по модулю 4 в окне [база-1 .. база+2]
-		var cx: int = bx - 1 + posmod(int(t[1]) - (bx - 1), 4)
-		var cy: int = by - 1 + posmod(int(t[2]) - (by - 1), 4)
-		(t[0] as Node3D).position = to3d(Vector2(cx + 0.5, cy + 0.5) * WEATHER_CELL, 0.0)
+		if t[1] != null and needed.has(t[1]) and not taken.has(t[1]):
+			taken[t[1]] = t
+		else:
+			free.append(t)
+	for cell in needed:
+		if taken.has(cell):
+			continue
+		var t: Array
+		if not free.is_empty():
+			t = free.pop_back()
+		elif _weather_tiles.size() < 16 * SPLIT_MAX:
+			t = [_make_weather_tile(), null]
+			_weather_tiles.append(t)
+		else:
+			break
+		t[1] = cell
+		taken[cell] = t
+	for t in free:
+		t[1] = null
+		(t[0] as Node3D).visible = false
+	for cell in taken:
+		var t: Array = taken[cell]
+		var r: Node3D = t[0]
+		r.visible = true
+		r.position = to3d((Vector2(cell) + Vector2(0.5, 0.5)) * WEATHER_CELL, 0.0)
 
 
 func _setup_post() -> void:
