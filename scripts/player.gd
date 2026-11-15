@@ -1806,6 +1806,16 @@ func _fire_once(id: String, s: Dictionary) -> void:
 			_flasks(s)
 		"shuriken":
 			_shurikens(s["count"], s["damage"] * damage_mult, s["speed"], s["spiral"])
+		"pulse":
+			_wpulse(s, 1.0)
+			if s["double"]:
+				_later(0.3, func(): _wpulse(s, 1.45))
+			for i in int(s.get("extra", 0)):
+				_later(0.25 * (i + 1), func(): _wpulse(s, 1.2 + 0.15 * i))
+		"scatter":
+			_scatter(s)
+		"mines":
+			_mines(s)
 
 
 func _tick_cooldown(id: String, delta: float, cooldown: float) -> bool:
@@ -2009,6 +2019,64 @@ func _quake(s: Dictionary, scale_k: float) -> void:
 		e.hit(dmg, position, 320.0, "chill")
 	if shattered >= 3:
 		main.combo_pop(position + Vector2(0, -40), "РАСКОЛ ×%d" % shattered, Color(0.6, 1.0, 1.0))
+
+
+## Неоновый пульс: ударная волна от героя, отброс; по замороженным — вдвое (Ледяной звон).
+func _wpulse(s: Dictionary, scale_k: float) -> void:
+	if _dead:
+		return
+	_src = "pulse"
+	main.attacker = self
+	var r: float = s["radius"] * area_mult * scale_k
+	var col := evo_tint("pulse", Color(0.45, 0.9, 1.0)) if evolved.has("pulse") else Color(0.45, 0.9, 1.0)
+	Fx.ring(main, position, 12.0, r, Pixel.hdr(col, 2.2), 0.4, 6.0)
+	Fx.ring(main, position, 8.0, r * 0.82, Pixel.hdr(Color(1.0, 0.4, 0.9), 1.6), 0.32, 3.0)
+	Sound.play("zap", -8.0, 1.3 / scale_k, 0.1)
+	main.energize(position, r, "pulse", "shock")
+	var rang := 0
+	for e in main.get_enemies():
+		if not e.can_be_hit() or e.position.distance_to(position) > r + e.radius:
+			continue
+		var dmg: float = s["damage"] * damage_mult
+		if e.statuses.has("chill"):
+			dmg *= 2.0
+			rang += 1
+		e.hit(dmg, position, float(s["knock"]), "shock")
+	if rang >= 3:
+		main.combo_pop(position + Vector2(0, -40), "ЛЕДЯНОЙ ЗВОН ×%d" % rang, Color(0.6, 1.0, 1.0))
+
+
+## Разрядник-дробовик: веер осколков в ближайшего врага, дальность короткая.
+func _scatter(s: Dictionary) -> void:
+	var count: int = s["count"]
+	var targets: Array = main.nearest_enemies_to(position, 1, float(s["range"]) * 1.6, null, aim)
+	var base: Vector2 = facing if targets.is_empty() else (targets[0].position + Vector2(0, -15) - position).normalized()
+	var spread := 0.55
+	for i in count:
+		var a := (float(i) / maxf(1.0, float(count - 1)) - 0.5) * spread + randf_range(-0.05, 0.05)
+		var dir := base.rotated(a)
+		var sp: float = float(s["speed"]) * randf_range(0.9, 1.1)
+		var p := _make_proj("shard", position + dir * 22.0 + Vector2(0, -40), dir * sp, s["damage"] * damage_mult, "bleed", "scatter")
+		p.pierce = s["pierce"]
+		p.color = Color(1.0, 0.75, 0.35)
+		p.life = float(s["range"]) / sp
+		main.projectiles_node.add_child(p)
+	Sound.play("shoot", -9.0, 0.8, 0.1, 0.05)
+
+
+## Плазменные мины: остаются на месте и взрываются, когда враг подходит.
+func _mines(s: Dictionary) -> void:
+	var count: int = s["count"]
+	for i in count:
+		var off := Vector2.ZERO if i == 0 else Vector2.RIGHT.rotated(TAU * float(i) / float(count) + randf()) * 40.0
+		var p := _make_proj("orb", position + off + Vector2(0, -6), Vector2.ZERO, s["damage"] * damage_mult, "burn", "mines")
+		p.pierce = 1
+		p.explode = float(s["radius"]) * area_mult
+		p.radius = 26.0
+		p.color = Color(1.0, 0.45, 0.25)
+		p.life = float(s["life"])
+		main.projectiles_node.add_child(p)
+	Sound.play("click", -10.0, 0.7)
 
 
 func _update_drones(delta: float, s: Dictionary) -> void:

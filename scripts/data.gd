@@ -168,6 +168,13 @@ const WEAPONS := {
 		"status": "poison", "evo_with": "luck"},
 	"shuriken": {"name": "Сюрикены-бумеранги", "desc": "Сюрикены летят вперёд и возвращаются.",
 		"status": "bleed", "evo_with": "multi"},
+	# Открыты сразу, ни к какому герою не привязаны
+	"pulse": {"name": "Неоновый пульс", "desc": "Ударная волна расходится от героя и отбрасывает врагов.",
+		"status": "shock", "evo_with": "giant"},
+	"scatter": {"name": "Разрядник-дробовик", "desc": "Веер осколков в ближайшего врага — мощно вблизи.",
+		"status": "bleed", "evo_with": "pierce"},
+	"mines": {"name": "Плазменные мины", "desc": "Герой оставляет мины: взрываются, когда враг подходит.",
+		"status": "burn", "evo_with": "execute"},
 }
 
 ## Катализаторы: каждое оружие усиливается от статуса, который кладут ДРУГИЕ оружия.
@@ -186,6 +193,9 @@ const CATALYSTS := {
 	"ball": ["burn", "РАСКАЛЕНИЕ", "шар растёт и живёт дольше, жаля горящих"],
 	"flask": ["shock", "ЭЛЕКТРОЛИТ", "лужа рядом с врагом под током бьёт и током"],
 	"shuriken": ["chill", "РИКОШЕТ", "от замороженного врага отскакивает новый сюрикен"],
+	"pulse": ["chill", "ЛЕДЯНОЙ ЗВОН", "волна по замороженным бьёт вдвое сильнее"],
+	"scatter": ["shock", "КОРОТКОЕ ЗАМЫКАНИЕ", "осколок во враге под током бьёт соседа"],
+	"mines": ["poison", "ГРЕМУЧАЯ СМЕСЬ", "мина среди отравленных взрывается шире"],
 }
 
 ## Физические связки: как снаряды и поля разных оружий влияют друг на друга.
@@ -240,6 +250,7 @@ const ASPECTS := {
 const EVO_GENDER := {
 	"bolt": 0, "blades": 0, "aura": 0, "lightning": 0, "katana": 1, "quake": 0, "drones": 0,
 	"railbow": 1, "sunbeam": 1, "spirits": 0, "ball": 2, "flask": 0, "shuriken": 0,
+	"pulse": 0, "scatter": 0, "mines": 1,
 }
 
 
@@ -255,6 +266,7 @@ const FUSE_PARTS := {
 	"drones": ["Дроно", "фамильяры"], "railbow": ["Рельсо", "лук"], "sunbeam": ["Солнце", "луч"],
 	"spirits": ["Цифро", "духи"], "ball": ["Шаро", "молния"], "flask": ["Токсо", "колбы"],
 	"shuriken": ["Сюрико", "бумеранги"],
+	"pulse": ["Пульсо", "пульс"], "scatter": ["Дробо", "разрядник"], "mines": ["Мино", "мины"],
 }
 
 
@@ -308,6 +320,9 @@ const EVOLUTIONS := {
 	"ball": {"name": "Грозовое ядро", "desc": "Три шара, разряды цепляют соседей."},
 	"flask": {"name": "Великий котёл", "desc": "Три колбы и огромные лужи."},
 	"shuriken": {"name": "Вихрь клинков", "desc": "Шесть сюрикенов летят по спирали."},
+	"pulse": {"name": "Сверхновая", "desc": "Двойная волна огромного радиуса, сильный отброс."},
+	"scatter": {"name": "Буря осколков", "desc": "Девять осколков, каждый пробивает троих."},
+	"mines": {"name": "Минное поле", "desc": "Три мины разом, взрывы вдвое шире."},
 }
 
 ## Модули: "hero" — только для героя, "weapon" — только для оружия. Без побочных эффектов.
@@ -660,5 +675,26 @@ static func _weapon_base(id: String, lvl: int, evo := false) -> Dictionary:
 				"count": 6 if evo else 1 + int(lvl >= 2) + int(lvl >= 4),
 				"damage": 10.0 + 4.0 * lvl + (8.0 if evo else 0.0),
 				"speed": 520.0, "spiral": evo,
+			}
+		"pulse":
+			return {
+				"cooldown": 1.7 if evo else 2.6 - 0.2 * (lvl - 1),
+				"damage": 9.0 + 5.0 * lvl + (12.0 if evo else 0.0),
+				"radius": (110.0 + 15.0 * lvl) * (1.5 if evo else 1.0),
+				"knock": 380.0 if evo else 220.0, "double": evo,
+			}
+		"scatter":
+			return {
+				"cooldown": 0.9 if evo else 1.35 - 0.1 * (lvl - 1),
+				"count": 9 if evo else 4 + int(lvl >= 2) + int(lvl >= 4),
+				"damage": 6.0 + 2.5 * lvl + (4.0 if evo else 0.0),
+				"pierce": 3 if evo else 1 + int(lvl >= 5), "speed": 620.0, "range": 330.0,
+			}
+		"mines":
+			return {
+				"cooldown": 1.5 if evo else 2.4 - 0.18 * (lvl - 1),
+				"count": 3 if evo else 1 + int(lvl >= 4),
+				"damage": 16.0 + 7.0 * lvl + (14.0 if evo else 0.0),
+				"radius": (60.0 + 6.0 * lvl) * (2.0 if evo else 1.0), "life": 9.0,
 			}
 	return {}

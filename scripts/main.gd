@@ -30,6 +30,7 @@ uniform float flash = 0.0;
 uniform float glitch = 0.0;
 uniform float px = 1.0;        // размер «пикселя» (пиксельный 3D)
 uniform float levels = 28.0;   // палитра пиксель-арта
+uniform float bright = 1.0;    // яркость изображения (настройка)
 const float bayer[16] = float[](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
 
 void fragment() {
@@ -60,7 +61,7 @@ void fragment() {
 		float b = bayer[q.y * 4 + q.x] / 16.0 - 0.5;
 		col = floor(col * levels + b * 0.9 + 0.5) / levels;
 	}
-	COLOR = vec4(col, 1.0);
+	COLOR = vec4(col * bright, 1.0);
 }
 """
 
@@ -480,10 +481,7 @@ func _setup_view3d() -> void:
 	we.environment = env
 	_view3d.add_child(we)
 	_env = env
-	# Яркость изображения из настроек (меняется сразу, без перезапуска)
-	if Settings.has_method("apply_brightness"):
-		Settings.apply_brightness(env)
-		Settings.brightness_changed.connect(func(): Settings.apply_brightness(env))
+
 	var moon := DirectionalLight3D.new()
 	_moon = moon
 	moon.rotation_degrees = Vector3(-40, 30, 0)
@@ -1195,6 +1193,10 @@ func _update_weather() -> void:
 
 func _setup_post() -> void:
 	_post = ShaderMaterial.new()
+	# Яркость — в экранном шейдере (настройки окружения на iPhone ломали отрисовку интерфейса)
+	if Settings.get("brightness") != null:
+		_post.set_shader_parameter("bright", float(Settings.brightness))
+		Settings.brightness_changed.connect(func(): _post.set_shader_parameter("bright", float(Settings.brightness)))
 	if DisplayServer.get_name() == "headless":
 		return  # без видеокарты (автотесты) экранный шейдер не нужен
 	var layer := CanvasLayer.new()
@@ -1396,6 +1398,12 @@ func spawn_enemy(kind: String, at := Vector2.INF) -> void:
 	e.max_hp = info["hp"] * scale_hp
 	e.speed = info["speed"] * rng.randf_range(0.9, 1.1) * (1.0 + minf(tm / 1200.0, 0.3)) * (1.2 if challenge == "swift" else 1.0)
 	e.damage = info["damage"] * (1.0 + tm / 240.0) * (1.0 + 0.12 * endless_min) * (1.0 + 0.04 * threat)
+	# Начало вылазки мягче: первые ~2,5 минуты враги слабее и бьют тише, набирая силу
+	# постепенно; новичкам (первые вылазки) ещё немного легче
+	var early := clampf(tm / 150.0, 0.0, 1.0)
+	var rookie := 0.8 if int(Meta.total_runs) < 6 else 1.0
+	e.max_hp *= lerpf(0.5, 1.0, early) * rookie
+	e.damage *= lerpf(0.55, 1.0, early) * rookie
 	if info.get("hell", false):
 		# Адские мобы крепнут с каждой минутой: здоровье, урон и скорость
 		# Бесконечный режим: рост непрерывный (по долям минуты) и намного круче —

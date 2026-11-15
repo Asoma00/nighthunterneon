@@ -405,6 +405,19 @@ func _catalyst(e: Node2D) -> void:
 	if not pl.catalyzed(source, e):
 		return
 	match source:
+		"scatter":
+			# Короткое замыкание: осколок во враге под током бьёт соседа
+			pl.combo("scatter", e.position)
+			var nb: Array = main.nearest_enemies_to(e.position, 2, 120.0, e)
+			for n in nb:
+				if n != e and is_instance_valid(n) and n.can_be_hit():
+					Fx.sparks(main, n.position + Vector2(0, -15), Color(0.5, 0.9, 1.0), 6)
+					n.hit(damage * 0.6, e.position, 60.0, "shock")
+					break
+		"mines":
+			# Гремучая смесь: мина среди отравленных взрывается шире
+			explode *= 1.5
+			pl.combo("mines", e.position)
 		"bolt":
 			if explode <= 0.0:
 				pl.combo("bolt", e.position)

@@ -155,12 +155,13 @@ shader_type canvas_item;
 uniform sampler2D screen_tex : hint_screen_texture, filter_nearest;
 uniform float levels = 11.0;
 uniform float px = 3.0;
+uniform float bright = 1.0;
 const float bayer[16] = float[](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
 void fragment() {
 	vec3 c = texture(screen_tex, SCREEN_UV).rgb;
 	vec2 d = SCREEN_UV - 0.5;
 	c *= mix(0.65, 1.0, smoothstep(0.9, 0.35, length(d)));
-	COLOR = vec4(c, 1.0);
+	COLOR = vec4(c * bright, 1.0);
 }
 """
 
@@ -180,6 +181,10 @@ func _build_post() -> void:
 	m.shader = sh
 	var win := get_window()
 	m.set_shader_parameter("px", 3.0 * maxf(1.0, win.content_scale_factor))
+	# Яркость изображения из настроек (меняется сразу)
+	if Settings.get("brightness") != null:
+		m.set_shader_parameter("bright", float(Settings.brightness))
+		Settings.brightness_changed.connect(func(): m.set_shader_parameter("bright", float(Settings.brightness)))
 	rect.material = m
 	layer.add_child(rect)
 
@@ -320,10 +325,7 @@ func _build_environment() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	_world.add_child(we)
-	# Яркость изображения из настроек (меняется сразу, без перезапуска)
-	if Settings.has_method("apply_brightness"):
-		Settings.apply_brightness(env)
-		Settings.brightness_changed.connect(func(): Settings.apply_brightness(env))
+
 
 	var moon := DirectionalLight3D.new()
 	moon.rotation_degrees = Vector3(-50, 35, 0)

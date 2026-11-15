@@ -1,5 +1,5 @@
 extends CanvasLayer
-const REV := 15022   # версия скрипта автозагрузки (см. hotswap.gd)
+const REV := 15023   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Сенсорное управление для телефона (Android).
 ## Плавающий джойстик: появляется там, где коснулись экрана (кроме кнопок и окон интерфейса).
 ## Способность — двойное касание в любом месте экрана (кроме кнопок интерфейса),
@@ -187,14 +187,8 @@ func _input(event: InputEvent) -> void:
 		if d.index == _joy_index:
 			var r := 90.0 * _k()
 			var off := d.position - _joy_origin
-			# База джойстика подтягивается за пальцем, если увести его далеко (кроме фиксированного)
-			if _fixed():
-				_set_joy(off.limit_length(r) / r)
-				return
-			if off.length() > r:
-				_joy_origin = d.position - off.normalized() * r
-				off = d.position - _joy_origin
-			_set_joy(off / r)
+			# База остаётся там, где коснулись (и у плавающего, и у фиксированного)
+			_set_joy(off.limit_length(r) / r)
 
 
 ## Касание мимо интерфейса — здесь появляется джойстик (в любом месте экрана)
@@ -256,7 +250,8 @@ func _draw_controls() -> void:
 		var kn := base + (_joy_vec.limit_length(1.0) * r if _joy_index != -1 else Vector2.ZERO)
 		_canvas.draw_circle(kn, 38.0 * k, Color(CYAN, a0 + 0.1))
 		_canvas.draw_arc(kn, 38.0 * k, 0.0, TAU, 32, Color(1, 1, 1, a0 + 0.2), 2.0, true)
-	elif false and _joy_index != -1:
+	elif _joy_index != -1:
+		# Плавающий: появляется там, где коснулись, и держится там, пока палец на экране
 		var origin := _joy_origin
 		var a := 0.55
 		_canvas.draw_circle(origin, r, Color(0.05, 0.02, 0.1, a * 0.6))

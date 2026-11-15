@@ -18,7 +18,7 @@ const PINK := Color(1.0, 0.3, 0.75)
 const WHITE := Color(1, 1, 1)
 
 const IDS := ["bolt", "blades", "aura", "lightning", "katana", "quake", "drones", "railbow", "sunbeam",
-	"spirits", "ball", "flask", "shuriken", "hp", "speed", "magnet", "regen", "armor", "vamp", "luck",
+	"spirits", "ball", "flask", "shuriken", "pulse", "scatter", "mines", "hp", "speed", "magnet", "regen", "armor", "vamp", "luck",
 	"damage", "cooldown", "area", "crit", "multi", "duration",
 	"shield", "dodge", "dash", "pierce", "execute", "giant", "toxin"]
 
@@ -554,6 +554,51 @@ static func draw(id: String) -> Image:
 			var hole := _l()
 			ellipse(hole, 18, 18, 1.6, 1.6, Color(1.0, 0.4, 0.4))
 			_neon(im, g, hole)
+
+		"pulse":
+			# Неоновый пульс: расходящиеся кольца и яркое ядро
+			var r1 := _l()
+			_ring(r1, 18, 18, 16.5, 14.8, Color(0.4, 0.9, 1.0))
+			_neon(im, g, r1)
+			var r2 := _l()
+			_ring(r2, 18, 18, 11.5, 9.8, Color(1.0, 0.35, 0.85))
+			_neon(im, g, r2)
+			var r3 := _l()
+			_ring(r3, 18, 18, 6.8, 5.2, Color(0.6, 1.0, 1.0))
+			_neon(im, g, r3)
+			var core := _l()
+			ellipse(core, 18, 18, 2.6, 2.6, Color(1, 1, 1))
+			_neon(im, g, core)
+		"scatter":
+			# Разрядник-дробовик: короткий ствол и веер осколков
+			var gun := _l()
+			rect(gun, 3, 20, 13, 5, Color(0.32, 0.3, 0.38))
+			rect(gun, 5, 25, 4, 6, WOOD)
+			rect(gun, 14, 19, 4, 7, Color(0.5, 0.48, 0.58))
+			_put(im, gun)
+			for i in 5:
+				var a := (float(i) / 4.0 - 0.5) * 1.0
+				var o := Vector2(19, 22)
+				var d := Vector2.RIGHT.rotated(a - 0.25)
+				var sh := _l()
+				line(sh, int(o.x + d.x * 5), int(o.y + d.y * 5), int(o.x + d.x * 15), int(o.y + d.y * 15), Color(1.0, 0.75, 0.3))
+				_neon(im, g, sh)
+		"mines":
+			# Плазменная мина: купол на лапах с мигающим огнём
+			var legs := _l()
+			for x0 in [8, 28]:
+				line(legs, 18, 22, x0, 30, Color(0.35, 0.33, 0.4))
+			_put(im, legs)
+			var dome := _l()
+			ellipse(dome, 18, 21, 10, 7, Color(0.38, 0.36, 0.46))
+			rect(dome, 8, 21, 21, 4, Color(0.28, 0.26, 0.34))
+			_put(im, dome)
+			var band := _l()
+			rect(band, 9, 23, 19, 1, Color(1.0, 0.5, 0.2))
+			_neon(im, g, band)
+			var lamp := _l()
+			ellipse(lamp, 18, 15, 2.6, 2.6, Color(1.0, 0.35, 0.2))
+			_neon(im, g, lamp)
 
 		# ===== Модули героя =====
 		"hp":

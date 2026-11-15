@@ -178,7 +178,7 @@ func _build() -> void:
 			Settings.save_settings())
 		grid.add_child(ts_opt)
 		if Settings.get("joystick") != null:
-			_mob_opt(grid, "Джойстик", ["Плавающий невидимый", "Фиксированный слева"], 1 if Settings.joystick == "fixed" else 0,
+			_mob_opt(grid, "Джойстик", ["Плавающий — где коснулись", "Фиксированный слева"], 1 if Settings.joystick == "fixed" else 0,
 				func(i): Settings.joystick = "fixed" if i == 1 else "float")
 	else:
 		_build_desktop_rows(grid)
