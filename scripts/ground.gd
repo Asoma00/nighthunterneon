@@ -63,6 +63,7 @@ var props_parent: Node2D
 var _ground: Sprite2D
 var _ground_emit: Sprite2D
 var _period := 0.0
+var _extra: Array = []   # пол вокруг дополнительных видов (свои камеры на одном экране)
 var _chunks := {}
 var _t := 0.0
 var _noise := FastNoiseLite.new()
@@ -117,6 +118,23 @@ func _process(delta: float) -> void:
 	_ground.position = origin
 	_ground_emit.position = origin
 	_ground_emit.modulate = Color(1, 1, 1, 0.4 + 0.2 * sin(_t * 1.7))
+	# Свои камеры на одном экране: базовый пол есть и вокруг каждого отдельного вида
+	var ex: Array = main.extra_view_centers() if main.has_method("extra_view_centers") else []
+	while _extra.size() < ex.size():
+		var g := Pixel.ground()
+		var eb := _make_ground_sprite(g["base"])
+		var ee := _make_ground_sprite(g["emit"])
+		ee.material = Pixel.mat_add()
+		_extra.append([eb, ee])
+	for k in _extra.size():
+		var on := k < ex.size()
+		_extra[k][0].visible = on
+		_extra[k][1].visible = on
+		if on:
+			var o: Vector2 = (ex[k] / _period).floor() * _period - Vector2(_period, _period) * 4.0
+			_extra[k][0].position = o
+			_extra[k][1].position = o
+			_extra[k][1].modulate = _ground_emit.modulate
 	_update_chunks(main.world_centers())
 	# Сообщение о входе в новый биом
 	var dk := district_at(Vector2i(floori(c.x / CHUNK), floori(c.y / CHUNK)))

@@ -1394,24 +1394,29 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("interact"):
 		get_viewport().set_input_as_handled()
 		if _panel_id == "" and _near != "":
-			if _inside != "":
-				_interior_act(_near)
-			elif _near.begins_with("enter:"):
-				_enter_building(_near.substr(6))
-			elif _near.begins_with("act:"):
-				_hub_act(_near.substr(4))
-			elif _near.begins_with("talk:"):
-				_talk_dialog(int(_near.substr(5)))
-			elif _near.begins_with("info:"):
-				_toast_text("Стройку заказывают у трактирщика Бруно в таверне")
-			else:
-				_open_panel(_near)
+			_do_interact()
 	elif event.is_action_pressed("pause") or (event.is_action_pressed("ui_cancel") and _panel_id != ""):
 		get_viewport().set_input_as_handled()
 		if _panel_id != "":
 			_close_panel()
 		else:
 			_open_panel("pause")
+
+
+## Действие с тем, что рядом (_near): войти, поговорить, открыть окно…
+func _do_interact() -> void:
+	if _inside != "":
+		_interior_act(_near)
+	elif _near.begins_with("enter:"):
+		_enter_building(_near.substr(6))
+	elif _near.begins_with("act:"):
+		_hub_act(_near.substr(4))
+	elif _near.begins_with("talk:"):
+		_talk_dialog(int(_near.substr(5)))
+	elif _near.begins_with("info:"):
+		_toast_text("Стройку заказывают у трактирщика Бруно в таверне")
+	else:
+		_open_panel(_near)
 
 
 # ================= Интерфейс =================
@@ -2973,6 +2978,7 @@ func _net_tick(delta: float) -> void:
 		_net_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_net_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		_hud.add_child(_net_label)
+	_net_label.visible = _panel_id == ""   # над открытым окном надпись мешала
 	if Net.mode == "host":
 		var cnt := 1 + Net.peers.size()
 		_net_label.text = ("СЕТЬ: в убежище %d из %d  •  можно начинать вылазку в портале  •  IP: %s" % [cnt, Net.MAX_PLAYERS, _local_ips()]) if cnt >= 2 else "СЕТЬ: ждём игроков (от 2 до %d)...  IP: %s" % [Net.MAX_PLAYERS, _local_ips()]
@@ -3056,6 +3062,8 @@ func _drop_mate(key: String) -> void:
 
 const PARTY_COLORS := [Color(0.3, 0.95, 1.0), Color(1.0, 0.4, 0.75), Color(0.55, 1.0, 0.35), Color(1.0, 0.7, 0.25), Color(0.7, 0.5, 1.0)]
 var _p1_input = null
+var _pin = null                # фильтр ввода: окна слушают только того, кто их открыл
+var _owner_idx := 0            # кто из отряда сейчас ведёт окно / диалог
 var _party_in: Array = []      # DevInput игроков 2..N
 var _party_left: Array = []
 var _party_label: Label
@@ -3067,6 +3075,7 @@ func _party_setup() -> void:
 		return
 	var DevInput := preload("res://scripts/devinput.gd")
 	_p1_input = DevInput.new(int(Data.coop_devices[0]))
+	_pin = preload("res://scripts/party_input.gd").attach(self, Data.coop_devices)
 	for i in range(1, Data.coop_heroes.size()):
 		if not Meta.hero_unlocked(str(Data.coop_heroes[i])):
 			Data.coop_heroes[i] = "vega"
@@ -3089,6 +3098,35 @@ func _party_setup() -> void:
 	_party_update_label()
 
 
+## Игрок отряда нажал «действие»: ищем, что рядом с НИМ, и отдаём окно его кнопкам.
+func _member_interact(i: int) -> bool:
+	var d: Dictionary = _mates.get("p%d" % i, {})
+	if d.is_empty():
+		return false
+	var saved := _avatar.position
+	var was_inside := _inside
+	_avatar.position = (d["node"] as Node3D).position
+	_near = ""
+	_update_interaction()
+	var near := _near
+	var nt := _near_talk
+	if near == "" and nt < 0:
+		_avatar.position = saved
+		_update_interaction()
+		return false
+	_owner_idx = i
+	if _pin != null and is_instance_valid(_pin):
+		_pin.owner_idx = i
+	if near == "" or (near.begins_with("talk:")):
+		_talk_dialog(nt if nt >= 0 else int(near.substr(5)))
+	else:
+		_do_interact()
+	# Вошли/вышли из здания — весь отряд вместе; иначе Игрок 1 остаётся где стоял
+	if _inside == was_inside:
+		_avatar.position = saved
+	return true
+
+
 func _party_update_label() -> void:
 	if _party_label == null:
 		return
@@ -3096,15 +3134,21 @@ func _party_update_label() -> void:
 	var parts: Array = ["ОТРЯД: %d  •  вылазку начинает Игрок 1 в портале" % Data.coop_heroes.size()]
 	for i in range(1, Data.coop_heroes.size()):
 		var dev := int(Data.coop_devices[i]) if i < Data.coop_devices.size() else -1
-		parts.append("P%d %s — %s: сменить героя" % [i + 1, Data.CHARACTERS[Data.coop_heroes[i]]["name"],
-			"ПРОБЕЛ" if dev == DevInput.KB_LEFT else ("ENTER" if dev == DevInput.KB_RIGHT else "A")])
+		parts.append("P%d %s — %s: действие рядом, %s: сменить героя" % [i + 1, Data.CHARACTERS[Data.coop_heroes[i]]["name"],
+			"ПРОБЕЛ" if dev == DevInput.KB_LEFT else ("ENTER" if dev == DevInput.KB_RIGHT else "A"),
+			"SHIFT" if dev == DevInput.KB_LEFT else ("CTRL" if dev == DevInput.KB_RIGHT else "X")])
 	_party_label.text = "\n".join(parts)
 
 
 func _party_tick(delta: float) -> void:
 	if _party_in.is_empty():
 		return
-	var free := _panel_id == "" and _cine_t <= 0.0
+	var busy := _panel_id != "" or (_dlg != null and is_instance_valid(_dlg))
+	if not busy:
+		_owner_idx = 0
+	if _pin != null and is_instance_valid(_pin):
+		_pin.owner_idx = _owner_idx
+	var free := not busy and _cine_t <= 0.0
 	if _party_label:
 		_party_label.visible = free
 	var heroes: Array = []
@@ -3119,8 +3163,12 @@ func _party_tick(delta: float) -> void:
 		if d.is_empty():
 			continue
 		var n: Node3D = d["node"]
-		# Смена героя своим устройством — прямо в убежище
-		if free and inp.just("ok") and not heroes.is_empty():
+		# Своя кнопка «действие» — с тем, что рядом именно с этим игроком (диалог, здание, герой в таверне)
+		if free and inp.just("ok"):
+			if _member_interact(i):
+				continue
+		# Смена героя — отдельной кнопкой (X/RB, Ctrl, Shift)
+		if free and inp.just("alt") and not heroes.is_empty():
 			var cur := heroes.find(str(Data.coop_heroes[i]))
 			var nh: String = heroes[(cur + 1) % heroes.size()]
 			Data.coop_heroes[i] = nh
@@ -5246,6 +5294,18 @@ func _interior_act(what: String) -> void:
 
 func _take_hero(hid: String) -> void:
 	if not Meta.hero_unlocked(hid):
+		return
+	if Data.party and _owner_idx > 0 and _owner_idx < Data.coop_heroes.size():
+		# Отряд: героя берёт тот игрок, кто подошёл к нему и нажал свою кнопку
+		var oi := _owner_idx
+		Data.coop_heroes[oi] = hid
+		var md: Dictionary = _mates.get("p%d" % oi, {})
+		if not md.is_empty():
+			_mate("p%d" % oi, hid, Meta.hero_sprite(hid), "ИГРОК %d" % (oi + 1), PARTY_COLORS[oi], md["node"].position)
+		_party_update_label()
+		Sound.play("levelup", -6.0)
+		var hc: Dictionary = Data.CHARACTERS[hid]
+		_toast_text("Игрок %d идёт в бой: %s — %s" % [oi + 1, hc["name"], hc["title"]])
 		return
 	var pos := _avatar.position
 	var h_node_pos := pos

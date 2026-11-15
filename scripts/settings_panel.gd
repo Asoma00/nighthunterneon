@@ -189,6 +189,17 @@ func _build() -> void:
 	_mob_opt(grid, "Дальность", ["Ближняя (быстрее)", "Средняя", "Полная"], Settings.view_dist, func(i): Settings.view_dist = i)
 	_mob_opt(grid, "Врагов на экране", ["Меньше, но крепче", "Обычно"], Settings.crowd, func(i): Settings.crowd = i)
 	_mob_opt(grid, "Держать кадры", ["Нет", "Да — упрощать при просадке"], 1 if Settings.adaptive else 0, func(i): Settings.adaptive = i == 1)
+	if Settings.get("coop_split") != null:
+		# Игровой пункт, а не графика: профиль графики не сбрасываем
+		grid.add_child(_row_label("Один экран (2–5)"))
+		var sp_opt := _option(["Свои камеры — делить экран", "Одна общая камера"])
+		sp_opt.selected = 1 if Settings.coop_split == "shared" else 0
+		sp_opt.item_selected.connect(func(i: int):
+			Settings.coop_split = "shared" if i == 1 else "dynamic"
+			Settings.save_settings()
+			if Settings.has_signal("coop_split_changed"):
+				Settings.emit_signal("coop_split_changed"))
+		grid.add_child(sp_opt)
 	_build_common_rows(grid)
 
 

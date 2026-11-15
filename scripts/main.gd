@@ -68,6 +68,8 @@ void fragment() {
 var player: Node2D          # Игрок 1 — ведущий: общий опыт и уровень
 var players: Array = []      # все герои на экране (1 или 2)
 var coop := false
+var _pin = null          # один экран: окна слушают только своего игрока
+var _chest_owner := 0
 var my_idx := 0          # свой герой в сетевой игре (у клиента — не 0)
 var net_mode := ""           # "" | "host" | "client"
 var attacker: Node2D         # чей удар сейчас наносится
@@ -291,6 +293,13 @@ func _ready() -> void:
 	_setup_weather()
 	_apply_challenge()
 	_setup_post()
+	if coop and net_mode == "" and players.size() >= 2 and str(Settings.get("coop_split")) != "shared":
+		_split_setup()
+	if Settings.has_signal("coop_split_changed"):
+		Settings.coop_split_changed.connect(_on_split_changed)
+	if coop and net_mode == "":
+		_pin = preload("res://scripts/party_input.gd").attach(self, Data.coop_devices.slice(0, players.size()))
+		_pin.owner_idx = -1
 
 	hud = HudScript.new()
 	hud.main = self
@@ -377,6 +386,8 @@ func view_center() -> Vector2:
 		return players[0].position
 	if net_mode == "client" and my_idx < players.size():
 		return players[my_idx].position
+	if _split_on and not _vc.is_empty():
+		return _vc[0]
 	return center()
 
 
@@ -388,12 +399,14 @@ func world_centers() -> Array:
 			if not p.get("gone"):
 				out.append(p.position)
 		return out
+	if _split_on and not _vc.is_empty():
+		return _vc.duplicate()
 	return [view_center()]
 
 
 ## Около кого появляются враги: в сетевой игре — поочерёдно около каждого живого.
 func _spawn_anchor() -> Vector2:
-	if net_mode == "host":
+	if net_mode == "host" or _split_on:
 		var alive: Array = players.filter(func(p): return not p._dead)
 		if not alive.is_empty():
 			return alive[rng.randi() % alive.size()].position
@@ -414,11 +427,50 @@ func nearest_player(pos: Vector2) -> Node2D:
 
 
 ## Кооператив: герои не могут разойтись дальше экрана.
+var _leash_prev: Array = []
+
+
 func _leash() -> void:
 	if players.size() < 2:
 		return
-	# Попарно: павший не двигается — живые не могут уйти от него за край экрана
-	var lim := Vector2(820.0, 520.0)
+	if _split_on:
+		# Свои камеры: расходиться можно далеко, но не бесконечно (мир грузится вокруг каждого)
+		_leash_pairs(Vector2(5200.0, 5200.0))
+		return
+	# Общая камера: герои не выходят за край экрана. Упёрся в край — стоит, пока остальные
+	# не подтянутся следом (никого не тащит за собой); камера — посередине, её «перетягивают».
+	var lim := _shared_lim()
+	for it in 3:
+		for i in players.size():
+			var a: Node2D = players[i]
+			if a.get("gone") or a._dead:
+				continue
+			var lo := Vector2(-INF, -INF)
+			var hi := Vector2(INF, INF)
+			for j in players.size():
+				if j == i or players[j].get("gone"):
+					continue
+				var q: Vector2 = players[j].position
+				lo = lo.max(q - lim)
+				hi = hi.min(q + lim)
+			if lo.x <= hi.x:
+				a.position.x = clampf(a.position.x, lo.x, hi.x)
+			if lo.y <= hi.y:
+				a.position.y = clampf(a.position.y, lo.y, hi.y)
+
+
+## Общая камера: на сколько герои могут разойтись (почти весь экран, с полями под интерфейс).
+func _shared_lim() -> Vector2:
+	var vs := get_viewport().get_visible_rect().size
+	var k := 1.0
+	if vs.y > vs.x:
+		return Vector2(520.0, 900.0)
+	k = clampf((vs.x / vs.y) / (16.0 / 9.0), 0.75, 1.35)
+	return Vector2(900.0 * k, 470.0)
+
+
+## Попарный «поводок» с подтягиванием (павший не двигается — живые не уходят от него дальше).
+func _leash_pairs(lim: Vector2) -> void:
 	for it in 2:
 		for i in players.size():
 			for j in range(i + 1, players.size()):
@@ -881,6 +933,8 @@ func _sync_mirrors() -> void:
 		if not cc.is_finite():
 			return
 	_mirror_root.position = _plane.position - Vector3(cc.x, 0.0, cc.y) * PLANE_TEXEL
+	if _split_on:
+		_split_sync(cc)
 	_frame += 1
 	_cull_c = [cc]
 	_cull_c.append_array(world_centers())
@@ -1249,6 +1303,8 @@ func _setup_post() -> void:
 func _process(delta: float) -> void:
 	if net_mode == "":
 		_leash()
+	if _split_on:
+		_split_centers(delta)
 	if _cam_anchor:
 		_cam_anchor.position = view_center()
 	_update_shake(delta)
@@ -2320,6 +2376,7 @@ func _fusion_choices(player: Node2D) -> Array:
 func open_chest(opener: Node2D = null) -> void:
 	run["chests"] = int(run.get("chests", 0)) + 1
 	var player: Node2D = opener if opener != null else self.player
+	_chest_owner = int(player.pid)
 	arsenal_loot("chest", player.position)
 	Sound.play("chest", 0.0)
 	var rewards: Array = []
@@ -3398,3 +3455,258 @@ func _update_music_intensity(delta: float) -> void:
 	k += (1.0 - hp_k) * 0.25
 	k += clampf(endless_min * 0.04, 0.0, 0.2)
 	Sound.intensity_target = clampf(k, 0.0, 1.0)
+
+
+
+# ================= Один экран: свои камеры с делением экрана =================
+# Пока герои рядом — одна общая картинка. Кто отошёл далеко — получает свою камеру:
+# экран делится по диаграмме Вороного между героями (граница поворачивается вслед за
+# направлением на напарника), а линия раздела проявляется плавно по мере расхождения камер.
+# Мир (3D и пол) общий: дополнительные виды смотрят в тот же мир своими камерами.
+
+const SPLIT_MAX := 5
+const SPLIT_R := 0.72            # где на экране держится отошедший герой (доля полуэкрана)
+const PLANE_LAYER := 20          # слои плоскостей пола: 20 — основная, 19, 18… — виды 1, 2…
+var _split_on := false
+var _vc: Array = []              # центры видов (мировые px), по игроку
+var _views: Array = []           # i ≥ 1: {"vp3", "cam3", "vp2", "cam2", "plane", "mat"}
+var _split_layer: CanvasLayer
+var _split_mat: ShaderMaterial
+const SPLIT_SHADER := """
+shader_type canvas_item;
+render_mode unshaded;
+uniform sampler2D v1 : source_color, filter_linear;
+uniform sampler2D v2 : source_color, filter_linear;
+uniform sampler2D v3 : source_color, filter_linear;
+uniform sampler2D v4 : source_color, filter_linear;
+uniform int n = 2;
+uniform vec2 site[5];
+uniform vec2 cpos[5];
+uniform int src[5];
+uniform vec2 scr = vec2(1280.0, 720.0);
+uniform vec4 line_col : source_color = vec4(0.55, 0.95, 1.0, 1.0);
+vec4 view(int k, vec2 uv) {
+	if (k == 1) { return texture(v1, uv); }
+	if (k == 2) { return texture(v2, uv); }
+	if (k == 3) { return texture(v3, uv); }
+	if (k == 4) { return texture(v4, uv); }
+	return vec4(0.0);
+}
+void fragment() {
+	vec2 p = SCREEN_UV * scr;
+	int a = 0;
+	int b = 0;
+	float da = 1e9;
+	float db = 1e9;
+	for (int i = 0; i < 5; i++) {
+		if (i >= n) { break; }
+		float d = distance(p, site[i]);
+		if (d < da) { db = da; b = a; da = d; a = i; }
+		else if (d < db) { db = d; b = i; }
+	}
+	int k = src[a];
+	vec4 c = k == 0 ? vec4(0.0) : vec4(view(k, SCREEN_UV).rgb, 1.0);
+	// Расстояние до линии раздела (серединный перпендикуляр двух ближайших героев)
+	float sep = max(distance(site[a], site[b]), 1.0);
+	float edge = (db * db - da * da) / (2.0 * sep);
+	float amt = clamp(distance(cpos[a], cpos[b]) / 260.0, 0.0, 1.0);
+	float w = 1.0 + 2.5 * amt;
+	float core = 1.0 - smoothstep(w * 0.4, w, edge);
+	float glow = (1.0 - smoothstep(w, w * 6.0, edge)) * 0.35;
+	float la = (core + glow) * amt;
+	if (la > 0.002) {
+		vec3 lc = mix(line_col.rgb * 0.6, vec3(1.0), core * 0.6);
+		c = vec4(mix(c.rgb, lc, clamp(la, 0.0, 1.0)), max(c.a, clamp(la, 0.0, 1.0)));
+	}
+	COLOR = c;
+}
+"""
+
+
+func _on_split_changed() -> void:
+	var want: bool = coop and net_mode == "" and players.size() >= 2 and str(Settings.get("coop_split")) != "shared"
+	if want and not _split_on:
+		_split_setup()
+	elif not want and _split_on:
+		_split_teardown()
+
+
+func _split_setup() -> void:
+	if DisplayServer.get_name() == "headless" or _split_on:
+		return
+	_split_on = true
+	_vc.clear()
+	for p in players:
+		_vc.append(center())
+	camera.position_smoothing_enabled = false   # центры видов сглаживаем сами — одинаково у всех
+	var all_planes := 0
+	for i in SPLIT_MAX:
+		all_planes |= 1 << (PLANE_LAYER - 1 - i)
+	_plane.layers = 1 << (PLANE_LAYER - 1)
+	_cam3d.cull_mask = (0xFFFFF & ~all_planes) | _plane.layers
+	for i in range(1, players.size()):
+		var vp2 := SubViewport.new()
+		vp2.world_2d = _wvp.world_2d
+		vp2.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
+		vp2.canvas_cull_mask = 1
+		vp2.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		add_child(vp2)
+		var cam2 := Camera2D.new()
+		vp2.add_child(cam2)
+		cam2.make_current()
+		var vp3 := SubViewport.new()
+		vp3.world_3d = get_viewport().find_world_3d()
+		vp3.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		vp3.msaa_3d = get_viewport().msaa_3d
+		add_child(vp3)
+		var cam3 := Camera3D.new()
+		vp3.add_child(cam3)
+		cam3.current = true
+		var pl := MeshInstance3D.new()
+		pl.mesh = PlaneMesh.new()
+		var m: ShaderMaterial = (_plane.material_override as ShaderMaterial).duplicate()
+		m.set_shader_parameter("tex", vp2.get_texture())
+		pl.material_override = m
+		pl.layers = 1 << (PLANE_LAYER - 1 - i)
+		pl.visible = false
+		_view3d.add_child(pl)
+		cam3.cull_mask = (0xFFFFF & ~all_planes) | pl.layers
+		_views.append({"vp2": vp2, "cam2": cam2, "vp3": vp3, "cam3": cam3, "plane": pl, "on": false})
+	_split_layer = CanvasLayer.new()
+	_split_layer.layer = -5
+	add_child(_split_layer)
+	var rect := ColorRect.new()
+	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_split_mat = ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = SPLIT_SHADER
+	_split_mat.shader = sh
+	for k in _views.size():
+		_split_mat.set_shader_parameter("v%d" % (k + 1), _views[k]["vp3"].get_texture())
+	rect.material = _split_mat
+	_split_layer.add_child(rect)
+
+
+func _split_teardown() -> void:
+	_split_on = false
+	for v in _views:
+		for key in ["vp2", "vp3", "plane"]:
+			if is_instance_valid(v[key]):
+				v[key].queue_free()
+	_views.clear()
+	_vc.clear()
+	if is_instance_valid(_split_layer):
+		_split_layer.queue_free()
+	_plane.layers = 1
+	_cam3d.cull_mask = 0xFFFFF
+	camera.position_smoothing_enabled = true
+
+
+## Полуразмеры «удобной» части экрана в мировых px (сколько видно от центра до края).
+func _split_half() -> Vector2:
+	var vs := get_viewport().get_visible_rect().size
+	if vs.y > vs.x:
+		return Vector2(300.0, 520.0)
+	return Vector2(250.0 * vs.x / vs.y, 260.0)
+
+
+func _split_centers(delta: float) -> void:
+	var g := Vector2.ZERO
+	var cnt := 0
+	for p in players:
+		if p.get("gone"):
+			continue
+		g += p.position
+		cnt += 1
+	g /= maxf(cnt, 1)
+	var h := _split_half()
+	var k := 1.0 - exp(-7.0 * delta)
+	while _vc.size() < players.size():
+		_vc.append(g)
+	for i in players.size():
+		var p: Node2D = players[i]
+		var u: Vector2 = (p.position - g) / h
+		var l := u.length()
+		var s := u if l <= SPLIT_R else u * (SPLIT_R / l)
+		var want: Vector2 = p.position - s * h
+		# Пока все рядом — центры видов совпадают точно (никакой лишней границы)
+		_vc[i] = want if _vc[i].distance_to(want) < 0.5 else _vc[i].lerp(want, k)
+
+
+## Поздняя синхронизация: доп. виды смотрят в общий 3D-мир со сдвигом своей камеры.
+func _split_sync(cc: Vector2) -> void:
+	if _split_mat == null:
+		return
+	var vs := get_viewport().get_visible_rect().size
+	var px_size := Vector2(get_viewport().size)
+	var to_px := px_size / vs
+	var sites: Array = []
+	var cpos: Array = []
+	var src: Array = []
+	var c0: Vector2 = _vc[0] if not _vc.is_empty() else cc
+	for i in players.size():
+		var ci: Vector2 = _vc[i] if i < _vc.size() else c0
+		var off := ci - c0
+		var p: Node2D = players[i]
+		# Где герой i стоит на экране в своём виде
+		var q: Vector2 = p.position - off
+		var p3 := _mirror_root.position + Vector3(q.x, 0.3, q.y) * PLANE_TEXEL
+		var sp: Vector2 = _cam3d.unproject_position(p3) * to_px if not _cam3d.is_position_behind(p3) else Vector2(px_size / 2.0)
+		if p.get("gone"):
+			sp = Vector2(-100000.0, -100000.0)
+		sites.append(sp)
+		cpos.append(ci)
+		var own := off.length() > 1.0
+		src.append(i if (own and i > 0) else 0)
+		if i == 0:
+			continue
+		var v: Dictionary = _views[i - 1]
+		var vp2: SubViewport = v["vp2"]
+		var vp3: SubViewport = v["vp3"]
+		var pl: MeshInstance3D = v["plane"]
+		if own != v["on"]:
+			v["on"] = own
+			vp2.render_target_update_mode = SubViewport.UPDATE_ALWAYS if own else SubViewport.UPDATE_DISABLED
+			vp3.render_target_update_mode = SubViewport.UPDATE_ALWAYS if own else SubViewport.UPDATE_DISABLED
+			pl.visible = own
+		if not own:
+			continue
+		if vp3.size != get_viewport().size:
+			vp3.size = get_viewport().size
+		vp3.scaling_3d_mode = get_viewport().scaling_3d_mode
+		vp3.scaling_3d_scale = get_viewport().scaling_3d_scale
+		if vp2.size != _wvp.size or vp2.size_2d_override != _wvp.size_2d_override:
+			vp2.size = _wvp.size
+			vp2.size_2d_override = _wvp.size_2d_override
+			vp2.size_2d_override_stretch = _wvp.size_2d_override_stretch
+		var cam2: Camera2D = v["cam2"]
+		cam2.position = cc + off
+		cam2.offset = Vector2.ZERO
+		var d3 := Vector3(off.x, 0.0, off.y) * PLANE_TEXEL
+		(v["cam3"] as Camera3D).transform = _cam3d.transform.translated(d3)
+		(v["cam3"] as Camera3D).fov = _cam3d.fov
+		(v["cam3"] as Camera3D).keep_aspect = _cam3d.keep_aspect
+		pl.mesh = _plane.mesh
+		pl.position = _plane.position + d3
+	while sites.size() < SPLIT_MAX:
+		sites.append(Vector2(-100000.0, -100000.0))
+		cpos.append(Vector2.ZERO)
+		src.append(0)
+	_split_mat.set_shader_parameter("n", players.size())
+	_split_mat.set_shader_parameter("site", PackedVector2Array(sites))
+	_split_mat.set_shader_parameter("cpos", PackedVector2Array(cpos))
+	_split_mat.set_shader_parameter("src", PackedInt32Array(src))
+	_split_mat.set_shader_parameter("scr", px_size)
+
+
+## Центры дополнительных видов — полу (ground.gd) нужно покрыть и их.
+func extra_view_centers() -> Array:
+	if not _split_on:
+		return []
+	var out: Array = []
+	var c0: Vector2 = _vc[0] if not _vc.is_empty() else center()
+	for i in range(1, _vc.size()):
+		if _vc[i].distance_to(c0) > 1.0:
+			out.append(_vc[i])
+	return out

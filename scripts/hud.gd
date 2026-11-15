@@ -418,6 +418,8 @@ func _process(delta: float) -> void:
 	for r in [_levelup_root, _chest_root, _over_root, _pause_root, _endless_root]:
 		if r != null and r.visible:
 			modal = r
+	if modal != _focus_root or modal == _levelup_root:
+		_party_owner_for(modal)
 	if modal != _focus_root:
 		_focus_root = modal
 		_focus = {}
@@ -1588,6 +1590,22 @@ func show_wait(text: String) -> void:
 func hide_wait() -> void:
 	if _wait_root != null:
 		_wait_root.visible = false
+
+
+## Один экран: окно слушает только своего игрока — выбор улучшения тот, чья очередь;
+## сундук — кто открыл; пауза и прочее — кто нажимал последним.
+func _party_owner_for(modal: Control) -> void:
+	var pin = main.get("_pin")
+	if pin == null or not is_instance_valid(pin):
+		return
+	if modal == null:
+		pin.owner_idx = -1
+	elif modal == _levelup_root and main._chooser != null:
+		pin.owner_idx = int(main._chooser.pid)
+	elif modal == _chest_root:
+		pin.owner_idx = int(main.get("_chest_owner"))
+	else:
+		pin.owner_idx = pin.last_idx
 
 
 func is_modal_open() -> bool:

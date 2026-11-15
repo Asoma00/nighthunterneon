@@ -102,6 +102,15 @@ func _state(what: String) -> bool:
 				if _key(KEY_ENTER) or _key(KEY_KP_0) or _key(KEY_KP_ENTER) or (what == "ability" and _key(KEY_CTRL)):
 					return true
 			return _btn(JOY_BUTTON_A) or (what == "ability" and (_btn(JOY_BUTTON_X) or _btn(JOY_BUTTON_RIGHT_SHOULDER)))
+		"alt":
+			# Вторая кнопка (не «подтвердить»): Shift / Ctrl / X, RB
+			if dev == KB_LEFT or dev == ANY:
+				if _key(KEY_SHIFT):
+					return true
+			if dev == KB_RIGHT or dev == ANY:
+				if _key(KEY_CTRL):
+					return true
+			return _btn(JOY_BUTTON_X) or _btn(JOY_BUTTON_RIGHT_SHOULDER)
 		"back":
 			if dev == KB_LEFT or dev == ANY:
 				if _key(KEY_ESCAPE):
@@ -124,7 +133,7 @@ func _state(what: String) -> bool:
 func poll() -> void:
 	_prev = _now
 	_now = {}
-	for w in ["ability", "ok", "back", "left", "right", "up", "down"]:
+	for w in ["ability", "ok", "alt", "back", "left", "right", "up", "down"]:
 		_now[w] = _state(w)
 
 

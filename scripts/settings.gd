@@ -1,5 +1,5 @@
 extends Node
-const REV := 15022   # версия скрипта автозагрузки (см. hotswap.gd)
+const REV := 15026   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Настройки экрана и звука: режим окна, формат, разрешение, громкость.
 ## Сохраняются в user://settings.cfg и применяются при каждом запуске.
 ## Подключён как автозагрузка «Settings».
@@ -397,6 +397,7 @@ func load_settings() -> void:
 	pixel_art = int(cfg.get_value("graphics", "pixel_art", pixel_art))
 	brightness = clampf(float(cfg.get_value("graphics", "brightness", brightness)), 0.6, 1.6)
 	joystick = str(cfg.get_value("controls", "joystick", joystick))
+	coop_split = str(cfg.get_value("controls", "coop_split", coop_split))
 	fx3d = bool(cfg.get_value("graphics", "fx3d", fx3d))
 	touch_size = cfg.get_value("mobile", "touch_size", touch_size)
 
@@ -427,6 +428,7 @@ func save_settings() -> void:
 	cfg.set_value("graphics", "pixel_art", pixel_art)
 	cfg.set_value("graphics", "brightness", brightness)
 	cfg.set_value("controls", "joystick", joystick)
+	cfg.set_value("controls", "coop_split", coop_split)
 	cfg.set_value("graphics", "fx3d", fx3d)
 	cfg.set_value("mobile", "touch_size", touch_size)
 	cfg.save(PATH)
@@ -473,6 +475,10 @@ var _base_3d := 1.0        # из настройки разрешения / чё
 var pixel_art := 1
 ## Сенсорный джойстик: "float" — плавающий невидимый, "fixed" — фиксированный слева снизу
 var joystick := "float"
+## Игра на одном экране: "dynamic" — у каждого своя камера, экран делится при расхождении;
+## "shared" — одна общая камера, герои не выходят за край экрана и тянут её за собой
+var coop_split := "dynamic"
+signal coop_split_changed
 ## Яркость изображения (3D-мира): 0.6 … 1.6
 var brightness := 1.0
 signal brightness_changed

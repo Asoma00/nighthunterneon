@@ -16,6 +16,8 @@ var _buttons := {}
 var _nodes: Array = []
 var cell := Vector2(206, 82)
 var btn := Vector2(190, 62)
+const PATH_GAP := 34.0       # отступ перед «Личным путём», чтобы надпись не наезжала на узлы
+var _path_row := -1.0
 
 
 func setup(key: String, color: Color, narrow := false, max_w := 0.0) -> void:
@@ -37,10 +39,14 @@ func setup(key: String, color: Color, narrow := false, max_w := 0.0) -> void:
 		c.queue_free()
 	_buttons.clear()
 	_nodes = Meta.tree_nodes(key)
+	_path_row = -1.0
+	for n in _nodes:
+		if n.has("excl") and (_path_row < 0.0 or float(n["pos"].y) < _path_row):
+			_path_row = float(n["pos"].y)
 	var max_pos := Vector2.ZERO
 	for n in _nodes:
 		max_pos = max_pos.max(n["pos"])
-	custom_minimum_size = Vector2((max_pos.x + 1.0) * cell.x - (cell.x - btn.x), (max_pos.y + 1.0) * cell.y - (cell.y - btn.y))
+	custom_minimum_size = Vector2((max_pos.x + 1.0) * cell.x - (cell.x - btn.x), (max_pos.y + 1.0) * cell.y - (cell.y - btn.y) + (PATH_GAP if _path_row >= 0.0 else 0.0))
 	for n in _nodes:
 		var b := Button.new()
 		b.position = _npos(n)
@@ -75,7 +81,8 @@ func setup(key: String, color: Color, narrow := false, max_w := 0.0) -> void:
 
 
 func _npos(n: Dictionary) -> Vector2:
-	return Vector2(n["pos"].x * cell.x, n["pos"].y * cell.y)
+	var extra := PATH_GAP if (_path_row >= 0.0 and float(n["pos"].y) >= _path_row) else 0.0
+	return Vector2(n["pos"].x * cell.x, n["pos"].y * cell.y + extra)
 
 
 ## Полное описание узла: эффект, цена, ярус и условия.
@@ -191,7 +198,8 @@ func refresh() -> void:
 				border = Color(0.75, 0.4, 0.9)
 				line2 = "⊘ " + Meta.cond_short(Meta.first_unmet(n.get("conds", []), hero), hero)
 		b.text = "%s\n%s" % [n["name"], line2]
-		b.tooltip_text = _info_text(n)
+		# Описание показывается в строке под деревом — всплывающая подсказка дублировала его поверх
+		b.tooltip_text = ""
 		b.add_theme_stylebox_override("normal", _box(border, bg, 8 if st in ["owned", "open"] else 0))
 		b.add_theme_stylebox_override("hover", _box(border.lightened(0.3), bg.lightened(0.05), 14))
 		b.add_theme_stylebox_override("pressed", _box(Color.WHITE, bg, 14))
@@ -202,14 +210,9 @@ func refresh() -> void:
 
 func _draw() -> void:
 	# Разделитель личной ветви (ряд 7 и ниже)
-	var has_path := false
-	var row := 0.0
-	for n in _nodes:
-		if n.has("excl"):
-			has_path = true
-			row = n["pos"].y
-	if has_path:
-		var y := row * cell.y - (cell.y - btn.y) / 2.0 - 1.0
+	if _path_row >= 0.0:
+		# Посередине между последним общим рядом и первым рядом личного пути
+		var y := _path_row * cell.y - (cell.y - btn.y) / 2.0 + PATH_GAP / 2.0
 		draw_line(Vector2(0, y), Vector2(size.x, y), Color(accent, 0.45), 2.0)
 		var font := get_theme_default_font()
 		var t := "ЛИЧНЫЙ ПУТЬ — выберите один из двух"
