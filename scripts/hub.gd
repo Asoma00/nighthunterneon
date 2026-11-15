@@ -283,7 +283,11 @@ func _resize_view() -> void:
 	var rh := int(RENDER_H * Settings.tex_scale())
 	if Settings.pixel_art > 0:
 		rh = int(Settings.PIXEL_TARGET[Settings.pixel_art])   # пиксельный 3D: такая же сетка, как в бою
-	_vp.size = Vector2i(int(rh * aspect), rh)
+	# Вертикальный экран: сетка считается по короткой стороне (ширине), иначе картинка мылится
+	if aspect < 1.0:
+		_vp.size = Vector2i(rh, int(rh / maxf(aspect, 0.1)))
+	else:
+		_vp.size = Vector2i(int(rh * aspect), rh)
 	# Вертикальный экран: держим ширину кадра, камера чуть выше
 	if _camera:
 		if aspect < 1.0:

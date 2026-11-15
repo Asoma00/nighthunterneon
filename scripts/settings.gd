@@ -1,5 +1,5 @@
 extends Node
-const REV := 15020   # версия скрипта автозагрузки (см. hotswap.gd)
+const REV := 15021   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Настройки экрана и звука: режим окна, формат, разрешение, громкость.
 ## Сохраняются в user://settings.cfg и применяются при каждом запуске.
 ## Подключён как автозагрузка «Settings».
@@ -441,7 +441,8 @@ func pixel_px() -> float:
 	if pixel_art <= 0 or DisplayServer.get_name() == "headless":
 		return 1.0
 	var w := get_window()
-	var h := float(w.size.y) if w != null else 720.0
+	# По короткой стороне: в вертикальном режиме пиксели того же размера, что и в горизонтальном
+	var h := float(mini(w.size.x, w.size.y)) if w != null else 720.0
 	return maxf(1.0, h / float(PIXEL_TARGET[clampi(pixel_art, 1, 3)]))
 
  ## Взгляд героя: мышь / правый стик (ПК и Steam Deck). На телефоне — автоприцел.
@@ -463,7 +464,9 @@ func _apply_3d_scale() -> void:
 	if vp == null:
 		return
 	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
-	if pixel_art > 0:
+	# На телефонах (рендер Compatibility) уменьшение разрешения 3D размывает и интерфейс,
+	# поэтому там пиксели делает только пост-эффект, а разрешение — как в режиме «гладко».
+	if pixel_art > 0 and RenderingServer.get_current_rendering_method() != "gl_compatibility":
 		# Видеокарта рисует ровно столько пикселей, сколько видно «пиксель-артом»
 		vp.scaling_3d_scale = clampf(1.0 / pixel_px() * lerpf(0.85, 1.0, (dyn_k - 0.5) / 0.5), 0.15, 1.0)
 	else:
