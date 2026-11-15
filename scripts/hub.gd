@@ -284,10 +284,11 @@ func _resize_view() -> void:
 	if Settings.pixel_art > 0:
 		rh = int(Settings.PIXEL_TARGET[Settings.pixel_art])   # пиксельный 3D: такая же сетка, как в бою
 	# Вертикальный экран: сетка считается по короткой стороне (ширине), иначе картинка мылится
-	if aspect < 1.0:
-		_vp.size = Vector2i(rh, int(rh / maxf(aspect, 0.1)))
-	else:
-		_vp.size = Vector2i(int(rh * aspect), rh)
+	var vsz := Vector2(rh, rh / maxf(aspect, 0.1)) if aspect < 1.0 else Vector2(rh * aspect, rh)
+	# В браузере (iPhone) — не больше ~0.5 Мп: при нехватке памяти Safari теряет WebGL
+	if OS.has_feature("web") and vsz.x * vsz.y > 520000.0:
+		vsz *= sqrt(520000.0 / (vsz.x * vsz.y))
+	_vp.size = Vector2i(int(vsz.x), int(vsz.y))
 	# Вертикальный экран: держим ширину кадра, камера чуть выше
 	if _camera:
 		if aspect < 1.0:
@@ -319,6 +320,10 @@ func _build_environment() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	_world.add_child(we)
+	# Яркость изображения из настроек (меняется сразу, без перезапуска)
+	if Settings.has_method("apply_brightness"):
+		Settings.apply_brightness(env)
+		Settings.brightness_changed.connect(func(): Settings.apply_brightness(env))
 
 	var moon := DirectionalLight3D.new()
 	moon.rotation_degrees = Vector3(-50, 35, 0)

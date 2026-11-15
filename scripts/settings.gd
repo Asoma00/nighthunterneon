@@ -1,5 +1,5 @@
 extends Node
-const REV := 15021   # версия скрипта автозагрузки (см. hotswap.gd)
+const REV := 15022   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Настройки экрана и звука: режим окна, формат, разрешение, громкость.
 ## Сохраняются в user://settings.cfg и применяются при каждом запуске.
 ## Подключён как автозагрузка «Settings».
@@ -254,11 +254,47 @@ func _defaults_and_load() -> void:
 			# Браузер медленнее родного приложения — средний профиль
 			mobile_h = 720; effects = 1; shadows = 0; tex_quality = "low"; glow = true
 			weather = true; decor = 1; view_dist = 1; crowd = 0; fps = "60"; preset = 2
+		elif perf_tier() == "mobile_mid":
+			# Телефоны среднего уровня (Redmi Note 10 Pro и т. п.): ниже разрешение 3D,
+			# без объёмных обломков, ближняя дальность, упрощение при просадке
+			mobile_h = 450; fx3d = false; view_dist = 0; decor = 0; adaptive = true; preset = 0
 		elif OS.has_feature("ios"):
 			# iPhone (A15–A17 и новее) тянет высокий профиль; кадры — 60, а не 120 (меньше греется)
 			mobile_h = 900; effects = 2; shadows = 1; tex_quality = "auto"; glow = true
 			weather = true; decor = 1; view_dist = 2; crowd = 1; fps = "60"; preset = 3
 	load_settings()
+
+
+## Класс устройства: "pc", "mobile" или "mobile_mid" — телефоны среднего уровня
+## (Xiaomi Redmi Note 10 Pro: Snapdragon 732G / Adreno 618 и похожие: Adreno 5xx–64x, Mali-G5x/G7x).
+var _tier := ""
+func perf_tier() -> String:
+	if _tier != "":
+		return _tier
+	if not is_mobile():
+		_tier = "pc"
+		return _tier
+	_tier = "mobile"
+	var gpu := RenderingServer.get_video_adapter_name().to_lower()
+	var model := OS.get_model_name().to_lower()
+	var re := RegEx.new()
+	re.compile("adreno[^0-9]*([0-9]{3})")
+	var m := re.search(gpu)
+	if m != null and int(m.get_string(1)) < 650:
+		_tier = "mobile_mid"
+	if gpu.contains("mali-g5") or gpu.contains("mali-g7") or gpu.contains("powervr"):
+		_tier = "mobile_mid"
+	if model.contains("m2101k6") or model.contains("redmi note 10 pro") or model.contains("sweet"):
+		_tier = "mobile_mid"
+	return _tier
+
+
+## Сколько 3D-ламп может гореть одновременно. В рендере Compatibility каждая лампа —
+## ещё один проход по всем объектам рядом, это главный расход на телефонах.
+func light_budget() -> int:
+	if RenderingServer.get_current_rendering_method() != "gl_compatibility":
+		return 999
+	return 3 if perf_tier() == "mobile_mid" else 6
 
 
 func native_size() -> Vector2i:
@@ -359,6 +395,8 @@ func load_settings() -> void:
 			binds[a] = int(bd[a])
 	apply_binds()
 	pixel_art = int(cfg.get_value("graphics", "pixel_art", pixel_art))
+	brightness = clampf(float(cfg.get_value("graphics", "brightness", brightness)), 0.6, 1.6)
+	joystick = str(cfg.get_value("controls", "joystick", joystick))
 	fx3d = bool(cfg.get_value("graphics", "fx3d", fx3d))
 	touch_size = cfg.get_value("mobile", "touch_size", touch_size)
 
@@ -387,6 +425,8 @@ func save_settings() -> void:
 	cfg.set_value("controls", "manual_aim", manual_aim)
 	cfg.set_value("controls", "binds", binds)
 	cfg.set_value("graphics", "pixel_art", pixel_art)
+	cfg.set_value("graphics", "brightness", brightness)
+	cfg.set_value("controls", "joystick", joystick)
 	cfg.set_value("graphics", "fx3d", fx3d)
 	cfg.set_value("mobile", "touch_size", touch_size)
 	cfg.save(PATH)
@@ -431,6 +471,19 @@ var _base_3d := 1.0        # из настройки разрешения / чё
 ## чёткими пикселями. Интерфейс — всегда в родном разрешении.
 ## 0 — выкл, 1 — мелкие пиксели (~540 строк), 2 — средние (~400), 3 — крупные (~300).
 var pixel_art := 1
+## Сенсорный джойстик: "float" — плавающий невидимый, "fixed" — фиксированный слева снизу
+var joystick := "float"
+## Яркость изображения (3D-мира): 0.6 … 1.6
+var brightness := 1.0
+signal brightness_changed
+
+
+## Применить яркость к окружению сцены (бой, убежище, меню).
+func apply_brightness(env: Environment) -> void:
+	if env == null:
+		return
+	env.adjustment_enabled = true
+	env.adjustment_brightness = brightness
 ## Объёмные эффекты (3D-частицы, огненные шары, обломки)
 var fx3d := true
 const PIXEL_TARGET := [0.0, 540.0, 400.0, 300.0]

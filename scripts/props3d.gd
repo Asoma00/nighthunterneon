@@ -693,3 +693,50 @@ static func set_fade(mi: MeshInstance3D, k: float) -> void:
 	var ms := fade_mats(k)
 	for i in n:
 		mi.set_surface_override_material(i, ms[mini(i, 1)])
+
+
+## Полупрозрачность обычных мешей (дома, заборы, деревья без вокселей).
+## Свойство GeometryInstance3D.transparency рендер Compatibility (Android, iPhone)
+## не поддерживает — там подменяем материалы поверхностей на полупрозрачные копии.
+static var _alpha_cache := {}
+
+
+static func set_fade_any(gi: GeometryInstance3D, k: float) -> void:
+	if RenderingServer.get_current_rendering_method() != "gl_compatibility" or not (gi is MeshInstance3D):
+		gi.transparency = k
+		return
+	var mi := gi as MeshInstance3D
+	if mi.mesh == null:
+		return
+	var n := mi.mesh.get_surface_count()
+	if not mi.has_meta("orig_mats"):
+		var orig: Array = []
+		for i in n:
+			orig.append(mi.get_surface_override_material(i))
+		mi.set_meta("orig_mats", orig)
+	var orig2: Array = mi.get_meta("orig_mats")
+	if mi.material_override != null and not mi.has_meta("orig_override"):
+		mi.set_meta("orig_override", mi.material_override)
+	var ov: Material = mi.get_meta("orig_override", null)
+	var q := int(round(k * 10.0))
+	if q <= 0:
+		for i in n:
+			mi.set_surface_override_material(i, orig2[i] if i < orig2.size() else null)
+		if ov != null:
+			mi.material_override = ov
+		return
+	if ov != null:
+		mi.material_override = null
+	for i in n:
+		var base: Material = ov
+		if base == null:
+			base = orig2[i] if i < orig2.size() and orig2[i] != null else mi.mesh.surface_get_material(i)
+		if not (base is StandardMaterial3D):
+			continue
+		var key := "%d:%d" % [base.get_instance_id(), q]
+		if not _alpha_cache.has(key):
+			var c := (base as StandardMaterial3D).duplicate() as StandardMaterial3D
+			c.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS
+			c.albedo_color.a = (base as StandardMaterial3D).albedo_color.a * (1.0 - float(q) / 10.0)
+			_alpha_cache[key] = c
+		mi.set_surface_override_material(i, _alpha_cache[key])

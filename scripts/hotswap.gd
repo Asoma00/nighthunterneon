@@ -12,7 +12,7 @@ const LIST := [["Settings", "res://scripts/settings.gd"], ["Loader", "res://scri
 ## Версии скриптов автозагрузок в этой сборке (их const REV). Меняя такой скрипт,
 ## поднимите REV в нём и здесь. Свежий скрипт грузится, только если работает старее —
 ## повторная загрузка «на месте» ломает живой экземпляр.
-const REVS := {"Settings": 15021, "Loader": 15020, "Touch": 15020, "Net": 15020}
+const REVS := {"Settings": 15022, "Loader": 15020, "Touch": 15022, "Net": 15020}
 
 static var done := false
 static var report := ""

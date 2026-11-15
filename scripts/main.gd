@@ -480,6 +480,10 @@ func _setup_view3d() -> void:
 	we.environment = env
 	_view3d.add_child(we)
 	_env = env
+	# Яркость изображения из настроек (меняется сразу, без перезапуска)
+	if Settings.has_method("apply_brightness"):
+		Settings.apply_brightness(env)
+		Settings.brightness_changed.connect(func(): Settings.apply_brightness(env))
 	var moon := DirectionalLight3D.new()
 	_moon = moon
 	moon.rotation_degrees = Vector3(-40, 30, 0)
@@ -822,7 +826,7 @@ func _sync_props3d() -> void:
 				if c is MeshInstance3D and c.has_meta("vox"):
 					Props3D.set_fade(c, nxt)
 				elif c is GeometryInstance3D:
-					(c as GeometryInstance3D).transparency = nxt
+					Props3D.set_fade_any(c as GeometryInstance3D, nxt)
 		i -= 1
 
 
@@ -941,6 +945,27 @@ func _sync_mirrors() -> void:
 		l3.position = _bl(l2.global_position + Vector2(0, -l2.position.y), lm[3])
 		l3.light_energy = l2.energy * 1.6
 		i -= 1
+	_light_budget()
+
+
+## Телефоны: горят только ближайшие к центру кадра лампы (см. Settings.light_budget).
+var _lb_t := 0
+func _light_budget() -> void:
+	var budget: int = Settings.light_budget() if Settings.has_method("light_budget") else 999
+	if budget >= 999:
+		return
+	_lb_t += 1
+	var c := view_center()
+	var vis: Array = []
+	for lm in _light_mirrors:
+		var l3: OmniLight3D = lm[1]
+		if l3.visible:
+			vis.append([(lm[0] as Node2D).global_position.distance_squared_to(c), l3])
+	if vis.size() <= budget:
+		return
+	vis.sort_custom(func(a, b): return a[0] < b[0])
+	for k in range(budget, vis.size()):
+		(vis[k][1] as OmniLight3D).visible = false
 
 
 func _particles3d(pos: Vector3, colors: Array, amount: int, extents: Vector3, gravity: Vector3,

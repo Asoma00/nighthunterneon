@@ -46,6 +46,13 @@ static func capture(vp: Viewport) -> Texture2D:
 	var img := vp.get_texture().get_image()
 	if img == null or img.is_empty():
 		return null
+	# Снимок экрана телефона (DPR 3) — десятки мегабайт видеопамяти. На телефоне и в
+	# браузере уменьшаем: волне чёткость не нужна, а iPhone теряет WebGL при нехватке памяти.
+	var lim := 720 if (OS.has_feature("web") or OS.has_feature("mobile")) else 1600
+	var big := maxi(img.get_width(), img.get_height())
+	if big > lim:
+		var k := float(lim) / float(big)
+		img.resize(maxi(1, int(img.get_width() * k)), maxi(1, int(img.get_height() * k)), Image.INTERPOLATE_BILINEAR)
 	return ImageTexture.create_from_image(img)
 
 

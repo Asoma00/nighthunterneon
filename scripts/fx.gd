@@ -280,7 +280,10 @@ static func fireball3d(main: Node, pos: Vector2, c1: Color, c2: Color, radius: f
 	s.scale = Vector3.ONE * r * 0.3
 	s.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	main._mirror_root.add_child(s)
+	# Вспышка взрыва — тоже лампа; на телефонах среднего уровня без неё
 	var l := OmniLight3D.new()
+	if Settings.has_method("perf_tier") and Settings.perf_tier() == "mobile_mid":
+		l.visible = false
 	l.light_color = c1
 	l.light_energy = 3.0
 	l.omni_range = r * 4.0

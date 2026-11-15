@@ -607,10 +607,16 @@ func _build_hud() -> void:
 	# Индикатор способности
 	var ab := PanelContainer.new()
 	ab.add_theme_stylebox_override("panel", _neon_box(GOLD, PANEL_BG, 2, 6, 8))
-	ab.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
-	ab.offset_left = 16
+	# Суперспособность — справа снизу (под большой палец); в игре вдвоём там второй игрок
+	if main.coop:
+		ab.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+		ab.offset_left = 16
+		ab.offset_right = 104
+	else:
+		ab.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+		ab.offset_left = -104
+		ab.offset_right = -16
 	ab.offset_top = -110
-	ab.offset_right = 104
 	ab.offset_bottom = -16
 	ab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(ab)

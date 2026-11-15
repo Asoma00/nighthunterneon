@@ -76,7 +76,8 @@ const TAB_OF := {
 	"Держать кадры": "video", "Кнопки": "video", "Взгляд героя": "video", "Память": "video", "Графика": "video",
 	"Профиль": "graphics", "Свечение": "graphics", "Погода": "graphics", "Декор пола": "graphics",
 	"Дальность": "graphics", "Врагов на экране": "graphics", "Объёмные эффекты": "graphics",
-	"Эффекты": "graphics", "Тени": "graphics", "Текстуры": "graphics",
+	"Эффекты": "graphics", "Тени": "graphics", "Текстуры": "graphics", "Яркость": "graphics",
+	"Джойстик": "video",
 	"Музыка": "sound", "Звуки": "sound",
 }
 
@@ -176,6 +177,9 @@ func _build() -> void:
 			Settings.touch_size = i
 			Settings.save_settings())
 		grid.add_child(ts_opt)
+		if Settings.get("joystick") != null:
+			_mob_opt(grid, "Джойстик", ["Плавающий невидимый", "Фиксированный слева"], 1 if Settings.joystick == "fixed" else 0,
+				func(i): Settings.joystick = "fixed" if i == 1 else "float")
 	else:
 		_build_desktop_rows(grid)
 	# Тонкие настройки нагрузки — во всех версиях (ПК, Steam Deck, телефоны, браузер)
@@ -280,6 +284,28 @@ func _build_common_rows(grid: GridContainer) -> void:
 		Settings.tex_quality = tq_keys[i]
 		Settings.save_settings())
 	grid.add_child(tq_opt)
+
+	# --- Яркость изображения ---
+	if Settings.has_method("apply_brightness"):
+		grid.add_child(_row_label("Яркость"))
+		var br_box := HBoxContainer.new()
+		br_box.add_theme_constant_override("separation", 10)
+		var br := HSlider.new()
+		br.min_value = 0.6
+		br.max_value = 1.6
+		br.step = 0.05
+		br.custom_minimum_size = Vector2(220, 30)
+		br.value = Settings.brightness
+		var br_l := _label("%d%%" % int(round(Settings.brightness * 100.0)), 15, Color(0.85, 0.9, 1.0))
+		br_l.custom_minimum_size.x = 56
+		br.value_changed.connect(func(val: float):
+			Settings.brightness = val
+			br_l.text = "%d%%" % int(round(val * 100.0))
+			Settings.brightness_changed.emit()
+			Settings.save_settings())
+		br_box.add_child(br)
+		br_box.add_child(br_l)
+		grid.add_child(br_box)
 
 	# --- Память: сколько занимает игра ---
 	grid.add_child(_row_label("Память"))

@@ -1,5 +1,5 @@
 extends CanvasLayer
-const REV := 15020   # версия скрипта автозагрузки (см. hotswap.gd)
+const REV := 15022   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Сенсорное управление для телефона (Android).
 ## Плавающий джойстик: появляется там, где коснулись экрана (кроме кнопок и окон интерфейса).
 ## Способность — двойное касание в любом месте экрана (кроме кнопок интерфейса),
@@ -40,6 +40,17 @@ func _ready() -> void:
 		# Касания экрана — это и «мышь» для меню, но мышь не превращается в касания
 		Input.emulate_mouse_from_touch = true
 		Input.emulate_touch_from_mouse = "--touch" in OS.get_cmdline_user_args()
+
+
+## Джойстик: "float" — плавающий невидимый (где коснулись), "fixed" — на месте слева снизу
+func _fixed() -> bool:
+	return str(Settings.get("joystick")) == "fixed"
+
+
+func _fixed_base() -> Vector2:
+	var sm := Settings.safe_margins()
+	var k := _k()
+	return Vector2(float(sm[0]) + 150.0 * k, _vs().y - 160.0 * k)
 
 
 func _k() -> float:
@@ -176,7 +187,10 @@ func _input(event: InputEvent) -> void:
 		if d.index == _joy_index:
 			var r := 90.0 * _k()
 			var off := d.position - _joy_origin
-			# База джойстика подтягивается за пальцем, если увести его далеко
+			# База джойстика подтягивается за пальцем, если увести его далеко (кроме фиксированного)
+			if _fixed():
+				_set_joy(off.limit_length(r) / r)
+				return
 			if off.length() > r:
 				_joy_origin = d.position - off.normalized() * r
 				off = d.position - _joy_origin
@@ -200,6 +214,16 @@ func _unhandled_input(event: InputEvent) -> void:
 				_ab_flash = 0.35
 				_ab_pos = t.position
 		if t.pressed and _joy_index == -1 and not _held.has(t.index):
+			if _fixed():
+				# Фиксированный: берётся только касанием возле своей базы
+				var base := _fixed_base()
+				if t.position.distance_to(base) > 90.0 * _k() * 1.7:
+					return
+				_joy_index = t.index
+				_joy_origin = base
+				var r0 := 90.0 * _k()
+				_set_joy((t.position - base).limit_length(r0) / r0)
+				return
 			_joy_index = t.index
 			_joy_origin = t.position
 			_set_joy(Vector2.ZERO)
@@ -223,8 +247,16 @@ func _draw_controls() -> void:
 	var font := ThemeDB.fallback_font
 	var k := _k()
 	var r := 90.0 * k
-	# Джойстик виден только пока палец на экране — там, где коснулись
-	if _joy_index != -1:
+	# Фиксированный джойстик виден всегда; плавающий — невидимый
+	if _fixed() and (_ctx == "battle" or _ctx == "hub"):
+		var base := _fixed_base()
+		var a0 := 0.35 if _joy_index == -1 else 0.6
+		_canvas.draw_circle(base, r, Color(0.05, 0.02, 0.1, a0 * 0.6))
+		_canvas.draw_arc(base, r, 0.0, TAU, 48, Color(CYAN, a0 + 0.15), 3.0, true)
+		var kn := base + (_joy_vec.limit_length(1.0) * r if _joy_index != -1 else Vector2.ZERO)
+		_canvas.draw_circle(kn, 38.0 * k, Color(CYAN, a0 + 0.1))
+		_canvas.draw_arc(kn, 38.0 * k, 0.0, TAU, 32, Color(1, 1, 1, a0 + 0.2), 2.0, true)
+	elif false and _joy_index != -1:
 		var origin := _joy_origin
 		var a := 0.55
 		_canvas.draw_circle(origin, r, Color(0.05, 0.02, 0.1, a * 0.6))
