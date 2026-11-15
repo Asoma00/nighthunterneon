@@ -210,11 +210,19 @@ static func wanted(src: String) -> Array:
 
 
 ## Бросок добычи: возвращает {} или {"kind", "id", "n", "need"} — найденная часть.
+const WEAPON_PART_CHANCE := 1.0 / 15.0   # часть оружия — 1 к 15 (кроме босса: с него — всегда)
+
+
 static func roll(src: String, rng: RandomNumberGenerator) -> Dictionary:
 	var list := wanted(src)
-	if list.is_empty() or rng.randf() > float(SRC_CHANCE.get(src, 0.0)):
+	if list.is_empty():
 		return {}
 	var pick: Array = list[rng.randi() % list.size()]
+	var ch := float(SRC_CHANCE.get(src, 0.0))
+	if pick[0] == "w" and src != "boss":
+		ch = WEAPON_PART_CHANCE
+	if rng.randf() > ch:
+		return {}
 	var id: String = pick[1]
 	if pick[0] == "w":
 		Meta.wparts[id] = int(Meta.wparts.get(id, 0)) + 1

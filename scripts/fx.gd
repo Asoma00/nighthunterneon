@@ -516,6 +516,7 @@ static func light_flash(main: Node, pos: Vector2, color: Color, energy: float, t
 
 ## Взрыв реакции: два цвета частиц, кольцо, свет, тряска.
 static func explosion(main: Node, pos: Vector2, c1: Color, c2: Color, radius: float) -> void:
+	radius = minf(radius, 520.0)   # взрыв не больше экрана
 	# В толпе взрывов может быть десятки за кадр — рисуем только несколько
 	if main.explosion_budget <= 0:
 		return

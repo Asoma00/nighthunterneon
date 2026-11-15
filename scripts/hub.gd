@@ -120,6 +120,7 @@ func _ready() -> void:
 	_build_decor()
 	_build_avatar()
 	_spawn_npcs()
+	_label_stalls()
 	if _net_client:
 		_avatar.position = Vector3(randf_range(-2.5, 2.5), 0, randf_range(3.5, 5.0))
 		Net.send_profile()
@@ -1361,6 +1362,15 @@ func _update_place() -> void:
 	if db < 2.2 and db < best_d:
 		best = "board"
 		best_d = db
+	# Лавки: подошёл к прилавку — сразу товары, без разговора
+	for si in STALLS.size():
+		if not _stall_vill.has(si):
+			continue
+		var sp: Vector3 = STALLS[si]
+		var ds := Vector2(p.x - sp.x, p.z - sp.z).length()
+		if ds < 2.4 and ds < best_d:
+			best = "stall:%d" % si
+			best_d = ds
 	for id in Meta.BUILDINGS:
 		var bp: Vector3 = Meta.BUILDINGS[id]["pos"]
 		var d := Vector2(p.x - bp.x, p.z - bp.z).length()
@@ -1377,6 +1387,9 @@ func _update_place() -> void:
 		_prompt.text = _pk() + "Библиотека — всё об открытом"
 	elif best == "board":
 		_prompt.text = _pk() + "Доска заданий"
+	elif best.begins_with("stall:"):
+		var vi: int = _stall_vill[int(best.substr(6))]
+		_prompt.text = _pk() + "Лавка: %s — посмотреть товар" % _villagers[vi]["profile"]["name"]
 	elif best.begins_with("act:"):
 		var cur := Lore.buff()
 		var act := best.substr(4)
@@ -1433,6 +1446,9 @@ func _do_interact() -> void:
 		_talk_dialog(int(_near.substr(5)))
 	elif _near.begins_with("info:"):
 		_toast_text("Стройку заказывают у трактирщика Бруно в таверне")
+	elif _near.begins_with("stall:"):
+		Sound.play("click")
+		_open_panel("shop:%d" % int(_stall_vill[int(_near.substr(6))]))
 	else:
 		_open_panel(_near)
 
@@ -1985,6 +2001,9 @@ func _centered(c: Control) -> Control:
 
 
 func _add_close() -> void:
+	# У окон есть крестик в углу — нижняя кнопка «Закрыть» нужна только паузе
+	if _panel_id != "pause":
+		return
 	var close := _button(Settings.with_key("ЗАКРЫТЬ", "back"), Color(0.6, 0.6, 0.75))
 	close.pressed.connect(func():
 		Sound.play("click")
@@ -4074,11 +4093,6 @@ func _fill_results() -> void:
 			xl.custom_minimum_size = Vector2(minf(600, _avail()), 0)
 			xl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			_panel_box.add_child(_centered(xl))
-	var close := _button(Settings.with_key("ЗАКРЫТЬ", "back"), Color(0.6, 0.6, 0.75))
-	close.pressed.connect(func():
-		Sound.play("click")
-		_close_panel())
-	_panel_box.add_child(_centered(close))
 
 
 func _fill_board() -> void:
@@ -6437,10 +6451,11 @@ void fragment() {
 		float sep = max(distance(site[a], site[b]), 1.0);
 		edge = (db * db - da * da) / (2.0 * sep);
 		amt = clamp(distance(cpos[a], cpos[b]) / 2.5, 0.0, 1.0);
+		// Рамка по краю экрана — всегда, цвета игрока этой части (не мигает при движении)
 		float scr_edge = min(min(p.x, scr.x - p.x), min(p.y, scr.y - p.y));
-		if (scr_edge < edge && amt_r[a] > amt) {
-			edge = scr_edge;
-			amt = amt_r[a];
+		if (scr_edge < edge || scr_edge < 4.0) {
+			edge = min(edge, scr_edge);
+			amt = max(amt, 1.0);
 		}
 	}
 	int k = src[a];
@@ -6476,13 +6491,12 @@ func _hrects() -> Array:
 	match n:
 		2:
 			land = [Rect2(0, 0, 0.5, 1), Rect2(0.5, 0, 0.5, 1)]
-		3:
-			land = [Rect2(0, 0, 0.5, 1), Rect2(0.5, 0, 0.5, 0.5), Rect2(0.5, 0.5, 0.5, 0.5)]
 		4:
 			land = [Rect2(0, 0, 0.5, 0.5), Rect2(0.5, 0, 0.5, 0.5), Rect2(0, 0.5, 0.5, 0.5), Rect2(0.5, 0.5, 0.5, 0.5)]
 		_:
-			land = [Rect2(0, 0, 0.5, 0.5), Rect2(0.5, 0, 0.5, 0.5), Rect2(0, 0.5, 1.0 / 3.0, 0.5),
-				Rect2(1.0 / 3.0, 0.5, 1.0 / 3.0, 0.5), Rect2(2.0 / 3.0, 0.5, 1.0 / 3.0, 0.5)]
+			# 3 и 5 — равные полосы
+			for k in n:
+				land.append(Rect2(float(k) / n, 0, 1.0 / n, 1))
 	var out: Array = []
 	for r in land:
 		var rr: Rect2 = r
@@ -6766,29 +6780,6 @@ func _sign_targets() -> Array:
 
 func _build_signs() -> void:
 	var wood := _mat(Color(0.32, 0.22, 0.14), 0.9, 0.0, "wood", 1.2)
-	# Центральный столб с досками-стрелками на площади
-	var post := Node3D.new()
-	post.position = Vector3(-2.3, 0, 5.4)
-	_world.add_child(post)
-	_add(post, _cyl(0.07, 0.09, 2.6, 6), wood, Vector3(0, 1.3, 0))
-	var k := 0
-	for t in _sign_targets():
-		if t[0] == "portal":
-			continue
-		var to: Vector3 = t[3] - post.position
-		var ang := atan2(to.x, to.z)
-		var arm := Node3D.new()
-		arm.position = Vector3(0, 2.4 - 0.36 * k, 0)
-		arm.rotation.y = ang
-		post.add_child(arm)
-		# Доска-стрелка в сторону места, с цветным краем
-		_add(arm, _box(0.07, 0.2, 0.95), wood, Vector3(0, 0, 0.5))
-		_add(arm, _box(0.08, 0.05, 0.98), _emat(t[4], 1.8), Vector3(0, 0.1, 0.5))
-		_add(arm, _box(0.06, 0.14, 0.14), _emat(t[4], 2.2), Vector3(0, 0, 1.02), Vector3(45, 0, 0))
-		var l := _label3d(arm, str(t[1]), Vector3(0, 0.05, 1.25), t[4], 20)
-		l.no_depth_test = false
-		k += 1
-	_label3d(post, "УКАЗАТЕЛЬ", Vector3(0, 2.85, 0), Color(0.9, 0.85, 0.7), 24)
 	# Таблички у входа в каждое здание: название и что там делать
 	for t in _sign_targets():
 		var pos: Vector3 = t[3]
@@ -6863,6 +6854,37 @@ func _update_pointers() -> void:
 		var half := vs / 2.0 - Vector2(m + 60.0, m + 40.0)
 		var sc := minf(half.x / maxf(absf(d.x), 0.001), half.y / maxf(absf(d.y), 0.001))
 		var edge := mid + d * sc
+		# Не залезать на подсказку действия и строку управления внизу
+		edge.y = clampf(edge.y, 130.0, vs.y - 200.0)
 		(p[1] as Label).rotation = d.angle()
 		box.position = edge - Vector2(20, 16)
 		box.modulate.a = 0.85 + 0.15 * sin(_t * 4.0)
+
+
+
+# ---------- Лавки торговцев: вывески и торговля прямо у прилавка ----------
+
+var _stall_vill := {}   # номер прилавка -> номер торговца в _villagers
+
+
+func _label_stalls() -> void:
+	for si in STALLS.size():
+		var sp: Vector3 = STALLS[si]
+		var best := -1
+		var bd := 3.0
+		for vi in _villagers.size():
+			var v: Dictionary = _villagers[vi]
+			if v["role"] != "merchant":
+				continue
+			var d := (v["node"] as Node3D).position.distance_to(sp)
+			if d < bd:
+				bd = d
+				best = vi
+		if best < 0:
+			continue
+		_stall_vill[si] = best
+		var nm: String = _villagers[best]["profile"]["name"]
+		var tag: String = str(Meta.SELLERS.get(nm, {}).get("tag", "товары для прокачки"))
+		var col: Color = [CYAN, MAGENTA, GOLD, Color(0.4, 1.0, 0.5)][si % 4]
+		var l := _label3d(_world, "ЛАВКА • %s\n%s" % [nm.to_upper(), tag], sp + Vector3(0, 2.75, 0), col, 26)
+		l.no_depth_test = false

@@ -43,6 +43,7 @@ func _ready() -> void:
 		owner_pl = main.attacker if main.attacker != null else main.player
 	material = Pixel.mat_add()
 	z_index = 1
+	radius = minf(radius, 480.0)   # зона не больше экрана
 	_r0 = radius
 	_dmg0 = damage
 	_try_merge()

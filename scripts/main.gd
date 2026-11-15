@@ -1478,14 +1478,15 @@ func _handle_spawning(delta: float) -> void:
 			_spawn_timer /= events.spawn_k
 		if challenge == "swarm":
 			_spawn_timer /= 1.3
-		var count := 1 + int(time_alive / 55.0) + endless_min
+		_spawn_timer *= tutorial_k("rate")
+		var count := 1 + int(time_alive / (55.0 * tutorial_k("grow"))) + endless_min
 		if endless:
 			# Адских меньше, но каждый опасен; с минутами их становится больше
 			# Бесконечный режим: плотные толпы адских мобов, с каждой минутой гуще
 			_spawn_timer = maxf(0.07, 0.36 - 0.045 * endless_min) * (1.5 if boss != null else 1.0)
 			count = 4 + endless_min * 2
 		for i in count:
-			if enemies_node.get_child_count() >= max_enemies():
+			if enemies_node.get_child_count() >= int(max_enemies() * tutorial_k("cap")):
 				break
 			spawn_enemy(_pick_enemy_kind())
 	var elites: Array = level["elites"]
@@ -1494,6 +1495,20 @@ func _handle_spawning(delta: float) -> void:
 		spawn_enemy("brute")
 		shake(6.0)
 		Fx.text_pop(self, player.position + Vector2(0, -60), "РУННЫЙ ГОЛЕМ ПРИБЛИЖАЕТСЯ", Pixel.hdr(Color(1.0, 0.55, 0.1), 1.5), 22)
+
+
+## Первые два уровня — обучающие: врагов меньше, они слабее и подходят реже,
+## толпа растёт медленнее, боссы мягче. Дальше — обычная сложность.
+const TUTORIAL := {
+	0: {"hp": 0.55, "dmg": 0.45, "rate": 1.6, "grow": 1.8, "cap": 0.55, "boss": 0.55},
+	1: {"hp": 0.75, "dmg": 0.65, "rate": 1.3, "grow": 1.35, "cap": 0.75, "boss": 0.75},
+}
+
+
+func tutorial_k(what: String) -> float:
+	if endless or not TUTORIAL.has(level_index):
+		return 1.0
+	return float(TUTORIAL[level_index].get(what, 1.0))
 
 
 func _pick_enemy_kind() -> String:
@@ -1538,8 +1553,8 @@ func spawn_enemy(kind: String, at := Vector2.INF) -> void:
 	# постепенно; новичкам (первые вылазки) ещё немного легче
 	var early := clampf(tm / 150.0, 0.0, 1.0)
 	var rookie := 0.8 if int(Meta.total_runs) < 6 else 1.0
-	e.max_hp *= lerpf(0.5, 1.0, early) * rookie
-	e.damage *= lerpf(0.55, 1.0, early) * rookie
+	e.max_hp *= lerpf(0.5, 1.0, early) * rookie * tutorial_k("hp")
+	e.damage *= lerpf(0.55, 1.0, early) * rookie * tutorial_k("dmg")
 	if info.get("hell", false):
 		# Адские мобы крепнут с каждой минутой: здоровье, урон и скорость
 		# Бесконечный режим: рост непрерывный (по долям минуты) и намного круче —
@@ -1616,7 +1631,12 @@ func nearest_enemies_to(pos: Vector2, count: int, max_dist: float, exclude: Node
 	return result
 
 
+## Самая большая зона поражения — не больше экрана (радиус в мировых px).
+const AREA_MAX_R := 520.0
+
+
 func damage_area(pos: Vector2, r: float, dmg: float, exclude: Node, status := "") -> void:
+	r = minf(r, AREA_MAX_R)
 	for e in enemies_node.get_children():
 		if e == exclude or not e.can_be_hit():
 			continue
@@ -2055,7 +2075,8 @@ func _handle_quest_pois(delta: float) -> void:
 		if is_instance_valid(p) and p.get_script() == QuestPoiScript:
 			have[p.kind] = int(have.get(p.kind, 0)) + 1
 	# Пленник-герой: очень редко (1 из 100 на каждый бросок)
-	if int(have.get("captive", 0)) == 0 and rng.randf() < 0.01:
+	if int(have.get("captive", 0)) == 0 and not bool(run.get("captive_spawned", false)) and rng.randf() < 0.1:
+		run["captive_spawned"] = true
 		var cand := Meta.rescue_candidates(level_index)
 		if not cand.is_empty():
 			_qpoi_t = rng.randf_range(80.0, 130.0)
@@ -2195,9 +2216,10 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	if is_super:
 		b.boss_name = "★ СУПЕР-" + info["name"] + " ★"
 		b.size_mult = 1.35
+	b.max_hp *= tutorial_k("boss")
 	b.hp = b.max_hp
 	b.speed = info["speed"]
-	b.damage = info["damage"] * 1.35 * (1.0 + time_alive / 600.0) * (1.4 if is_super else 1.0)
+	b.damage = info["damage"] * 1.35 * (1.0 + time_alive / 600.0) * (1.4 if is_super else 1.0) * lerpf(1.0, tutorial_k("boss"), 0.7)
 	b.radius = info["radius"] * (1.35 if is_super else 1.0)
 	b.color = info["color"].lerp(Color(1.0, 0.85, 0.3), 0.35) if is_super else info["color"]
 	b.xp_value = 60
@@ -3578,10 +3600,11 @@ void fragment() {
 		edge = (db * db - da * da) / (2.0 * sep);
 		amt = clamp(distance(cpos[a], cpos[b]) / 260.0, 0.0, 1.0);
 		// Рамка по краю экрана — своего цвета, когда у игрока своя камера
+		// Рамка по краю экрана — всегда, цвета игрока этой части (не мигает при движении)
 		float scr_edge = min(min(p.x, scr.x - p.x), min(p.y, scr.y - p.y));
-		if (scr_edge < edge && amt_r[a] > amt) {
-			edge = scr_edge;
-			amt = amt_r[a];
+		if (scr_edge < edge || scr_edge < 4.0) {
+			edge = min(edge, scr_edge);
+			amt = max(amt, 1.0);
 		}
 	}
 	int k = src[a];
@@ -3780,13 +3803,12 @@ func split_rects() -> Array:
 	match n:
 		2:
 			land = [Rect2(0, 0, 0.5, 1), Rect2(0.5, 0, 0.5, 1)]
-		3:
-			land = [Rect2(0, 0, 0.5, 1), Rect2(0.5, 0, 0.5, 0.5), Rect2(0.5, 0.5, 0.5, 0.5)]
 		4:
 			land = [Rect2(0, 0, 0.5, 0.5), Rect2(0.5, 0, 0.5, 0.5), Rect2(0, 0.5, 0.5, 0.5), Rect2(0.5, 0.5, 0.5, 0.5)]
 		_:
-			land = [Rect2(0, 0, 0.5, 0.5), Rect2(0.5, 0, 0.5, 0.5), Rect2(0, 0.5, 1.0 / 3.0, 0.5),
-				Rect2(1.0 / 3.0, 0.5, 1.0 / 3.0, 0.5), Rect2(2.0 / 3.0, 0.5, 1.0 / 3.0, 0.5)]
+			# 3 и 5 — равные полосы
+			for k in n:
+				land.append(Rect2(float(k) / n, 0, 1.0 / n, 1))
 	var out: Array = []
 	for r in land:
 		var rr: Rect2 = r

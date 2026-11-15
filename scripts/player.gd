@@ -40,6 +40,8 @@ var magnet := 90.0
 var damage_mult := 1.0
 var cooldown_mult := 1.0
 var area_mult := 1.0
+const AREA_CAP_R := 480.0    # самый большой радиус зоны — в пределах экрана
+const AREA_CAP_W := 260.0    # самая широкая полоса (лучи, волны)
 var xp_mult := 1.0
 var crit_chance := 0.0
 var status_mult := 1.0
@@ -774,6 +776,19 @@ func stats(id: String) -> Dictionary:
 	for key in ["radius", "range", "length", "width"]:
 		if s.has(key):
 			s[key] = float(s[key]) * (1.0 + 0.3 * k_area)
+	# Предел области: зона оружия (с учётом общей «области» героя) — не больше экрана.
+	# Всё, что выше предела, превращается в урон: прокачка области не пропадает зря.
+	var am := maxf(area_mult, 0.01)
+	var over := 1.0
+	for key in ["radius", "width"]:
+		if s.has(key):
+			var lim: float = (AREA_CAP_R if key == "radius" else AREA_CAP_W) / am
+			if float(s[key]) > lim:
+				over = maxf(over, float(s[key]) / lim)
+				s[key] = lim
+	if over > 1.0:
+		s["damage"] = float(s["damage"]) * (1.0 + 0.6 * (over - 1.0))
+		s["area_capped"] = true
 	return s
 
 
