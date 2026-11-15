@@ -3214,6 +3214,12 @@ func _party_tick(delta: float) -> void:
 			var off := Vector3(-1.0 + 0.7 * k, 0, 1.1)
 			pos = _avatar.position + off
 		pos = _collide(pos, 0.5)
+		if _inside == "":
+			# Граница убежища — та же, что у Игрока 1
+			var fl := Vector2(pos.x, pos.z)
+			if fl.length() > 22.0:
+				fl = fl.normalized() * 22.0
+				pos = Vector3(fl.x, pos.y, fl.y)
 		if _inside != "":
 			var ri: Dictionary = INTERIORS[_inside]
 			var ro: Vector3 = ri["o"]
@@ -6350,6 +6356,8 @@ const HSPLIT_R := 0.72
 var _hsplit := false
 var _hvc: Array = []             # центры видов (XZ мира), по игроку
 var _hcam: Array = []            # сглаженные центры камер
+var _hoff: Array = []            # сдвиги камер от основной (пружина)
+var _hoffv: Array = []
 var _hviews: Array = []          # i ≥ 1: {"vp", "cam", "on"}
 var _hsplit_mat: ShaderMaterial
 const HSPLIT_SHADER := """
@@ -6544,8 +6552,26 @@ func _hsplit_centers() -> void:
 	var g := _party_center()
 	var h := _hhalf()
 	_hvc.resize(ps.size())
+	# Кто рядом — в одной группе: у группы одна камера (её центр — середина группы)
+	var grp: Array = []
 	for i in ps.size():
-		var q: Vector3 = ps[i]
+		grp.append(i)
+	for i in ps.size():
+		for j in range(i + 1, ps.size()):
+			var d := Vector2(ps[i].x - ps[j].x, ps[i].z - ps[j].z) / h
+			if absf(d.x) < 1.25 and absf(d.y) < 1.25 and grp[i] != grp[j]:
+				var b: int = grp[j]
+				for t in grp.size():
+					if grp[t] == b:
+						grp[t] = grp[i]
+	for i in ps.size():
+		var q: Vector3 = Vector3.ZERO
+		var n := 0
+		for j in ps.size():
+			if grp[j] == grp[i]:
+				q += ps[j]
+				n += 1
+		q /= maxf(n, 1)
 		var u := Vector2(q.x - g.x, q.z - g.z) / h
 		var l := u.length()
 		var sv := u if l <= HSPLIT_R else u * (HSPLIT_R / l)
@@ -6555,7 +6581,7 @@ func _hsplit_centers() -> void:
 			var vs := Vector2(_vp.size)
 			var a := _hground(vs / 2.0)
 			var b := _hground((rs[i] as Rect2).get_center())
-			_hvc[i] = q - Vector3(b.x - a.x, 0, b.z - a.z)
+			_hvc[i] = ps[i] - Vector3(b.x - a.x, 0, b.z - a.z)
 
 
 func _hsplit_sync(delta: float) -> void:
@@ -6569,22 +6595,53 @@ func _hsplit_sync(delta: float) -> void:
 	var src: Array = []
 	while _hcam.size() < ps.size():
 		_hcam.append(_cam_target)
+	while _hoff.size() < ps.size():
+		_hoff.append(Vector3.ZERO)
+		_hoffv.append(Vector3.ZERO)
 	_hcam[0] = _cam_target
+	var fixed0 := _hsplit_fixed()
 	for i in ps.size():
 		var c0: Vector3 = _cam_target
-		var want: Vector3 = (_hvc[i] - _hvc[0] + c0) if active else c0
-		_hcam[i] = want if i == 0 else (_hcam[i] as Vector3).lerp(want, minf(1.0, delta * 4.0))
-		var off: Vector3 = _hcam[i] - c0
-		var own := active and i > 0 and (off.length() > 0.05 or _hsplit_fixed())
-		cpos.append(Vector2(_hcam[i].x, _hcam[i].z))
-		src.append(i if own else 0)
-		var cam: Camera3D = _camera
+		# Сдвиг камеры от основной — пружиной: камеры плавно расходятся и сходятся
+		var tgt: Vector3 = (_hvc[i] - _hvc[0]) if active else Vector3.ZERO
 		if i > 0:
+			var w := 6.5
+			var steps := maxi(1, ceili(delta / (1.0 / 120.0)))
+			var dt := delta / steps
+			for _k in steps:
+				var acc: Vector3 = (tgt - _hoff[i]) * w * w - _hoffv[i] * 2.0 * w
+				_hoffv[i] += acc * dt
+				_hoff[i] += _hoffv[i] * dt
+			if (_hoff[i] as Vector3).distance_to(tgt) < 0.002 and (_hoffv[i] as Vector3).length() < 0.01:
+				_hoff[i] = tgt
+				_hoffv[i] = Vector3.ZERO
+		_hcam[i] = c0 + _hoff[i]
+		var off: Vector3 = _hoff[i]
+		cpos.append(Vector2(_hcam[i].x, _hcam[i].z))
+		var lead := 0
+		var lead_d := INF
+		for j in i:
+			var dj: float = (_hcam[i] as Vector3).distance_to(_hcam[j])
+			if dj < lead_d:
+				lead_d = dj
+				lead = j
+		var cam: Camera3D = _camera
+		if i == 0:
+			src.append(0)
+		else:
 			var v: Dictionary = _hviews[i - 1]
-			if own != v["on"]:
-				v["on"] = own
-				v["vp"].render_target_update_mode = SubViewport.UPDATE_ALWAYS if own else SubViewport.UPDATE_DISABLED
-			if own:
+			var need: bool = active and (fixed0 or lead_d > 0.004)
+			v["idle"] = 0.0 if need else float(v.get("idle", 0.0)) + delta
+			var render: bool = need or (active and float(v["idle"]) < 0.6)
+			if render != v["on"]:
+				v["on"] = render
+				v["warm"] = 0
+				v["vp"].render_target_update_mode = SubViewport.UPDATE_ALWAYS if render else SubViewport.UPDATE_DISABLED
+			if render:
+				v["warm"] = int(v.get("warm", 0)) + 1
+			var own: bool = render and int(v["warm"]) > 2 and (fixed0 or lead_d > 0.02)
+			src.append(i if own else (src[lead] if lead < src.size() else 0))
+			if render:
 				if v["vp"].size != _vp.size:
 					v["vp"].size = _vp.size
 				cam = v["cam"]

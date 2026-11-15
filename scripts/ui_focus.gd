@@ -70,6 +70,7 @@ static func _collect(n: Node, out: Array) -> void:
 static func keep(root: Control, state: Dictionary) -> void:
 	if root != null and root.is_visible_in_tree():
 		_pad_scroll(root, state)
+		_nav_repeat()
 	# Клавиатура: нажали клавишу ходьбы или ENTER, пока окно открыто — включаем выбор кнопок
 	if not pad_mode and Time.get_ticks_msec() / 1000.0 - _kb_nav_t < 0.12:
 		pad_mode = true
@@ -304,3 +305,54 @@ static func _pad_scroll(root: Control, state: Dictionary) -> void:
 		return
 	var sgn := signf(v)
 	sc.scroll_vertical += int(sgn * pow((absf(v) - 0.2) / 0.8, 1.5) * 1400.0 * dt + sgn)
+
+
+
+## Удержание стика или крестовины в меню: после короткой паузы выбор бежит сам —
+## сначала шагами по 0.11 с, потом быстрее (длинные списки листаются удержанием).
+static var _rep := {}
+static var _rep_frame := -1
+
+
+static func _nav_repeat() -> void:
+	var fr := Engine.get_process_frames()
+	if fr == _rep_frame:
+		return
+	_rep_frame = fr
+	var held := {}
+	for key in _stick:
+		var v: int = int(_stick[key])
+		if v == 0:
+			continue
+		var axis := int(str(key).split(":")[1])
+		if axis == JOY_AXIS_LEFT_X:
+			held["ui_right" if v > 0 else "ui_left"] = true
+		else:
+			held["ui_down" if v > 0 else "ui_up"] = true
+	for j in Input.get_connected_joypads():
+		if Input.is_joy_button_pressed(j, JOY_BUTTON_DPAD_DOWN):
+			held["ui_down"] = true
+		if Input.is_joy_button_pressed(j, JOY_BUTTON_DPAD_UP):
+			held["ui_up"] = true
+		if Input.is_joy_button_pressed(j, JOY_BUTTON_DPAD_LEFT):
+			held["ui_left"] = true
+		if Input.is_joy_button_pressed(j, JOY_BUTTON_DPAD_RIGHT):
+			held["ui_right"] = true
+	var now := Time.get_ticks_msec() / 1000.0
+	for act in _rep.keys():
+		if not held.has(act):
+			_rep.erase(act)
+	for act in held:
+		if not _rep.has(act):
+			_rep[act] = {"t0": now, "next": now + 0.38}
+			continue
+		var r: Dictionary = _rep[act]
+		if now >= float(r["next"]):
+			var step := 0.11 if now - float(r["t0"]) < 1.2 else 0.055
+			r["next"] = now + step
+			for pressed in [true, false]:
+				var a := InputEventAction.new()
+				a.action = act
+				a.pressed = pressed
+				a.strength = 1.0 if pressed else 0.0
+				Input.parse_input_event(a)

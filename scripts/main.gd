@@ -3683,6 +3683,7 @@ func _split_teardown() -> void:
 				v[key].queue_free()
 	_views.clear()
 	_vc.clear()
+	_vcv.clear()
 	if is_instance_valid(_split_layer):
 		_split_layer.queue_free()
 	_plane.layers = 1
@@ -3698,6 +3699,10 @@ func _split_half() -> Vector2:
 	return Vector2(250.0 * vs.x / vs.y, 260.0)
 
 
+var _vcv: Array = []             # скорости центров видов (пружина — плавный старт и остановка)
+const SPLIT_LINK := 1.25         # герои ближе этого (в полуэкранах) — в одной камере
+
+
 func _split_centers(delta: float) -> void:
 	var g := Vector2.ZERO
 	var cnt := 0
@@ -3708,20 +3713,62 @@ func _split_centers(delta: float) -> void:
 		cnt += 1
 	g /= maxf(cnt, 1)
 	var h := _split_half()
-	var k := 1.0 - exp(-7.0 * delta)
 	while _vc.size() < players.size():
 		_vc.append(g)
+	while _vcv.size() < players.size():
+		_vcv.append(Vector2.ZERO)
+	var wants: Array = []
+	if _split_fixed():
+		for i in players.size():
+			wants.append(players[i].position - _region_world_off(i))
+	else:
+		# Кто рядом — в одной группе (по цепочке): у группы одна камера на всех
+		var grp: Array = []
+		for i in players.size():
+			grp.append(i)
+		for i in players.size():
+			for j in range(i + 1, players.size()):
+				var d: Vector2 = (players[i].position - players[j].position) / h
+				if absf(d.x) < SPLIT_LINK and absf(d.y) < SPLIT_LINK:
+					var a: int = grp[i]
+					var b: int = grp[j]
+					if a != b:
+						for t in grp.size():
+							if grp[t] == b:
+								grp[t] = a
+		var gc := {}
+		var gn := {}
+		for i in players.size():
+			if players[i].get("gone"):
+				continue
+			gc[grp[i]] = gc.get(grp[i], Vector2.ZERO) + players[i].position
+			gn[grp[i]] = int(gn.get(grp[i], 0)) + 1
+		for i in players.size():
+			var key: int = grp[i]
+			var c: Vector2 = gc.get(key, players[i].position) / float(maxi(1, int(gn.get(key, 1))))
+			var u: Vector2 = (c - g) / h
+			var l := u.length()
+			var sv := u if l <= SPLIT_R else u * (SPLIT_R / l)
+			wants.append(c - sv * h)
+	# Плавно: центры видов движутся пружиной без перелёта — разъезд и слияние камер
+	# начинаются мягко и мягко же останавливаются
+	var w := 6.5
 	for i in players.size():
-		var p: Node2D = players[i]
-		var u: Vector2 = (p.position - g) / h
-		var l := u.length()
-		var s := u if l <= SPLIT_R else u * (SPLIT_R / l)
-		var want: Vector2 = p.position - s * h
-		if _split_fixed():
-			# Фиксированные части экрана: герой — в середине своей части
-			want = p.position - _region_world_off(i)
-		# Пока все рядом — центры видов совпадают точно (никакой лишней границы)
-		_vc[i] = want if _vc[i].distance_to(want) < 0.5 else _vc[i].lerp(want, k)
+		var want: Vector2 = wants[i]
+		var x: Vector2 = _vc[i]
+		var v: Vector2 = _vcv[i]
+		# Мелкими шагами — пружина устойчива и при редких кадрах
+		var steps := maxi(1, ceili(delta / (1.0 / 120.0)))
+		var dt := delta / steps
+		for _k in steps:
+			var acc := (want - x) * w * w - v * 2.0 * w
+			v += acc * dt
+			x += v * dt
+		if x.distance_to(want) < 0.05 and v.length() < 0.5:
+			x = want
+			v = Vector2.ZERO
+		_vc[i] = x
+		_vcv[i] = v
 
 
 ## Фиксированные части экрана (в единицах окна): 2 — пополам, 3 — половина и две
@@ -3780,9 +3827,18 @@ func _split_sync(cc: Vector2) -> void:
 	var cpos: Array = []
 	var src: Array = []
 	var c0: Vector2 = _vc[0] if not _vc.is_empty() else cc
+	var fixed0 := _split_fixed()
 	for i in players.size():
 		var ci: Vector2 = _vc[i] if i < _vc.size() else c0
 		var off := ci - c0
+		# С кем вид совпадает: тогда показывается его картинка (слитая камера, без границы)
+		var lead := i
+		var lead_d := INF
+		for j in i:
+			var dj: float = ci.distance_to(_vc[j] if j < _vc.size() else c0)
+			if dj < lead_d:
+				lead_d = dj
+				lead = j
 		var p: Node2D = players[i]
 		# Где герой i стоит на экране в своём виде
 		var q: Vector2 = p.position - off
@@ -3792,20 +3848,35 @@ func _split_sync(cc: Vector2) -> void:
 			sp = Vector2(-100000.0, -100000.0)
 		sites.append(sp)
 		cpos.append(ci)
-		var own := off.length() > 1.0 or _split_fixed()
-		src.append(i if (own and i > 0) else 0)
 		if i == 0:
+			src.append(0)
 			continue
 		var v: Dictionary = _views[i - 1]
 		var vp2: SubViewport = v["vp2"]
 		var vp3: SubViewport = v["vp3"]
 		var pl: MeshInstance3D = v["plane"]
-		if own != v["on"]:
-			v["on"] = own
-			vp2.render_target_update_mode = SubViewport.UPDATE_ALWAYS if own else SubViewport.UPDATE_DISABLED
-			vp3.render_target_update_mode = SubViewport.UPDATE_ALWAYS if own else SubViewport.UPDATE_DISABLED
-			pl.visible = own
-		if not own:
+		# Свой вид рисуется заранее (как только камеры начали расходиться) и показывается,
+		# когда уже готов: раньше в первый кадр мелькала старая картинка — рамка «мигала»
+		var need := fixed0 or lead_d > 0.3
+		if need:
+			v["idle"] = 0.0
+		else:
+			v["idle"] = float(v.get("idle", 0.0)) + get_process_delta_time()
+		var render: bool = need or float(v.get("idle", 0.0)) < 0.6
+		if render != v["on"]:
+			v["on"] = render
+			v["warm"] = 0
+			vp2.render_target_update_mode = SubViewport.UPDATE_ALWAYS if render else SubViewport.UPDATE_DISABLED
+			vp3.render_target_update_mode = SubViewport.UPDATE_ALWAYS if render else SubViewport.UPDATE_DISABLED
+			pl.visible = render
+		if render:
+			v["warm"] = int(v.get("warm", 0)) + 1
+		var own: bool = render and int(v.get("warm", 0)) > 2 and (fixed0 or lead_d > 1.5)
+		if own:
+			src.append(i)
+		else:
+			src.append(src[lead] if lead < src.size() else 0)
+		if not render:
 			continue
 		if vp3.size != get_viewport().size:
 			vp3.size = get_viewport().size
@@ -3835,7 +3906,7 @@ func _split_sync(cc: Vector2) -> void:
 		amt_r.append(clampf(m / 260.0, 0.0, 1.0))
 		any = maxf(any, amt_r[i])
 	var fixed := _split_fixed()
-	split_active = fixed or any > 0.3
+	split_active = fixed or any > (0.2 if split_active else 0.35)   # с запасом — худ не прыгает
 	var rects_px: Array = []
 	var cards: Array = []
 	if fixed:
