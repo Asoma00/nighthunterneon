@@ -624,6 +624,9 @@ func _fire(angle: float, spd: float, col: Color, homing := false) -> Node2D:
 
 func _slam(_enraged := false) -> void:
 	main.shake(12.0)
+	# Земля трескается, летят обломки
+	main.cracks(position, 9, 230.0, Pixel.hdr(Color(1.0, 0.35, 0.12), 2.0))
+	Fx.debris3d(main, position, Color(0.45, 0.38, 0.34), 14, 1.4)
 	_bring(position, 10.0, 260.0, Pixel.hdr(Color(1.0, 0.5, 0.15), 2.0), 0.5, 8.0)
 	Fx.burst(main, position, [Color(0.6, 0.5, 0.45, 0.9), Color(0.3, 0.25, 0.2, 0.0)], 30, 300.0, 0.8, 6.0, false)
 	Sound.play("boom", 2.0, 0.7)

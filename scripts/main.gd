@@ -98,6 +98,7 @@ var fx_lights := 0
 var status_fx_budget := 6
 var flash_budget := 5
 var explosion_budget := 2
+var strike_budget := 5        # сколько замахов врагов за кадр получают полные эффекты
 var reactions_count := 0
 var bosses_killed := 0
 var reward := {}
@@ -1369,6 +1370,7 @@ func _process(delta: float) -> void:
 	status_fx_budget = 6
 	flash_budget = 5
 	explosion_budget = 2
+	strike_budget = 5
 	# При просадке кадров эффектов становится меньше
 	_fps_s = lerpf(_fps_s, 1.0 / maxf(delta, 0.001), 0.05)
 	burst_budget = int((18 if _fps_s > 50.0 else (10 if _fps_s > 35.0 else 5)) * Settings.fx_k())
@@ -4019,3 +4021,20 @@ func _gather_to_boss() -> void:
 		k += 1
 	camera.reset_smoothing()
 	Fx.text_pop(self, anchor.position + Vector2(0, -110), "БОСС! ОТРЯД — К ИГРОКУ %d" % (anchor.pid + 1), Pixel.hdr(Color(1.0, 0.35, 0.3), 1.6), 26)
+
+
+
+## Трещины в земле от тяжёлого удара: ломаные линии расходятся от точки и гаснут.
+func cracks(pos: Vector2, n: int, length: float, color: Color) -> void:
+	if _mirror_root == null:
+		return
+	for i in n:
+		var a := TAU * i / n + randf_range(-0.3, 0.3)
+		var pts := PackedVector3Array([to3d(pos, 0.02)])
+		var p := pos
+		var segs := 4
+		for k in segs:
+			a += randf_range(-0.5, 0.5)
+			p += Vector2.RIGHT.rotated(a) * length / segs * randf_range(0.7, 1.2)
+			pts.append(to3d(p, 0.02))
+		beam3d(pts, color, 0.02, 0.9, 0.0)

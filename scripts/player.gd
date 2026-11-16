@@ -2178,7 +2178,7 @@ func _vortex(s: Dictionary, idx := 0) -> void:
 		var d: float = (v["c"] as Vector2).distance_to(center)
 		if d < (float(v["r"]) + r) * 0.55:
 			v["c"] = (v["c"] as Vector2).lerp(center, 0.3)
-			v["r"] = maxf(float(v["r"]), r) * 1.12
+			v["r"] = minf(maxf(float(v["r"]), r) * 1.12, AREA_CAP_R)
 			v["pow"] = 1.5   # слившиеся воронки — одна, в 1,5 раза сильнее одиночной
 			var el := float(v["dur"]) - float(v["left"])
 			v["left"] = maxf(float(v["left"]), dur)
@@ -2187,18 +2187,19 @@ func _vortex(s: Dictionary, idx := 0) -> void:
 			if is_instance_valid(v["mi"]):
 				var mi: MeshInstance3D = v["mi"]
 				mi.position = main._bl(v["c"], 0.03)
-				(mi.mesh as PlaneMesh).size = Vector2.ONE * float(v["r"]) * 2.0 * 0.01
 				var tw := mi.create_tween()
 				tw.tween_property(mi, "scale", Vector3.ONE * 1.18, 0.12)
 				tw.tween_property(mi, "scale", Vector3.ONE, 0.18)
-			Fx.ring(main, v["c"], 10.0, float(v["r"]), Pixel.hdr(col, 2.2), 0.35, 5.0)
+			Fx.ring(main, v["c"], float(v["r"]), VORTEX_CORE, Pixel.hdr(col, 2.2), 0.35, 5.0)
 			return
-	var mi = _vortex_fx(center, r)
+	# Сама воронка всегда одного размера; прокачка области растит зону всасывания
+	var mi = _vortex_fx(center, VORTEX_CORE)
 	_vortices.append({"c": center, "r": r, "pow": 1.0, "left": dur, "dur": dur, "tick": 0.0, "k": 0,
 		"s": s, "col": col, "mi": mi, "done": false})
 
 
 var _vortices: Array = []
+const VORTEX_CORE := 80.0    # видимое ядро воронки (урон и взрыв — вокруг него)
 
 
 ## Все воронки героя — одним проходом раз в 0.1 с (раньше — по таймеру на каждый такт).
@@ -2241,7 +2242,8 @@ func _vortex_pulse(v: Dictionary) -> void:
 	_src = "vortex"
 	main.attacker = self
 	if k % 4 == 0:
-		Fx.ring(main, center, r, 12.0, Pixel.hdr(v["col"], 1.8), 0.4, 3.0)
+		# Граница всасывания: кольцо стягивается от края зоны к ядру
+		Fx.ring(main, center, r, VORTEX_CORE * 0.6, Pixel.hdr(v["col"], 1.5 if r > VORTEX_CORE * 1.3 else 1.8), 0.4, 2.5)
 	for e in main.get_enemies():
 		if not e.can_be_hit():
 			continue
@@ -2252,7 +2254,7 @@ func _vortex_pulse(v: Dictionary) -> void:
 		# Притяжение: сильнее у края, у центра враги кружат
 		var pull: float = float(s["pull"]) * (0.4 if e.is_boss else 1.0) * clampf(dist / r + 0.35, 0.35, 1.0) * sqrt(pw)
 		e._knock = d.normalized().rotated(0.6) * pull
-		if k % 5 == 0:
+		if k % 5 == 0 and dist < VORTEX_CORE * 1.4 + e.radius:
 			e.hit(float(s["damage"]) * damage_mult * pw, center, 0.0, "burn")
 
 
@@ -2274,9 +2276,9 @@ func _end_vortex(v: Dictionary, blast: bool) -> void:
 	main.attacker = self
 	var charged := 0
 	for e in main.get_enemies():
-		if e.can_be_hit() and e.position.distance_to(center) < r and e.statuses.has("shock"):
+		if e.can_be_hit() and e.position.distance_to(center) < VORTEX_CORE * 1.7 and e.statuses.has("shock"):
 			charged += 1
-	var br: float = r * (1.0 + minf(0.08 * charged, 0.6))
+	var br: float = VORTEX_CORE * 1.7 * (1.0 + minf(0.08 * charged, 0.6))
 	var dmg: float = float(s["blast"]) * damage_mult * float(v["pow"]) * (1.0 + minf(0.06 * charged, 0.5))
 	Fx.explosion(main, center, Color(1.0, 0.45, 0.9), v["col"], br)
 	main.damage_area(center, br, dmg, null, "burn")

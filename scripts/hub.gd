@@ -2560,7 +2560,7 @@ func _fill_shop(i: int) -> void:
 		seller = str(_villagers[i].get("profile", {}).get("name", ""))
 	_panel_box.add_child(_centered(_label("ЛАВКА — " + seller.to_upper(), 32, Color.WHITE, Color(GOLD, 0.8))))
 	var tag := str(Meta.SELLERS.get(seller, {}).get("tag", ""))
-	var sub := _label(("Здесь: %s.  " % tag if tag != "" else "") + "У вас ◆ %d осколков. Цены у каждого торговца свои и меняются после вылазки." % Meta.shards, 15, Color(0.85, 0.85, 1.0))
+	var sub := _label(("Здесь: %s.  " % tag if tag != "" else "") + "У вас ◆ %d осколков. Товара у торговца немного — новый завозят после каждой вылазки." % Meta.shards, 15, Color(0.85, 0.85, 1.0))
 	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	sub.custom_minimum_size = Vector2(minf(620, _avail()), 0)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2577,11 +2577,19 @@ func _fill_shop(i: int) -> void:
 		ic.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		row.add_child(ic)
 		var deal := "  ▼ выгодно" if mul < 0.9 else ("  ▲ дорого" if mul > 1.1 else "")
-		var info := _label("%s%s  •  у вас %d\n%s" % [md["name"], deal, int(Meta.materials.get(g, 0)), str(md.get("for", Meta.GOOD_FOR.get(g, "")))], 15, Color(0.92, 0.92, 1.0))
+		var left := Meta.shop_left(g, seller)
+		var info := _label("%s%s  •  у вас %d  •  в лавке: %s\n%s" % [md["name"], deal, int(Meta.materials.get(g, 0)), ("%d шт." % left) if left > 0 else "распродано", str(md.get("for", Meta.GOOD_FOR.get(g, "")))], 15, Color(0.92, 0.92, 1.0))
 		info.custom_minimum_size = Vector2(minf(280, _avail() - 260), 0)
 		info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		row.add_child(info)
-		for cnt in [1, 5]:
+		var counts: Array = [1] if left <= 1 else [1, left]
+		if left <= 0:
+			var so := _button("распродано — завезут после вылазки", Color(0.5, 0.5, 0.6), false)
+			so.custom_minimum_size = Vector2(minf(290, _avail() * 0.6), 44)
+			so.add_theme_font_size_override("font_size", 14)
+			row.add_child(so)
+			counts = []
+		for cnt in counts:
 			var c: int = cnt
 			var b := _button("×%d — %d ◆" % [c, price * c], md["color"], Meta.shards >= price * c)
 			b.custom_minimum_size = Vector2(minf(140, _avail() * 0.3), 44)

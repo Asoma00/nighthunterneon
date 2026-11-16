@@ -44,6 +44,11 @@ var _base_tint := Color.WHITE
 var _ai_t := 2.0
 var _dash_t := 0.0
 var _dash_dir := Vector2.ZERO
+var _sw := 0.0          # замах (сек до броска)
+var _sl := 0.0          # бросок
+var _scd := randf_range(0.5, 1.5)   # пауза между ударами
+var _lean := 0.0        # наклон корпуса при замахе/броске
+var _leaned := false
 
 var _frames: Dictionary
 var _shadow: Sprite2D
@@ -338,6 +343,11 @@ func _ai(delta: float) -> Vector2:
 	var dir := to_player / maxf(dist, 0.001)
 	var move := dir
 	_ai_t -= delta
+	# Ближний бой: замах (тварь отводит корпус, глаза вспыхивают) и бросок с ударом когтями
+	if ai == "chase" and not is_boss and _dash_t <= 0.0:
+		var sd := _strike(delta, dir, dist)
+		if sd != Vector2.INF:
+			return sd
 	match ai:
 		"dash":  # кибер-гоблин: время от времени делает рывок
 			if _dash_t > 0.0:
@@ -346,14 +356,38 @@ func _ai(delta: float) -> Vector2:
 				if randf() < 0.4:
 					Fx.burst(main, position, [Color(color, 0.6), Color(color, 0.0)], 1, 20.0, 0.3, 3.0)
 				return _dash_dir
+			if _sw > 0.0:
+				# Пригнулся перед рывком: пыль из-под лап, красная черта — куда прыгнет
+				_sw -= delta
+				if _sw <= 0.0:
+					_dash_t = 0.38
+					_dash_dir = dir
+					Sound.play("slash", -16.0, 0.5, 0.1)
+				return dir * 0.01
+			if _dash_t > 0.0 and int(_t * 30.0) % 2 == 0 and vis:
+				Fx.afterimage(main, position, _body.texture, _body.offset * _body.scale, _body.flip_h, color.lerp(Color(1, 0.2, 0.2), 0.4) * 0.35, _body.scale.x / Pixel.PX)
 			if _ai_t <= 0.0 and dist < 420.0:
 				_ai_t = randf_range(2.5, 4.0)
-				_dash_t = 0.38
-				_dash_dir = dir
+				_sw = 0.3
+				if vis and main.strike_budget > 0:
+					main.strike_budget -= 1
+					Fx.burst(main, position, [Color(0.6, 0.5, 0.45, 0.8), Color(0.3, 0.25, 0.2, 0.0)], 6, 90.0, 0.4, 4.0, false)
+					Fx.beam(main, position, position + dir * 380.0, Pixel.hdr(Color(1.0, 0.2, 0.15), 1.4), 0.05, 0.05)
 		"ranged":  # техномант: держит дистанцию и стреляет
 			var want := 270.0
 			move = dir * clampf((dist - want) / 80.0, -1.0, 1.0) + Vector2(-dir.y, dir.x) * 0.4
+			# Перед выстрелом копит заряд: в руке растёт шар, свет стягивается к нему
+			if _ai_t <= 0.5 and _ai_t + delta > 0.5 and dist < 560.0 and vis and main.strike_budget > 0:
+				main.strike_budget -= 1
+				var hand := position + Vector2(0, -30) + dir * 14.0
+				Fx.ring(main, hand, 46.0, 4.0, Pixel.hdr(Color(0.85, 0.45, 1.0), 2.0), 0.48, 2.5)
+				Fx.glow_flash(main, hand, Color(0.85, 0.45, 1.0), 26.0, 0.5)
+				atk_anim = 0.55
 			if _ai_t <= 0.0 and dist < 520.0:
+				# Отдача и вспышка у ствола
+				_knock -= dir * 120.0
+				if vis:
+					Fx.ring(main, position + Vector2(0, -30) + dir * 16.0, 4.0, 30.0, Pixel.hdr(Color(1.0, 0.7, 1.0), 2.4), 0.18, 3.0)
 				_ai_t = randf_range(2.6, 3.4)
 				atk_anim = 0.45
 				var b := BulletScript.new()
@@ -376,6 +410,46 @@ func _ai(delta: float) -> Vector2:
 				return dir
 	position += (move.normalized() * speed * speed_mult() + _knock) * delta
 	return dir
+
+
+## Удар врага ближнего боя: возвращает направление, пока идёт замах/бросок,
+## иначе Vector2.INF (обычное преследование).
+func _strike(delta: float, dir: Vector2, dist: float) -> Vector2:
+	_scd -= delta
+	var reach: float = radius + float(player.get("radius") if player.get("radius") != null else 14.0) + 46.0
+	if _sw > 0.0:
+		_sw -= delta
+		_lean = lerpf(_lean, -1.0, minf(1.0, delta * 14.0))
+		position += dir * speed * 0.15 * delta + _knock * delta
+		if _sw <= 0.0:
+			_sl = 0.13
+			if vis and main.strike_budget > 0:
+				main.strike_budget -= 1
+				var ang := dir.angle()
+				# Взмах когтями: светящийся серп и три борозды по направлению удара
+				Fx.slash(main, position + dir * (radius + 10.0), ang, 1.7, 30.0 + radius * 1.6, Pixel.hdr(color.lerp(Color(1.0, 0.15, 0.1), 0.55), 2.2), null)
+				for k in 3:
+					var off := dir.orthogonal() * (k - 1) * 9.0
+					var a := position + dir * (radius + 6.0) + off
+					main.beam3d(PackedVector3Array([main.to3d(a, 0.5 + 0.08 * k), main.to3d(a + dir * (34.0 + radius), 0.32 + 0.08 * k)]), Pixel.hdr(Color(1.0, 0.3, 0.25), 1.8), 0.012, 0.16)
+			Sound.play("slash", -18.0, randf_range(0.6, 0.8), 0.1)
+		return dir
+	if _sl > 0.0:
+		_sl -= delta
+		_lean = lerpf(_lean, 1.0, minf(1.0, delta * 30.0))
+		position += dir * (speed * 2.0 + 260.0) * delta + _knock * delta
+		if _sl <= 0.0:
+			_scd = randf_range(1.2, 2.0)
+		return dir
+	_lean = lerpf(_lean, 0.0, minf(1.0, delta * 8.0))
+	if _scd <= 0.0 and dist < reach + 40.0 and _spawn <= 0.0 and stun_t <= 0.0:
+		_sw = 0.32 if not is_elite else 0.45
+		if vis and main.strike_budget > 0:
+			main.strike_budget -= 1
+			# Глаза вспыхивают красным — сейчас ударит
+			Fx.glow_flash(main, position + Vector2(0, -26.0 * size_mult * _k * 0.9), Color(1.0, 0.15, 0.1), 16.0 + radius * 0.6, 0.32)
+		return dir
+	return Vector2.INF
 
 
 func _explode() -> void:
@@ -457,9 +531,23 @@ func _animate(dir: Vector2) -> void:
 	if not _hover:
 		var step := 0.035 if not is_boss else 0.025
 		squash += (step * absf(sin(_t * _fps * 0.5 * PI)) - step * 0.5) if dir.length_squared() > 0.01 else 0.012 * sin(_t * 2.0 + float(get_instance_id() % 7))
+	# Замах — сжатие и отклон назад, бросок — вытянут вперёд
+	if _lean != 0.0:
+		squash += 0.12 * maxf(0.0, -_lean) - 0.09 * maxf(0.0, _lean)
+	var bomb_k := 0.0
+	if ai == "bomber" and player != null and is_instance_valid(player):
+		# Дрон-камикадзе рядом с героем раздувается и мигает всё чаще
+		bomb_k = clampf(1.0 - position.distance_to(player.position) / 220.0, 0.0, 1.0)
+		squash -= 0.12 * bomb_k * absf(sin(_t * (8.0 + 22.0 * bomb_k)))
 	var sc := Vector2(1.0 + squash, (1.0 - squash) * Pixel.STAND) * Pixel.PX * size_mult * _k
 	_body.scale = sc
 	_emit.scale = sc
+	# Наклон корпуса (в 3D — сдвигом спрайта): замах — назад, бросок — вперёд
+	if _lean != 0.0 or _leaned:
+		var lx := _lean * (7.0 + radius * 0.3) * (-1.0 if _body.flip_h else 1.0)
+		_body.position.x = lx
+		_emit.position.x = lx
+		_leaned = absf(_lean) > 0.01
 	if _hover:
 		var hy := (sin(_t * 5.0) * 4.0 - (16.0 if is_boss else 10.0)) * Pixel.STAND
 		_body.position.y = hy
@@ -484,6 +572,10 @@ func _animate(dir: Vector2) -> void:
 		tint = Color(1.4, 1.8, 2.2) if frozen else (Color(1.6, 1.6, 0.8) if int(_t * 8.0) % 2 == 0 else tint)
 	if statuses.has("shock") and int(_t * 20.0) % 3 == 0:
 		tint = Color(0.9, 1.0, 1.9)
+	if bomb_k > 0.0 and sin(_t * (8.0 + 22.0 * bomb_k)) > 0.3:
+		tint = Color(2.2, 0.5, 0.4)
+	if _sw > 0.0 and int(_t * 24.0) % 2 == 0:
+		tint = tint.lerp(Color(1.8, 0.6, 0.55), 0.5)
 	_body.modulate = Color(tint, _body.modulate.a)
 
 

@@ -595,11 +595,29 @@ static func shop_price(good: String, seller := "") -> int:
 	return maxi(1, int(round(base * mul * (0.92 + float(h % 17) / 100.0))))
 
 
+## Запас товара у торговца на эту вылазку: от 1 до 3, чаще всего 1.
+static func shop_stock(good: String, seller := "") -> int:
+	var h := absi(hash("stock:" + seller + ":" + good + ":" + str(total_runs))) % 100
+	return 1 if h < 60 else (2 if h < 88 else 3)
+
+
+static func shop_left(good: String, seller := "") -> int:
+	var key := "%d:%s:%s" % [total_runs, seller, good]
+	return maxi(0, shop_stock(good, seller) - int(shop_bought.get(key, 0)))
+
+
 static func shop_buy(good: String, count: int, seller := "") -> bool:
+	if count > shop_left(good, seller):
+		return false
 	var price := shop_price(good, seller) * count
 	if shards < price:
 		return false
 	shards -= price
+	var key := "%d:%s:%s" % [total_runs, seller, good]
+	for k in shop_bought.keys():
+		if not str(k).begins_with(str(total_runs) + ":"):
+			shop_bought.erase(k)
+	shop_bought[key] = int(shop_bought.get(key, 0)) + count
 	materials[good] = int(materials.get(good, 0)) + count
 	stats["bought"] = int(stats.get("bought", 0)) + count
 	save()
