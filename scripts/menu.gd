@@ -53,6 +53,7 @@ func _ready() -> void:
 	_build_saves_page()
 	_build_profile_page()
 	Meta.ensure_loaded()
+	preload("res://scripts/cloud.gd").get_inst()   # облачные сохранения: сверка при входе в меню
 	_build_coop_page()
 	_build_net_page()
 	_show(Data.menu_page if Data.menu_page != "" and _pages.has(Data.menu_page) else "main")

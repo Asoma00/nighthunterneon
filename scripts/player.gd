@@ -2155,19 +2155,11 @@ func _quake(s: Dictionary, scale_k: float) -> void:
 
 ## Гравитонная воронка: открывается в гуще врагов, затягивает их к центру, жжёт,
 ## а в конце схлопывается взрывом. Враги под током делают взрыв шире (Грави-разряд).
-func _vortex(s: Dictionary, idx := 0) -> void:
+func _vortex(s: Dictionary, _idx := 0) -> void:
 	if _dead:
 		return
 	var r: float = float(s["radius"]) * area_mult
-	var center := position + facing * 170.0
-	var targets: Array = main.nearest_enemies_to(position, 6, 520.0, null, aim)
-	if not targets.is_empty():
-		var acc := Vector2.ZERO
-		for t in targets:
-			acc += (t as Node2D).position
-		center = acc / float(targets.size())
-		if idx > 0:
-			center += Vector2.RIGHT.rotated(randf() * TAU) * r * 0.9
+	var center := _vortex_spot()
 	var dur: float = float(s["duration"])
 	var col := evo_tint("vortex", Color(0.7, 0.35, 1.0)) if evolved.has("vortex") else Color(0.7, 0.35, 1.0)
 	Sound.play("ability", -12.0, 0.55, 0.05)
@@ -2196,6 +2188,35 @@ func _vortex(s: Dictionary, idx := 0) -> void:
 	var mi = _vortex_fx(center, VORTEX_CORE)
 	_vortices.append({"c": center, "r": r, "pow": 1.0, "left": dur, "dur": dur, "tick": 0.0, "k": 0,
 		"s": s, "col": col, "mi": mi, "done": false})
+
+
+## Точка для новой воронки: случайное место в поле зрения камеры героя, как у обычного снаряда,
+## но никогда не под ногами. Чаще — рядом с кем-то из врагов в кадре.
+func _vortex_spot() -> Vector2:
+	var half := Vector2(560.0, 340.0)
+	if main.has_method("screen_to_world"):
+		var vs: Vector2 = get_viewport().get_visible_rect().size
+		var a: Vector2 = main.screen_to_world(Vector2(0.0, vs.y * 0.5))
+		var b: Vector2 = main.screen_to_world(Vector2(vs.x, vs.y * 0.5))
+		var t: Vector2 = main.screen_to_world(Vector2(vs.x * 0.5, vs.y * 0.08))
+		var d: Vector2 = main.screen_to_world(Vector2(vs.x * 0.5, vs.y * 0.95))
+		if a.is_finite() and b.is_finite() and t.is_finite() and d.is_finite():
+			half = Vector2(clampf(absf(b.x - a.x) * 0.5, 260.0, 760.0), clampf(absf(d.y - t.y) * 0.5, 200.0, 480.0))
+	var room := half * 0.82
+	var min_d := VORTEX_CORE * 2.2
+	var foes: Array = main.nearest_enemies_to(position, 12, room.length(), null, aim)
+	foes = foes.filter(func(e): return is_instance_valid(e) and absf((e as Node2D).position.x - position.x) < room.x \
+		and absf((e as Node2D).position.y - position.y) < room.y)
+	for _try in 8:
+		var c: Vector2
+		if not foes.is_empty() and randf() < 0.6:
+			c = (foes.pick_random() as Node2D).position + Vector2.RIGHT.rotated(randf() * TAU) * randf_range(0.0, 90.0)
+		else:
+			c = position + Vector2(randf_range(-room.x, room.x), randf_range(-room.y, room.y))
+		if c.distance_to(position) >= min_d:
+			return c
+	var dir := Vector2.RIGHT.rotated(randf() * TAU)
+	return position + Vector2(dir.x * room.x, dir.y * room.y).limit_length(maxf(room.length(), min_d)).normalized() * maxf(min_d, minf(room.x, room.y) * 0.8)
 
 
 var _vortices: Array = []

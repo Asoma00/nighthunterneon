@@ -10,6 +10,7 @@ const GemScript := preload("res://scripts/gem.gd")
 const GroundScript := preload("res://scripts/ground.gd")
 const HudScript := preload("res://scripts/hud.gd")
 const BossScript := preload("res://scripts/boss.gd")
+const Bosses := preload("res://scripts/bosses.gd")
 const ChestScript := preload("res://scripts/chest.gd")
 const PoiScript := preload("res://scripts/poi.gd")
 const Meta := preload("res://scripts/meta.gd")
@@ -2212,11 +2213,19 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	b.player = player
 	b.kind = kind
 	b.boss_name = Story.BOSS_NAMES[Data.chapter_of(level_index)].get(kind, info["name"])
+	# Свой владыка на каждом уровне: облик, гамма, приёмы и имя не повторяются
+	var vd: Dictionary = {} if endless else Bosses.for_level(level_index)
+	if not vd.is_empty():
+		kind = vd["base"]
+		info = Data.BOSS_TYPES[kind]
+		b.kind = kind
+		b.variant = vd["id"]
+		b.boss_name = String(vd["name"]).to_upper()
 	# Боссы — настоящее испытание: очень плотные и крепнут вместе с боем
 	b.max_hp = info["hp"] * 2.2 * (0.7 + 0.3 * float(level["hp"])) * (1.0 + time_alive / 300.0) * (1.0 + 0.35 * endless_min) * (3.0 if is_super else 1.0)
 	b.is_super = is_super
 	if is_super:
-		b.boss_name = "★ СУПЕР-" + info["name"] + " ★"
+		b.boss_name = "★ " + (String(vd["name"]).to_upper() if not vd.is_empty() else "СУПЕР-" + info["name"]) + " ★"
 		b.size_mult = 1.35
 	b.max_hp *= tutorial_k("boss")
 	b.hp = b.max_hp
@@ -2224,6 +2233,11 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	b.damage = info["damage"] * 1.35 * (1.0 + time_alive / 600.0) * (1.4 if is_super else 1.0) * lerpf(1.0, tutorial_k("boss"), 0.7)
 	b.radius = info["radius"] * (1.35 if is_super else 1.0)
 	b.color = info["color"].lerp(Color(1.0, 0.85, 0.3), 0.35) if is_super else info["color"]
+	if not vd.is_empty() and not vd.get("keep", false):
+		b.color = (vd["glow"] as Color).lerp(Color(1.0, 0.85, 0.3), 0.25 if is_super else 0.0)
+	b.max_hp *= float(vd.get("hp", 1.0))
+	if not vd.is_empty():
+		b.size_mult *= float(vd.get("sz", 0.94 + 0.05 * float(level_index % 5)))
 	b.xp_value = 60
 	b.position = center() + Vector2.RIGHT.rotated(rng.randf() * TAU) * 380.0
 	enemies_node.add_child(b)
@@ -3335,6 +3349,10 @@ func _apply_enemies(e: Array) -> void:
 				var bi: Dictionary = Data.BOSS_TYPES.get(kind, {})
 				n.boss_name = bi.get("name", "")
 				n.color = bi.get("color", Color.WHITE)
+				var bv: Dictionary = {} if endless else Bosses.for_level(level_index)
+				if not bv.is_empty() and bv["base"] == kind:
+					n.variant = bv["id"]
+					n.boss_name = String(bv["name"]).to_upper()
 				n.radius = bi.get("radius", 40.0)
 			else:
 				n = EnemyScript.new()

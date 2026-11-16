@@ -22,6 +22,25 @@ jobs:
           echo "VERSION=$(grep -oP 'VERSION := "\K[^"]+' scripts/build.gd)" >> "$GITHUB_ENV"
           sed -i "s/application\/short_version=\"[^\"]*\"/application\/short_version=\"$(grep -oP 'VERSION := "\K[^"]+' scripts/build.gd)\"/; s/application\/version=\"[^\"]*\"/application\/version=\"$(grep -oP 'BUILD := \K[0-9]+' scripts/build.gd)\"/" export_presets.cfg
 
+      - name: Ключ входа Google для облачных сохранений (если задан в секретах)
+        env:
+          GID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GSEC: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          gid, gsec = os.environ.get("GID", ""), os.environ.get("GSEC", "")
+          if gid:
+              p = "scripts/cloud_config.gd"
+              s = open(p, encoding="utf-8").read()
+              s = re.sub(r'const CLIENT_ID := ".*"', 'const CLIENT_ID := "%s"' % gid, s)
+              s = re.sub(r'const CLIENT_SECRET := ".*"', 'const CLIENT_SECRET := "%s"' % gsec, s)
+              open(p, "w", encoding="utf-8").write(s)
+              print("Вход через Google включён")
+          else:
+              print("Секрет GOOGLE_CLIENT_ID не задан — вход через Google в сборке отключён")
+          PY
+
       - name: Шаблоны экспорта iOS
         run: python3 tools/get_templates.py "$HOME/Library/Application Support/Godot/export_templates/4.7.2.stable" ios.zip
 

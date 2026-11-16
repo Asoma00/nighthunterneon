@@ -11,6 +11,7 @@ const OUT := Color(0.04, 0.02, 0.08)
 
 static var _cache := {}
 const Icons := preload("res://scripts/icons.gd")
+const Bosses := preload("res://scripts/bosses.gd")
 
 
 # ============ Примитивы ============
@@ -616,6 +617,9 @@ static func _paint(key: String, b: Image, e: Image, f: int) -> void:
 		return
 	if key in BOSS_KEYS:
 		_paint_boss(key, b, e, f)
+		return
+	if base_key(key) in BOSS_KEYS:
+		_paint_boss_variant(key, b, e, f)
 		return
 	match key:
 		"hero":
@@ -4161,3 +4165,293 @@ static func ring_outline(tex: Texture2D, thick := 1) -> Texture2D:
 		_outlines.clear()
 	_outlines[key] = t
 	return t
+
+
+# ================= Уникальные боссы уровней =================
+# «queen~b09»: основа королевы, перекрашенная в свою гамму, плюс свой облик —
+# рога, корона, нимб, крылья, щупальца, хвост, сферы, маска, цепи, мантия, пламя, трещины, осколки.
+
+## Опорные точки тела каждой основы (в пикселях кадра).
+const BOSS_ANCHOR := {
+	"lich": {"hx": 40.0, "hy": 32.0, "hr": 10.0, "lx": 24.0, "rx": 56.0, "sy": 44.0, "bx": 40.0, "by": 64.0, "bot": 88.0},
+	"colossus": {"hx": 50.0, "hy": 14.0, "hr": 8.0, "lx": 16.0, "rx": 84.0, "sy": 22.0, "bx": 50.0, "by": 44.0, "bot": 88.0},
+	"queen": {"hx": 77.0, "hy": 37.0, "hr": 7.0, "lx": 52.0, "rx": 70.0, "sy": 40.0, "bx": 30.0, "by": 47.0, "bot": 80.0, "tail": -1.0},
+	"omega": {"hx": 50.0, "hy": 19.0, "hr": 8.0, "lx": 30.0, "rx": 70.0, "sy": 28.0, "bx": 50.0, "by": 62.0, "bot": 104.0},
+}
+const BACK_FEATS := ["halo", "wings", "tail", "mantle", "shards"]
+
+
+static func _paint_boss_variant(key: String, b: Image, e: Image, f: int) -> void:
+	var bk := base_key(key)
+	var d: Dictionary = Bosses.by_id(key.substr(bk.length() + 1))
+	if d.is_empty():
+		_paint_boss(bk, b, e, f)
+		return
+	var P := _boss_pose(f)
+	var A: Dictionary = BOSS_ANCHOR[bk].duplicate()
+	var dx: float = -float(P["hu"]) * 3.0
+	var dy: float = float(P["s"]) * 2.0
+	for k in ["hx", "lx", "rx", "bx"]:
+		A[k] = float(A[k]) + dx
+	for k in ["hy", "sy", "by"]:
+		A[k] = float(A[k]) + dy
+	var w := b.get_width()
+	var h := b.get_height()
+	var feats: Array = d.get("feats", [])
+	var body: Color = d.get("body", Color(0.25, 0.2, 0.3))
+	var glow: Color = d.get("glow", Color(1, 0.4, 0.8))
+	# Задний план: то, что торчит из-за спины
+	var bb := blank(w, h)
+	var be := blank(w, h)
+	for ft in feats:
+		if ft in BACK_FEATS:
+			_boss_feat(ft, bb, be, A, P, f, body, glow)
+	_paint_boss(bk, b, e, f)
+	if not d.get("keep", false):
+		_boss_recolor(b, e, body, glow)
+		_boss_marks(String(d["id"]), b, e, A, glow, f)
+	for x in w:
+		for y in h:
+			if b.get_pixel(x, y).a < 0.5:
+				var c := bb.get_pixel(x, y)
+				if c.a > 0.0:
+					b.set_pixel(x, y, c)
+				var ce := be.get_pixel(x, y)
+				if ce.a > 0.0 and e.get_pixel(x, y).a < 0.3:
+					e.set_pixel(x, y, ce)
+	for ft in feats:
+		if not ft in BACK_FEATS:
+			_boss_feat(ft, b, e, A, P, f, body, glow)
+
+
+## Перекраска основы в гамму босса: тело — в оттенок body, свечение — в оттенок glow.
+static func _boss_recolor(b: Image, e: Image, body: Color, glow: Color) -> void:
+	for x in b.get_width():
+		for y in b.get_height():
+			var c := b.get_pixel(x, y)
+			if c.a > 0.0:
+				var keep := 0.35 if (c.s < 0.15 and c.v > 0.6) else 0.0   # кость и блики меньше
+				var n := Color.from_hsv(body.h, lerpf(c.s, maxf(body.s, 0.25), 0.75), clampf(c.v * (0.55 + body.v * 1.6), 0.0, 1.0), c.a)
+				b.set_pixel(x, y, n.lerp(c, keep))
+			var g := e.get_pixel(x, y)
+			if g.a > 0.0:
+				var v := maxf(g.v, 0.5)
+				e.set_pixel(x, y, Color.from_hsv(glow.h, clampf(maxf(g.s, glow.s * 0.85), 0.0, 1.0), v, g.a))
+
+
+static func _ln(im: Image, a: Vector2, z: Vector2, c: Color, thick := 1) -> void:
+	line(im, int(a.x), int(a.y), int(z.x), int(z.y), c)
+	if thick > 1:
+		line(im, int(a.x) + 1, int(a.y), int(z.x) + 1, int(z.y), c)
+	if thick > 2:
+		line(im, int(a.x), int(a.y) + 1, int(z.x), int(z.y) + 1, c)
+
+
+static func _boss_feat(ft: String, b: Image, e: Image, A: Dictionary, P: Dictionary, f: int,
+		body: Color, glow: Color) -> void:
+	var hx: float = A["hx"]
+	var hy: float = A["hy"]
+	var hr: float = A["hr"]
+	var lx: float = A["lx"]
+	var rx: float = A["rx"]
+	var sy: float = A["sy"]
+	var bx: float = A["bx"]
+	var by: float = A["by"]
+	var bot: float = A["bot"]
+	var s: float = P["s"]
+	var rg: float = P["rg"]
+	var sp: float = P["sp"]
+	var dark := body.darkened(0.45)
+	var lite := body.lightened(0.35)
+	var bone := Color(0.86, 0.82, 0.72).lerp(body.lightened(0.6), 0.25)
+	var gl := glow.lerp(Color.WHITE, 0.15 + rg * 0.3)
+	var ph := TAU * float(f % 6) / 6.0
+	match ft:
+		"horns":
+			for side in [-1.0, 1.0]:
+				var p0 := Vector2(hx + side * hr * 0.55, hy - hr * 0.5)
+				var p1 := p0 + Vector2(side * 10.0, -5.0)
+				var p2 := p1 + Vector2(side * 5.0, -8.0)
+				var p3 := p2 + Vector2(-side * 2.0, -5.0)
+				_ln(b, p0, p1, bone, 4)
+				_ln(b, p0 + Vector2(0, 1), p1 + Vector2(0, 1), bone.darkened(0.3), 2)
+				_ln(b, p1, p2, bone, 3)
+				_ln(b, p2, p3, bone.lightened(0.2), 2)
+				for r in 3:
+					var q := p0.lerp(p2, 0.25 + r * 0.25)
+					px(b, int(q.x), int(q.y) + 1, bone.darkened(0.45))
+				px(e, int(p3.x), int(p3.y), gl)
+				px(e, int(p3.x), int(p3.y) + 1, gl)
+				px(e, int(p2.x), int(p2.y), Color(gl, 0.6))
+		"crown":
+			var cy := hy - hr - 1.0
+			var cw := hr * 1.4
+			rect(b, int(hx - cw), int(cy), int(cw * 2.0) + 1, 3, Color(0.85, 0.7, 0.25))
+			for i in 5:
+				var tx := hx - cw + cw * 2.0 * i / 4.0
+				var th := 6.0 + (5.0 if i == 2 else (2.5 if i % 2 == 0 else 0.0))
+				_ln(b, Vector2(tx, cy), Vector2(tx, cy - th), Color(0.95, 0.8, 0.3), 3)
+				px(e, int(tx), int(cy - th), gl)
+			px(e, int(hx), int(cy + 1), gl)
+			px(e, int(hx) + 1, int(cy + 1), gl)
+		"halo":
+			var cy2 := hy - hr - 6.0 + sin(ph) * 1.0
+			var rr := hr * 1.7
+			for i in 48:
+				var t := TAU * i / 48.0
+				var q := Vector2(hx + cos(t) * rr, cy2 + sin(t) * rr * 0.32)
+				px(b, int(q.x), int(q.y), lite)
+				px(e, int(q.x), int(q.y), gl)
+		"wings":
+			var flap := sin(ph) * 6.0 - sp * 4.0
+			for side in [-1.0, 1.0]:
+				var root := Vector2((lx if side < 0 else rx), sy + 2.0)
+				var tip := root + Vector2(side * 30.0, -22.0 + flap)
+				var mid := root + Vector2(side * 22.0, 6.0 + flap * 0.5)
+				var low := root + Vector2(side * 10.0, 16.0)
+				poly(b, PackedVector2Array([root, tip, mid, low]), dark.lerp(glow, 0.12))
+				_ln(b, root, tip, lite, 2)
+				_ln(e, root.lerp(tip, 0.3), tip, Color(gl, 0.9), 1)
+				_ln(e, tip, mid, Color(gl, 0.6), 1)
+				_ln(b, root.lerp(tip, 0.5), mid, lite, 1)
+		"eyes":
+			for i in 6:
+				var t := 0.6 + i * 0.95
+				var q := Vector2(bx + cos(t) * 12.0, by - 4.0 + sin(t) * 8.0)
+				ellipse(b, q.x, q.y, 2.6, 2.0, Color(0.08, 0.05, 0.08))
+				ellipse(e, q.x, q.y, 1.4, 1.1, Color(gl, 0.6))
+				var blink := (f + i) % 9 != 0
+				if blink:
+					px(e, int(q.x), int(q.y), gl)
+		"spikes":
+			var span := rx - lx
+			for i in 7:
+				var t := float(i) / 6.0
+				var base := Vector2(lx + span * t, sy - 1.0 + absf(t - 0.5) * 5.0)
+				var tipv := base + Vector2((t - 0.5) * 10.0, -9.0 - (5.0 if i % 2 == 0 else 0.0) - rg * 2.0)
+				poly(b, PackedVector2Array([base + Vector2(-3, 1), tipv, base + Vector2(3, 1)]), bone.darkened(0.1))
+				_ln(b, base + Vector2(1, 0), tipv, bone.darkened(0.45), 1)
+				px(e, int(tipv.x), int(tipv.y), gl)
+				px(e, int(tipv.x), int(tipv.y) + 1, Color(gl, 0.6))
+		"tentacles":
+			for k in 4:
+				var side := -1.0 if k < 2 else 1.0
+				var edge: float = lx if side < 0 else rx
+				var st := Vector2(edge - side * 2.0, minf(by + 4.0 + (k % 2) * 10.0, bot - 6.0))
+				var prev := st
+				for j in 1 + 7:
+					var tt := float(j) / 7.0
+					var q := st + Vector2(side * (8.0 + tt * 30.0), tt * 16.0 + sin(ph + k + tt * 5.0) * 5.0)
+					_ln(b, prev, q, dark if j > 1 else body, 4 if tt < 0.5 else 3)
+					if j % 2 == 0:
+						px(e, int(q.x), int(q.y) + 1, Color(gl, 0.55))
+					prev = q
+				px(e, int(prev.x), int(prev.y), gl)
+				px(e, int(prev.x) + int(side), int(prev.y), Color(gl, 0.7))
+		"tail":
+			var prev2 := Vector2(bx, by + 4.0)
+			var side2: float = A.get("tail", -1.0 if bx > 50.0 else 1.0)
+			for j in 1 + 9:
+				var tt := float(j) / 9.0
+				var q := Vector2(bx + side2 * tt * 34.0, by + 4.0 + sin(tt * 3.0 + ph) * 6.0 + tt * 8.0)
+				_ln(b, prev2, q, body if j % 2 == 0 else dark, 3 if tt < 0.6 else 2)
+				prev2 = q
+			poly(b, PackedVector2Array([prev2 + Vector2(0, -3), prev2 + Vector2(side2 * 7.0, 0), prev2 + Vector2(0, 3)]), bone)
+			px(e, int(prev2.x + side2 * 6.0), int(prev2.y), gl)
+		"orbs":
+			for i in 3:
+				var t := TAU * (float(f) / 12.0 + i / 3.0)
+				var q := Vector2(bx + cos(t) * 32.0, by - 8.0 + sin(t) * 10.0)
+				ellipse(b, q.x, q.y, 3.8, 3.8, dark)
+				ellipse(e, q.x, q.y, 2.7, 2.7, gl)
+				px(e, int(q.x), int(q.y), Color.WHITE)
+		"mask":
+			rect(b, int(hx - hr * 0.95), int(hy - 2.0), int(hr * 1.9) + 1, 4, Color(0.2, 0.22, 0.26))
+			rect(b, int(hx - hr * 0.95), int(hy - 2.0), int(hr * 1.9) + 1, 1, Color(0.5, 0.55, 0.6))
+			var scan := int(hx - hr * 0.8 + (hr * 1.6) * (0.5 + 0.5 * sin(ph)))
+			for i in range(int(hx - hr * 0.8), int(hx + hr * 0.8) + 1):
+				px(e, i, int(hy), Color(gl, 0.55))
+			px(e, scan, int(hy), Color.WHITE)
+			px(e, scan + 1, int(hy), gl)
+		"chains":
+			for side in [-1.0, 1.0]:
+				var a := Vector2((lx if side < 0 else rx), sy + 2.0)
+				var z := Vector2(bx - side * 10.0, minf(by + 14.0, bot - 4.0))
+				var n := int(a.distance_to(z) / 3.0)
+				for i in n:
+					var q := a.lerp(z, float(i) / maxf(1.0, n - 1)) + Vector2(0, sin(i * 0.7 + ph) * 0.6)
+					px(b, int(q.x), int(q.y), Color(0.55, 0.55, 0.6) if i % 2 == 0 else Color(0.3, 0.3, 0.35))
+				var lk := a.lerp(z, 0.5)
+				rect(b, int(lk.x) - 1, int(lk.y) - 1, 3, 3, Color(0.7, 0.6, 0.3))
+				px(e, int(lk.x), int(lk.y), gl)
+		"mantle":
+			var top := sy - 1.0
+			var lo := minf(bot - 2.0, by + 22.0)
+			var sway := sin(ph) * 2.0
+			poly(b, PackedVector2Array([Vector2(lx - 3, top), Vector2(rx + 3, top),
+				Vector2(rx + 10 + sway, lo), Vector2(lx - 10 + sway, lo)]), dark)
+			_ln(b, Vector2(lx - 3, top), Vector2(lx - 10 + sway, lo), lite, 1)
+			_ln(b, Vector2(rx + 3, top), Vector2(rx + 10 + sway, lo), lite, 1)
+			for i in range(int(lx - 10 + sway), int(rx + 10 + sway) + 1, 2):
+				px(e, i, int(lo), Color(gl, 0.75))
+		"flames":
+			var spots := [Vector2(lx, sy - 2.0), Vector2(rx, sy - 2.0), Vector2(hx, hy - hr)]
+			for i in spots.size():
+				var q: Vector2 = spots[i]
+				var fl := 5.0 + 2.5 * sin(ph * 2.0 + i * 1.7) + rg * 3.0
+				for j in 3:
+					var ox := (j - 1) * 2.0
+					var hh := fl * (1.0 if j == 1 else 0.6)
+					_ln(e, q + Vector2(ox, 0), q + Vector2(ox + sin(ph + j) * 1.5, -hh), Color(gl, 0.95), 1)
+				px(e, int(q.x), int(q.y - fl), Color(1, 1, 0.85))
+		"cracks":
+			var wd := (rx - lx) * 0.5
+			var pulse := clampf(0.6 + 0.4 * sin(ph) + rg * 0.3, 0.3, 1.0)
+			var sd := 7
+			for c in 5:
+				var a := Vector2(bx + (float(c) / 4.0 - 0.5) * wd * 1.4, by - 14.0 + (c % 2) * 6.0)
+				for k in 4:
+					sd = (sd * 1103 + 12345 + c * 31) % 9973
+					var z := a + Vector2(float(sd % 9) - 4.0, 4.0 + float(sd % 5))
+					_ln(b, a, z, Color(0.06, 0.03, 0.04), 2)
+					_ln(e, a, z, Color(gl, pulse), 1)
+					a = z
+		"shards":
+			for i in 4:
+				var t := TAU * (i / 4.0) + float(f) * 0.12
+				var q := Vector2(bx + cos(t) * 32.0, by - 16.0 + sin(t) * 7.0 + sin(ph + i) * 2.0)
+				var sh := PackedVector2Array([q + Vector2(0, -5), q + Vector2(2.5, 0), q + Vector2(0, 5), q + Vector2(-2.5, 0)])
+				poly(b, sh, glow.darkened(0.5))
+				_ln(e, sh[0], sh[2], Color(gl, 0.85), 1)
+
+
+## Свои светящиеся узоры на теле — у каждого босса другие (полосы, шевроны, точки, руны, жилы).
+static func _boss_marks(id: String, b: Image, e: Image, A: Dictionary, glow: Color, f: int) -> void:
+	var hsh := 0
+	for ch in id:
+		hsh = (hsh * 31 + ch.unicode_at(0)) % 100003
+	var kind := hsh % 5
+	var bx: float = A["bx"]
+	var by: float = A["by"]
+	var rxw: float = maxf(14.0, (float(A["rx"]) - float(A["lx"])) * 0.6)
+	var ryh: float = 18.0
+	var a := 0.45 + 0.2 * sin(TAU * float(f % 6) / 6.0)
+	for x in range(int(bx - rxw), int(bx + rxw) + 1):
+		for y in range(int(by - ryh), int(by + ryh) + 1):
+			if x < 0 or y < 0 or x >= b.get_width() or y >= b.get_height():
+				continue
+			if b.get_pixel(x, y).a < 0.9 or e.get_pixel(x, y).a > 0.2:
+				continue
+			var u := (x - bx) / rxw
+			var v := (y - by) / ryh
+			if u * u + v * v > 1.0:
+				continue
+			var on := false
+			match kind:
+				0: on = (y + hsh) % 6 == 0                                   # полосы
+				1: on = (int(absf(x - bx)) + y + hsh) % 7 == 0               # шевроны
+				2: on = (x + hsh) % 6 == 0 and (y + hsh / 7) % 6 == 0        # точки
+				3: on = ((x + hsh) % 9 == 0 and (y % 4) < 3) or ((y + hsh) % 9 == 0 and (x % 4) < 2)  # руны
+				4: on = absf(sin(x * 0.45 + hsh) * 5.0 - float(y - int(by)) + cos(y * 0.3) * 3.0) < 0.7  # жилы
+			if on:
+				e.set_pixel(x, y, Color(glow.r, glow.g, glow.b, a))

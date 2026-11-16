@@ -7,6 +7,9 @@ extends "res://scripts/enemy.gd"
 ##  • Архимаг Омега — приёмы всех боссов, в третьей фазе — по два сразу.
 
 var boss_name := ""
+var variant := ""         # уникальный босс уровня (id из bosses.gd)
+var vd := {}
+const Bosses := preload("res://scripts/bosses.gd")
 var is_super := false     # супер-босс: крупнее, сильнее, атакует чаще
 var phase := 1
 var _attack_t := 2.0
@@ -76,6 +79,10 @@ var _outline: Sprite2D
 
 func _ready() -> void:
 	is_boss = true
+	if variant != "":
+		vd = Bosses.by_id(variant)
+		if not vd.is_empty():
+			sprite_key = kind + "~" + variant
 	size_mult *= BOSS_SCALE
 	radius *= 1.25
 	super._ready()
@@ -345,9 +352,11 @@ func _update_pose() -> void:
 func _pool() -> Array:
 	var out: Array = []
 	var list: Array = ABILITIES.get(kind, ABILITIES["lich"])
+	if vd.has("abil"):
+		list = [[]] + vd["abil"]
 	for p in range(1, phase + 1):
 		for a in list[p]:
-			if not (a in ["ring", "fan"]) or kind == "omega":
+			if not (a in ["ring", "fan"]) or kind == "omega" or vd.has("abil"):
 				out.append(a)
 	if out.is_empty():
 		out = ["teleport"]
@@ -411,6 +420,8 @@ func _enter_phase(want: int) -> void:
 	_special_t = 1.6
 	_attack_t = 2.0
 	var pname: String = PHASE_NAMES.get(kind, PHASE_NAMES["lich"])[phase]
+	if vd.has("phases"):
+		pname = vd["phases"][phase - 1]
 	var c := color.lerp(Color(1.0, 0.25, 0.2), 0.25 * (phase - 1))
 	Fx.text_pop(main, position + Vector2(0, -120), "ФАЗА %d — %s" % [phase, pname.to_upper()], Pixel.hdr(c, 1.6), 30)
 	Fx.text_pop(main, position + Vector2(0, -80), "НЕУЯЗВИМ", Pixel.hdr(Color(0.6, 0.85, 1.0), 1.4), 20)

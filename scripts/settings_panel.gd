@@ -61,14 +61,14 @@ func _update_memory() -> void:
 
 ## Вкладки: Видео (экран, кадры), Графика (качество картинки), Звук.
 static var tab := "video"
-const TABS := [["video", "ВИДЕО"], ["graphics", "ГРАФИКА"], ["sound", "ЗВУК"], ["controls", "УПРАВЛЕНИЕ"]]
+const TABS := [["video", "ВИДЕО"], ["graphics", "ГРАФИКА"], ["sound", "ЗВУК"], ["controls", "УПРАВЛЕНИЕ"], ["account", "АККАУНТ"]]
 
 
 ## Вкладка «Управление» — только там, где есть клавиатура (ПК, Steam Deck)
 func _tabs() -> Array:
 	# Старая автозагрузка настроек (до перезапуска после обновления) не умеет переназначать клавиши
 	if Settings.is_mobile() or not Settings.has_method("set_bind"):
-		return TABS.slice(0, 3)
+		return TABS.filter(func(t): return t[0] != "controls")
 	return TABS
 const TAB_OF := {
 	"Режим экрана": "video", "Формат": "video", "Разрешение 3D": "video", "Чёткость 3D": "video",
@@ -119,7 +119,7 @@ func _build() -> void:
 		tab = "video"
 	for t in _tabs():
 		var on: bool = t[0] == tab
-		var tb := _button(t[1], CYAN if on else Color(0.55, 0.55, 0.7), 190 if _tabs().size() <= 3 else 158)
+		var tb := _button(t[1], CYAN if on else Color(0.55, 0.55, 0.7), _tab_w())
 		if _tabs().size() > 3:
 			tb.add_theme_font_size_override("font_size", 18)
 		if on:
@@ -134,8 +134,8 @@ func _build() -> void:
 	v.add_child(tabs)
 	# Ширина окна одна для всех вкладок: вкладки в одну строку, окно не «прыгает»
 	var vw := get_viewport().get_visible_rect().size.x
-	var tbw := 190.0 if _tabs().size() <= 3 else 158.0
-	tabs.custom_minimum_size.x = minf(float(_tabs().size()) * tbw + float(_tabs().size() - 1) * 12.0, vw - 40.0)
+	var tbw := float(_tab_w())
+	tabs.custom_minimum_size.x = vw - 40.0 if _tabs().size() > 4 else minf(float(_tabs().size()) * tbw + float(_tabs().size() - 1) * 12.0, vw - 40.0)
 
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size.x = minf(860.0 if vw >= 1180.0 and not Settings.is_portrait() else 620.0, vw - 40.0)
@@ -356,6 +356,9 @@ func _build_common_rows(grid: GridContainer) -> void:
 		grid.add_child(slider)
 
 	_filter_tab(grid)
+	if tab == "account":
+		grid.columns = 1
+		_build_account(grid)
 	if tab == "sound":
 		grid.columns = 2
 	if tab == "controls":
@@ -581,3 +584,124 @@ func _button(text: String, accent: Color, w := 340) -> Button:
 	return b
 
 
+
+
+func _tab_w() -> int:
+	var n := _tabs().size()
+	return 190 if n <= 3 else (158 if n == 4 else 150)
+
+
+# ---------- Аккаунт Google: облачные сохранения (по желанию) ----------
+
+func _on_cloud_changed() -> void:
+	if tab == "account" and is_inside_tree():
+		_rebuild.call_deferred()
+
+
+func _build_account(grid: GridContainer) -> void:
+	var C = load("res://scripts/cloud.gd")
+	var cl: Node = C.get_inst()
+	var vw := get_viewport().get_visible_rect().size.x
+	var w := minf(760.0, vw - 120.0)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 12)
+	box.custom_minimum_size.x = w
+	grid.add_child(box)
+	var head := _label("ОБЛАЧНЫЕ СОХРАНЕНИЯ", 26, CYAN, Color(CYAN, 0.5))
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(head)
+	var about := _label("По желанию: войдите через Google — прогресс станет общим на ПК, Steam Deck, телефоне и в браузере. "
+		+ "Без входа всё сохраняется только на этом устройстве. Игра видит лишь свою скрытую папку на Google Диске.", 15, Color(0.8, 0.85, 1.0))
+	about.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	about.custom_minimum_size.x = w
+	box.add_child(about)
+	if cl == null:
+		return
+	if not cl.changed.is_connected(_on_cloud_changed):
+		cl.changed.connect(_on_cloud_changed)
+	var row := HFlowContainer.new()
+	row.alignment = FlowContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("h_separation", 14)
+	row.add_theme_constant_override("v_separation", 10)
+	var st: String = cl.state
+	if st == "busy" and not cl.signed_in():
+		st = "wait"
+	match st:
+		"off":
+			var l := _label("В этой сборке вход через Google не настроен.", 18, Color(1.0, 0.75, 0.4))
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			box.add_child(l)
+		"out":
+			var b := _button("ВОЙТИ ЧЕРЕЗ GOOGLE", CYAN, 360)
+			b.pressed.connect(func():
+				Sound.play("click")
+				cl.sign_in())
+			row.add_child(b)
+		"code":
+			var l1 := _label("1. Откройте на телефоне или компьютере:", 18, Color(0.85, 0.9, 1.0))
+			box.add_child(l1)
+			var url := _label(cl.verify_url, 22, CYAN)
+			url.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			box.add_child(url)
+			box.add_child(_label("2. Войдите в аккаунт Google и введите код:", 18, Color(0.85, 0.9, 1.0)))
+			var code := _label(cl.user_code, 46, Color.WHITE, Color(MAGENTA, 0.8))
+			code.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			box.add_child(code)
+			var wait := _label("Жду подтверждения…", 16, Color(0.7, 0.75, 0.9))
+			wait.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			box.add_child(wait)
+			var bo := _button("ОТКРЫТЬ СТРАНИЦУ", CYAN, 280)
+			bo.pressed.connect(func():
+				Sound.play("click")
+				cl.open_verify_page())
+			row.add_child(bo)
+			var bc := _button("КОПИРОВАТЬ КОД", Color(0.6, 0.8, 1.0), 260)
+			bc.pressed.connect(func():
+				Sound.play("click")
+				DisplayServer.clipboard_set(cl.user_code))
+			row.add_child(bc)
+			var bx := _button("ОТМЕНА", Color(0.6, 0.6, 0.75), 200)
+			bx.pressed.connect(func():
+				Sound.play("click")
+				cl.cancel_sign_in())
+			row.add_child(bx)
+		"wait":
+			pass
+		"conflict":
+			var l := _label("В облаке и на устройстве разный прогресс — выберите, какой оставить.", 18, Color(1.0, 0.8, 0.4))
+			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l.custom_minimum_size.x = w
+			box.add_child(l)
+			var b1 := _button("☁ ИЗ ОБЛАКА", CYAN, 260)
+			b1.pressed.connect(func(): cl.resolve(true))
+			row.add_child(b1)
+			var b2 := _button("▣ ЭТО УСТРОЙСТВО", MAGENTA, 280)
+			b2.pressed.connect(func(): cl.resolve(false))
+			row.add_child(b2)
+		_:
+			var who := _label("Аккаунт: " + (cl.email if cl.email != "" else "Google"), 20, Color.WHITE)
+			who.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			box.add_child(who)
+			var ls := _label("Последняя синхронизация: " + C.when_text(cl.last_sync), 16, Color(0.75, 0.8, 0.95))
+			ls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			box.add_child(ls)
+			var bs := _button("СИНХРОНИЗИРОВАТЬ", CYAN, 300)
+			bs.disabled = st == "busy"
+			bs.pressed.connect(func():
+				Sound.play("click")
+				cl.sync_now())
+			row.add_child(bs)
+			var bq := _button("ВЫЙТИ", Color(0.6, 0.6, 0.75), 200)
+			bq.disabled = st == "busy"
+			bq.pressed.connect(func():
+				Sound.play("click")
+				cl.sign_out())
+			row.add_child(bq)
+	box.add_child(row)
+	about.visible = st != "code"   # пока ждём код — только инструкция
+	if str(cl.msg) != "":
+		var m := _label(cl.msg, 17, Color(0.6, 1.0, 0.7))
+		m.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		m.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		m.custom_minimum_size.x = w
+		box.add_child(m)

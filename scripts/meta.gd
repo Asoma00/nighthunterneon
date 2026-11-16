@@ -416,6 +416,10 @@ static func save() -> void:
 	cfg.set_value("meta", "dialogs_seen", dialogs_seen)
 	cfg.set_value("meta", "saved_at", Time.get_datetime_string_from_system(false, true))
 	cfg.save(slot_path(current_slot()))
+	# Вошли в Google — копия уйдёт в облако чуть позже
+	var cloud = load("res://scripts/cloud.gd")
+	if cloud != null:
+		cloud.on_saved()
 
 
 # ---------- Сюжетная линия ----------
