@@ -1,4 +1,4 @@
-# Ночь охотника: Неон — версия 0.15.34
+# Ночь охотника: Неон — версия 0.15.35
 
 **Скачать для любого устройства:** https://asoma00.github.io/nighthunterneon/download/
 (Windows, Steam Deck / Linux, Android, а на iPhone — игра прямо в Safari)
@@ -26,19 +26,6 @@
 ## Сборка .ipa (необязательно)
 
 Actions → «Сборка iOS (IPA)» → Run workflow. Артефакт с .ipa ставится через Sideloadly с компьютера.
-
-## Облачные сохранения (вход через Google, по желанию)
-
-В «Настройки → Аккаунт» игрок может войти через Google: прогресс (все слоты) хранится в скрытой папке игры на его Google Диске и становится общим для ПК, Steam Deck, Android, iPhone и браузера. Вход по коду: игра показывает код, игрок вводит его на google.com/device с любого устройства. Без входа всё работает как раньше — сохранения только на устройстве. Если в облаке и на устройстве разный прогресс, игра спросит, какой оставить.
-
-Чтобы вход заработал в сборках, один раз нужен ключ приложения:
-
-1. Откройте https://console.cloud.google.com/ → создайте проект → «APIs & Services» → «Library» → включите **Google Drive API**.
-2. «OAuth consent screen»: тип External, название игры, ваша почта; область (scope) — `.../auth/drive.appdata`. Опубликуйте приложение (Publish App), иначе входить смогут только тестовые пользователи.
-3. «Credentials» → «Create credentials» → «OAuth client ID» → тип **TVs and Limited Input devices**.
-4. В репозитории на GitHub: Settings → Secrets and variables → Actions → добавьте `GOOGLE_CLIENT_ID` и `GOOGLE_CLIENT_SECRET`.
-
-Сборка на GitHub сама подставит их в `scripts/cloud_config.gd`. Для своей сборки можно вписать их туда вручную.
 
 ## Автообновление
 

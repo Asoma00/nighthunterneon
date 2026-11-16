@@ -36,25 +36,6 @@ jobs:
           # Windows требует 4 числа: 0.14.1 → 0.14.1.0
           echo "FILEVER=$(echo "$V.0.0.0" | cut -d. -f1-4)" >> "$GITHUB_ENV"
 
-      - name: Ключ входа Google для облачных сохранений (если задан в секретах)
-        env:
-          GID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          GSEC: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-        run: |
-          python3 - <<'PY'
-          import os, re
-          gid, gsec = os.environ.get("GID", ""), os.environ.get("GSEC", "")
-          if gid:
-              p = "scripts/cloud_config.gd"
-              s = open(p, encoding="utf-8").read()
-              s = re.sub(r'const CLIENT_ID := ".*"', 'const CLIENT_ID := "%s"' % gid, s)
-              s = re.sub(r'const CLIENT_SECRET := ".*"', 'const CLIENT_SECRET := "%s"' % gsec, s)
-              open(p, "w", encoding="utf-8").write(s)
-              print("Вход через Google включён")
-          else:
-              print("Секрет GOOGLE_CLIENT_ID не задан — вход через Google в сборке отключён")
-          PY
-
       - name: Экспорт веб-версии
         run: |
           mkdir -p build/web dist_out
