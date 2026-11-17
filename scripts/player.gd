@@ -501,7 +501,7 @@ func player_color() -> Color:
 func _sync_outline() -> void:
 	if _outline == null:
 		return
-	_outline.visible = _body.visible and not _dead
+	_outline.visible = _body.visible and (not _dead or (main != null and main.coop and not main.game_over))
 	if not _outline.visible:
 		return
 	var t := Pixel.ring_outline(_body.texture)
@@ -540,7 +540,7 @@ func _draw_marker(c: Node2D) -> void:
 func _go_down() -> void:
 	_dead = true
 	_revive = 0.0
-	modulate = Color(0.6, 0.6, 0.9, 0.65)
+	modulate = Color(0.85, 0.85, 1.0, 1.0)   # павший виден чётко, а не тает
 	for n in [_blades, _aura_ring, _aura_glow]:
 		n.visible = false
 	for d in _drones:
@@ -597,6 +597,7 @@ func _later(t: float, f: Callable) -> void:
 
 
 func _process_body(delta: float) -> void:
+	_update_down_mark(delta)
 	if puppet:
 		_puppet_tick(delta)
 		return
@@ -1592,6 +1593,8 @@ func _sync_swords() -> void:
 func _exit_tree() -> void:
 	if is_instance_valid(_gear):
 		_gear.queue_free()
+	if is_instance_valid(_down_mark):
+		_down_mark.queue_free()
 	if is_instance_valid(_ward3d):
 		_ward3d.queue_free()
 	for sw in _swords:
@@ -2183,7 +2186,6 @@ func _vortex(s: Dictionary, _idx := 0) -> void:
 				var tw := mi.create_tween()
 				tw.tween_property(mi, "scale", Vector3.ONE * 1.18, 0.12)
 				tw.tween_property(mi, "scale", Vector3.ONE, 0.18)
-			Fx.ring(main, v["c"], float(v["r"]), VORTEX_CORE, Pixel.hdr(col, 2.2), 0.35, 5.0)
 			return
 	# Сама воронка всегда одного размера; прокачка области растит зону всасывания
 	var mi = _vortex_fx(center, VORTEX_CORE)
@@ -2263,9 +2265,6 @@ func _vortex_pulse(v: Dictionary) -> void:
 	var pw: float = v["pow"]
 	_src = "vortex"
 	main.attacker = self
-	if k % 4 == 0:
-		# Граница всасывания: кольцо стягивается от края зоны к ядру
-		Fx.ring(main, center, r, VORTEX_CORE * 0.6, Pixel.hdr(v["col"], 1.5 if r > VORTEX_CORE * 1.3 else 1.8), 0.4, 2.5)
 	for e in main.enemies_near(center, r):
 		if not e.can_be_hit():
 			continue
@@ -2641,15 +2640,8 @@ func _rebuild_gear() -> void:
 		c.queue_free()
 	_gear_w.clear()
 	_gear_m.clear()
-	# Первое оружие герой держит в руках (оно уже на спрайте), остальные — на снаряжении
-	var ws: Array = weapons.keys()
-	for i in range(1, ws.size()):
-		if i - 1 >= GEAR_SLOTS.size():
-			break
-		var s := _gear_sprite(Pixel.icon(str(ws[i])), 0.00825, true)
-		s.modulate = Color(0.92, 0.92, 1.0)
-		_gear_w.append([s, GEAR_SLOTS[i - 1]])
-	# Модули больше не кружат вокруг: они нарисованы прямо на герое и оружии
+	# Оружие и модули больше не висят значками вокруг героя: они нарисованы прямо
+	# на спрайте (за спиной, на поясе, в руках) — см. _mod_tiers и Pixel._paint_worn
 	_refresh_mod_frames()
 
 
@@ -2658,7 +2650,32 @@ func _mod_tiers() -> Dictionary:
 	var m := {}
 	for id in passives:
 		m[id] = 2 if int(passives[id]) >= 5 else 1
+	# Оружие на герое: своё — в руках (аспект и слияние меняют его вид), остальное
+	# закреплено на снаряжении: длинное за спиной, мелкое на поясе, дроны над плечом
+	var held := str(char_data.get("weapon", ""))
+	if weapons.has(held):
+		var hk := _weapon_look(held)
+		if hk != ":":
+			m["hold:" + hk] = 1
+	var free := [0, 1, 2, 3, 4]
+	for id in weapons.keys():
+		var wid := str(id)
+		if wid == held or is_secondary(wid):
+			continue
+		var pref: Array = [0, 1, 2, 3, 4] if wid in Pixel.WORN_LONG else ([4, 2, 3, 0, 1] if wid in Pixel.WORN_HOVER else [3, 2, 4, 0, 1])
+		for sl in pref:
+			if sl in free:
+				free.erase(sl)
+				m["w%d:%s:%s" % [sl, wid, _weapon_look(wid)]] = 1
+				break
 	return m
+
+
+## Вид оружия для спрайта: «<аспект>:<f — слито>».
+func _weapon_look(id: String) -> String:
+	var list: Array = evolved.get(id, [])
+	var asp: String = str(list[-1]) if not list.is_empty() else ("evo" if evolved.has(id) else "")
+	return "%s:%s" % [asp, "f" if not fusion_of(id).is_empty() else ""]
 
 
 ## Облик героя: свой — из сохранения; в сетевой игре — тот, что прислал его владелец.
@@ -2756,7 +2773,7 @@ func _update_gear(vis: bool) -> void:
 		_gear = Node3D.new()
 		main._mirror_root.add_child(_gear)
 		_gear_key = ""
-	var key := str(weapons.keys()) + "|" + str(_mod_tiers())
+	var key := str(_mod_tiers())
 	if key != _gear_key:
 		_gear_key = key
 		_rebuild_gear()
@@ -2771,3 +2788,83 @@ func _update_gear(vis: bool) -> void:
 		var p: Vector3 = g[1]
 		(g[0] as Sprite3D).position = Vector3(p.x * flip, p.y + bob, p.z)
 		(g[0] as Sprite3D).flip_h = _body.flip_h
+
+
+
+# ---------- Павший в кооперативе: столп света и подпись поверх всего ----------
+var _down_mark: Node3D
+var _down_lbl: Label3D
+var _down_mats: Array = []
+
+
+func _down_mat(col: Color, add := true) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	if add:
+		m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	m.no_depth_test = true            # виден сквозь стены, деревья и врагов
+	m.render_priority = 100
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.albedo_color = col
+	return m
+
+
+func _update_down_mark(_delta: float) -> void:
+	var on: bool = _dead and main != null and main.coop and not main.game_over and main.get("_mirror_root") != null \
+		and main._mirror_root != null
+	if not on:
+		if _down_mark != null:
+			_down_mark.queue_free()
+			_down_mark = null
+			_down_mats.clear()
+		return
+	var col := player_color()
+	if _down_mark == null:
+		_down_mark = Node3D.new()
+		main._mirror_root.add_child(_down_mark)
+		var pillar := MeshInstance3D.new()
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = 0.03
+		cyl.bottom_radius = 0.09
+		cyl.height = 3.0
+		cyl.radial_segments = 12
+		pillar.mesh = cyl
+		var pm := _down_mat(Color(Pixel.hdr(col, 1.6), 0.45))
+		pillar.material_override = pm
+		pillar.position.y = 1.85 + 1.5   # луч над головой, сам павший виден под ним
+		pillar.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_down_mark.add_child(pillar)
+		var ring := MeshInstance3D.new()
+		var tor := TorusMesh.new()
+		tor.inner_radius = 0.62
+		tor.outer_radius = 0.72
+		tor.rings = 32
+		tor.ring_segments = 6
+		ring.mesh = tor
+		var rm := _down_mat(Color(Pixel.hdr(col, 2.0), 0.9))
+		ring.material_override = rm
+		ring.position.y = 0.05
+		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		ring.name = "Ring"
+		_down_mark.add_child(ring)
+		_down_lbl = Label3D.new()
+		_down_lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		_down_lbl.no_depth_test = true
+		_down_lbl.render_priority = 101
+		_down_lbl.outline_render_priority = 100
+		_down_lbl.font_size = 44
+		_down_lbl.outline_size = 12
+		_down_lbl.pixel_size = 0.004
+		_down_lbl.modulate = Pixel.hdr(col, 1.3)
+		_down_lbl.outline_modulate = Color(0.04, 0.0, 0.08)
+		_down_lbl.position.y = 1.55
+		_down_mark.add_child(_down_lbl)
+		_down_mats = [pm, rm]
+	_down_mark.position = main._bl(position, 0.0)
+	var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 1000.0 * 5.0)
+	(_down_mats[0] as StandardMaterial3D).albedo_color.a = 0.3 + 0.3 * pulse
+	var ring_n: Node3D = _down_mark.get_node("Ring")
+	ring_n.scale = Vector3.ONE * (0.9 + 0.25 * pulse)
+	var pct := int(_revive / 2.5 * 100.0)
+	_down_lbl.text = "✚ ПАЛ — ВСТАНЬТЕ РЯДОМ" + ("  %d%%" % pct if pct > 0 else "")

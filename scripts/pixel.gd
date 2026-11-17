@@ -585,6 +585,7 @@ static func _paint_mods(b: Image, e: Image, L: Dictionary, f: int) -> void:
 				var p := hand - wd * 2.0
 				srect(b, int(p.x) - 1, int(p.y) - 1, 2, 2, Color(0.6, 0.75, 0.85))
 				spx(e, int(p.x), int(p.y), Color(0.5, 0.95, 1.0))
+	_paint_worn(b, e, f)
 
 
 static func _paint(key: String, b: Image, e: Image, f: int) -> void:
@@ -4455,3 +4456,292 @@ static func _boss_marks(id: String, b: Image, e: Image, A: Dictionary, glow: Col
 				4: on = absf(sin(x * 0.45 + hsh) * 5.0 - float(y - int(by)) + cos(y * 0.3) * 3.0) < 0.7  # жилы
 			if on:
 				e.set_pixel(x, y, Color(glow.r, glow.g, glow.b, a))
+
+
+# ---------- Оружие на герое: снаряжение, аспекты, эволюции ----------
+# Ключи в наборе _mods:
+#   «w<слот>:<оружие>:<аспект>:<f>» — оружие висит на герое (слоты 0–4), аспект и слияние
+#   меняют его свечение и вид; «hold:<аспект>:<f>» — аспект/слияние оружия в руках.
+# Длинное оружие — за спиной (видно из-за силуэта), мелкое — на поясе, дроны и ядра — над плечом.
+
+const WORN_LONG := ["katana", "railbow", "quake", "sunbeam", "scatter", "lightning"]
+const WORN_HOVER := ["drones", "vortex"]
+const ASPECT_COL := {
+	"hp": Color(0.4, 1.0, 0.5), "speed": Color(0.5, 0.9, 1.0), "magnet": Color(0.7, 0.5, 1.0),
+	"damage": Color(1.0, 0.35, 0.25), "cooldown": Color(0.4, 0.8, 1.0), "area": Color(1.0, 0.75, 0.3),
+	"regen": Color(0.5, 1.0, 0.6), "crit": Color(1.0, 0.3, 0.35), "armor": Color(0.7, 0.8, 0.9),
+	"multi": Color(0.9, 0.5, 1.0), "duration": Color(0.6, 0.95, 1.0), "vamp": Color(0.9, 0.1, 0.3),
+	"luck": Color(1.0, 0.9, 0.4), "pierce": Color(0.85, 0.95, 1.0), "execute": Color(0.85, 0.2, 0.25),
+	"giant": Color(1.0, 0.55, 0.15), "toxin": Color(0.55, 0.9, 0.2), "evo": Color(1.0, 0.85, 0.35),
+}
+## Собственное свечение каждого оружия
+const WORN_GLOW := {
+	"bolt": Color(0.35, 0.7, 1.0), "blades": Color(1.0, 0.35, 0.8), "aura": Color(1.0, 0.6, 0.2),
+	"lightning": Color(0.6, 0.85, 1.0), "katana": Color(1.0, 0.25, 0.55), "quake": Color(0.45, 0.9, 1.0),
+	"drones": Color(0.35, 1.0, 0.9), "railbow": Color(0.45, 1.0, 0.8), "sunbeam": Color(1.0, 0.9, 0.35),
+	"spirits": Color(0.5, 1.0, 0.6), "ball": Color(0.5, 0.75, 1.0), "flask": Color(0.55, 1.0, 0.3),
+	"shuriken": Color(1.0, 0.35, 0.35), "vortex": Color(0.75, 0.4, 1.0), "scatter": Color(1.0, 0.6, 0.2),
+	"mines": Color(1.0, 0.3, 0.25),
+}
+
+
+static func _paint_worn(b: Image, e: Image, f: int) -> void:
+	var worn: Array = []
+	var hold := ""
+	for id in _mods:
+		var k := str(id)
+		if k.begins_with("hold:"):
+			hold = k
+		elif k.length() > 2 and k[0] == "w" and k[2] == ":":
+			worn.append(k)
+	if worn.is_empty() and hold == "":
+		return
+	var cx: float = _anc["cx"]
+	var sh: float = _anc["sh"]
+	var hip: float = _anc["hip"]
+	var tw: float = _anc["tw"]
+	var sway: float = _anc["sway"]
+	var bob := 0.0 if f % 8 < 4 else 0.5
+	# Задний план: сначала рисуем на отдельном слое, потом подкладываем под героя
+	var w := b.get_width()
+	var h := b.get_height()
+	var bb := blank(w, h)
+	var be := blank(w, h)
+	var back_used := false
+	for k in worn:
+		var parts: PackedStringArray = k.split(":")
+		var slot := int(k.substr(1, 1))
+		var wid: String = parts[1]
+		var asp: String = parts[2] if parts.size() > 2 else ""
+		var fused: bool = parts.size() > 3 and parts[3] == "f"
+		var glow: Color = WORN_GLOW.get(wid, Color(0.6, 0.9, 1.0))
+		if ASPECT_COL.has(asp):
+			glow = glow.lerp(ASPECT_COL[asp], 0.7)
+		match slot:
+			0, 1:
+				# За спиной по диагонали: рукоять/голова над плечом, конец у бедра
+				var p0 := Vector2(cx - tw + 1.0, hip + 1.0)
+				var p1 := Vector2(cx - tw - 4.0 - sway * 0.3, sh - 9.0 + bob)
+				if slot == 1:
+					p0 = Vector2(cx + 1.0, hip - 1.0)
+					p1 = Vector2(cx - tw - 7.0 - sway * 0.3, sh - 5.0 + bob)
+				_worn_long(wid, bb, be, p0, p1, glow, f)
+				back_used = true
+			2:
+				# На поясе сзади
+				_worn_small(wid, bb, be, Vector2(cx - tw - 0.5 - sway * 0.3, hip + 0.5 + bob * 0.5), glow, f)
+				back_used = true
+			3:
+				# На поясе спереди
+				_worn_small(wid, b, e, Vector2(cx + 1.5, hip + 1.5), glow, f)
+			4:
+				# Над плечом: дрон или гравиядро парят рядом, будто привязаны к ранцу
+				var hp := Vector2(cx - tw - 3.0, sh - 7.0 + (1.0 if f % 6 < 3 else 0.0))
+				sline(bb, int(cx - tw + 1), int(sh + 1), int(hp.x + 1), int(hp.y + 2), Color(0.3, 0.32, 0.4))
+				_worn_small(wid, b, e, hp, glow, f)
+				back_used = true
+		if fused:
+			# Слитое оружие: двойное свечение и искры вокруг
+			var sp := Vector2(cx - tw - 3.0, sh - 4.0) if slot != 3 else Vector2(cx + 2.0, hip + 1.0)
+			for i in 3:
+				var a := TAU * (i / 3.0) + f * 0.6
+				spx(e, int(sp.x + cos(a) * 3.0), int(sp.y + sin(a) * 3.0), Color(Color.WHITE.lerp(glow, 0.4), 0.9))
+	if back_used:
+		for x in w:
+			for y in h:
+				var c := bb.get_pixel(x, y)
+				if c.a > 0.0 and b.get_pixel(x, y).a < 0.5:
+					b.set_pixel(x, y, c)
+					var ce := be.get_pixel(x, y)
+					if ce.a > 0.0:
+						e.set_pixel(x, y, ce)
+	if hold != "":
+		_paint_hold(b, e, hold, f)
+
+
+## Длинное оружие на спине: p0 — нижний конец, p1 — верх (рукоять/голова над плечом).
+static func _worn_long(wid: String, b: Image, e: Image, p0: Vector2, p1: Vector2, glow: Color, f: int) -> void:
+	var d := (p1 - p0).normalized()
+	var sd := Vector2(-d.y, d.x)
+	var dark := Color(0.16, 0.15, 0.2)
+	var steel := Color(0.62, 0.66, 0.76)
+	match wid:
+		"katana":
+			# Ножны с золотой гардой, рукоять в оплётке
+			slimb(b, p0, p1, 2, dark)
+			var g := p0.lerp(p1, 0.75)
+			srect(b, int(g.x) - 1, int(g.y), 3, 1, Color(0.95, 0.75, 0.3))
+			for i in 3:
+				var q := g + d * (1.5 + i)
+				spx(b, int(q.x), int(q.y), Color(0.75, 0.15, 0.25) if i % 2 == 0 else Color(0.1, 0.08, 0.1))
+			var m := p0.lerp(p1, 0.3)
+			sline(e, int(p0.x), int(p0.y), int(m.x), int(m.y), Color(glow, 0.8))
+		"railbow":
+			# Лук за спиной: дуга и неоновая тетива
+			var prev := p0
+			for i in range(1, 9):
+				var t := i / 8.0
+				var q := p0.lerp(p1, t) - sd * sin(t * PI) * 3.0
+				sline(b, int(prev.x), int(prev.y), int(q.x), int(q.y), Color(0.42, 0.44, 0.52))
+				prev = q
+			sline(e, int(p0.x), int(p0.y), int(p1.x), int(p1.y), Color(glow, 0.85))
+			spx(e, int(p1.x), int(p1.y), glow)
+		"quake":
+			# Молот: рукоять и ледяной боёк над плечом
+			slimb(b, p0, p1, 1, Color(0.4, 0.32, 0.25))
+			var hd := p1
+			spoly(b, PackedVector2Array([hd - sd * 3.0 - d, hd + sd * 3.0 - d, hd + sd * 3.0 + d * 2.5, hd - sd * 3.0 + d * 2.5]), Color(0.42, 0.46, 0.58))
+			sline(e, int(hd.x - sd.x * 3.0), int(hd.y - sd.y * 3.0), int(hd.x + sd.x * 3.0), int(hd.y + sd.y * 3.0), Color(glow, 0.9))
+		"sunbeam":
+			# Посох с призмой-линзой
+			slimb(b, p0, p1, 1, Color(0.62, 0.5, 0.3))
+			spoly(b, PackedVector2Array([p1 + d * 2.5, p1 + sd * 1.8, p1 - d * 1.5, p1 - sd * 1.8]), Color(1.0, 0.95, 0.7))
+			spx(e, int(p1.x), int(p1.y), glow)
+			spx(e, int(p1.x + d.x * 2.0), int(p1.y + d.y * 2.0), Color(1, 1, 0.9, 0.9 if f % 4 < 2 else 0.5))
+		"scatter":
+			# Обрез-дробовик: толстый ствол и приклад
+			slimb(b, p0.lerp(p1, 0.25), p1, 2, Color(0.28, 0.28, 0.33))
+			slimb(b, p0, p0.lerp(p1, 0.3), 2, Color(0.55, 0.32, 0.18))
+			spx(e, int(p1.x), int(p1.y), Color(glow, 0.9))
+			var m := p0.lerp(p1, 0.55)
+			spx(e, int(m.x + sd.x), int(m.y + sd.y), Color(glow, 0.7))
+		"lightning":
+			# Тесла-штырь с катушками и искрой
+			slimb(b, p0, p1, 1, steel)
+			for t in [0.45, 0.65]:
+				var q := p0.lerp(p1, t)
+				sline(b, int(q.x - sd.x * 2), int(q.y - sd.y * 2), int(q.x + sd.x * 2), int(q.y + sd.y * 2), Color(0.8, 0.55, 0.25))
+			var z := 1.0 if f % 3 == 0 else -1.0
+			sline(e, int(p1.x), int(p1.y), int(p1.x + sd.x * 2 * z + d.x * 2), int(p1.y + sd.y * 2 * z + d.y * 2), Color(glow, 0.95))
+		_:
+			_worn_small(wid, b, e, p0.lerp(p1, 0.7), glow, f)
+
+
+## Мелкое оружие: на поясе или над плечом (точка крепления p).
+static func _worn_small(wid: String, b: Image, e: Image, p: Vector2, glow: Color, f: int) -> void:
+	var x := p.x
+	var y := p.y
+	var blink := f % 6 < 3
+	match wid:
+		"bolt":   # плазменный пистолет в кобуре
+			srect(b, int(x) - 1, int(y) - 1, 4, 2, Color(0.3, 0.32, 0.42))
+			srect(b, int(x) - 1, int(y) + 1, 1, 2, Color(0.2, 0.2, 0.26))
+			spx(e, int(x) + 3, int(y) - 1, glow)
+		"blades":   # пара клинков крест-накрест
+			sline(b, int(x) - 2, int(y) - 2, int(x) + 2, int(y) + 2, Color(0.8, 0.82, 0.92))
+			sline(b, int(x) + 2, int(y) - 2, int(x) - 2, int(y) + 2, Color(0.8, 0.82, 0.92))
+			spx(e, int(x) - 2, int(y) - 2, glow)
+			spx(e, int(x) + 2, int(y) - 2, glow)
+		"aura":   # рунный медальон
+			sell(b, x, y, 1.8, 1.8, Color(0.75, 0.55, 0.25))
+			spx(e, int(x), int(y), glow if blink else Color(glow, 0.6))
+		"ball":   # стеклянная сфера в держателе
+			sell(b, x, y, 1.8, 1.8, Color(0.3, 0.36, 0.5))
+			spx(e, int(x), int(y), glow)
+			spx(e, int(x) + (1 if blink else -1), int(y) - 1, Color(1, 1, 1, 0.8))
+		"flask":   # связка колб
+			for i in 3:
+				srect(b, int(x) - 2 + i * 2, int(y) - 1, 1, 3, Color(0.7, 0.85, 0.9))
+				spx(e, int(x) - 2 + i * 2, int(y) + 1, Color(glow, 0.9 - i * 0.15))
+		"shuriken":   # сюрикены на поясе
+			sline(b, int(x) - 2, int(y), int(x) + 2, int(y), Color(0.7, 0.72, 0.8))
+			sline(b, int(x), int(y) - 2, int(x), int(y) + 2, Color(0.7, 0.72, 0.8))
+			spx(e, int(x), int(y), glow)
+		"mines":   # мина-диск с мигающим огоньком
+			sell(b, x, y, 2.2, 1.3, Color(0.3, 0.3, 0.34))
+			spx(e, int(x), int(y) - 1, glow if blink else Color(glow, 0.35))
+		"spirits":   # фонарь с духом
+			srect(b, int(x) - 1, int(y) - 2, 3, 4, Color(0.3, 0.28, 0.35))
+			spx(e, int(x), int(y) - 1 + (1 if blink else 0), glow)
+			spx(b, int(x), int(y) - 3, Color(0.55, 0.55, 0.62))
+		"drones":   # дрон-фамильяр: корпус, глаз и винты
+			srect(b, int(x) - 2, int(y), 4, 2, Color(0.42, 0.45, 0.55))
+			sline(b, int(x) - 3, int(y) - 1, int(x) - 1, int(y) - 1, Color(0.7, 0.72, 0.8) if blink else Color(0.5, 0.5, 0.6))
+			sline(b, int(x) + 1, int(y) - 1, int(x) + 3, int(y) - 1, Color(0.5, 0.5, 0.6) if blink else Color(0.7, 0.72, 0.8))
+			spx(e, int(x) + 1, int(y) + 1, glow)
+		"vortex":   # гравиядро: тёмная сфера с неоновым ободом
+			sell(b, x, y, 2.2, 2.2, Color(0.08, 0.04, 0.12))
+			for i in 4:
+				var a := TAU * i / 4.0 + f * 0.5
+				spx(e, int(x + cos(a) * 2.2), int(y + sin(a) * 2.2), Color(glow, 0.9))
+		_:
+			sell(b, x, y, 1.5, 1.5, Color(0.4, 0.42, 0.5))
+			spx(e, int(x), int(y), glow)
+
+
+## Оружие в руках с аспектом / после слияния: светящиеся руны вдоль оружия и знак аспекта у острия.
+static func _paint_hold(b: Image, e: Image, key: String, f: int) -> void:
+	var parts := key.split(":")
+	var asp: String = parts[1] if parts.size() > 1 else ""
+	var fused: bool = parts.size() > 2 and parts[2] == "f"
+	var hand: Vector2 = _anc["hand"]
+	var tip: Vector2 = _anc["tip"]
+	if tip.distance_to(hand) < 1.0:
+		return
+	var wd := (tip - hand).normalized()
+	var sd := Vector2(-wd.y, wd.x)
+	var col: Color = ASPECT_COL.get(asp, Color(1.0, 0.85, 0.4))
+	var pulse := f % 4 < 2
+	if asp != "":
+		# Энергия аспекта обволакивает оружие от кисти до острия
+		var a0 := hand.lerp(tip, 0.25)
+		sline(e, int(a0.x), int(a0.y), int(tip.x), int(tip.y), Color(col, 0.5))
+		# Руны вдоль оружия
+		var n := int(tip.distance_to(hand) / 3.0)
+		for i in range(1, n):
+			if (i + f / 3) % 2 == 0:
+				var q := hand.lerp(tip, float(i) / n)
+				spx(e, int(q.x + sd.x), int(q.y + sd.y), Color(Color.WHITE.lerp(col, 0.5), 0.9))
+		# Знак аспекта у острия
+		var t := tip
+		match asp:
+			"damage", "giant", "execute":   # шипы
+				for s in [-1.0, 1.0]:
+					sline(b, int(t.x), int(t.y), int(t.x + sd.x * 2.5 * s - wd.x), int(t.y + sd.y * 2.5 * s - wd.y), Color(0.55, 0.2, 0.18))
+					spx(e, int(t.x + sd.x * 2.5 * s - wd.x), int(t.y + sd.y * 2.5 * s - wd.y), col)
+			"speed", "pierce":   # оперение-плавники
+				for s in [-1.0, 1.0]:
+					var a := t - wd * 3.0
+					spoly(b, PackedVector2Array([a, a - wd * 2.0 + sd * 2.5 * s, a - wd * 0.5]), Color(0.8, 0.9, 1.0))
+				spx(e, int(t.x + wd.x), int(t.y + wd.y), col)
+			"hp", "regen":   # живой отросток с листком
+				var l := t + sd * 2.0
+				sell(b, l.x, l.y, 1.4, 1.0, Color(0.3, 0.7, 0.35))
+				spx(e, int(l.x), int(l.y), col)
+			"vamp", "toxin":   # капля
+				var dr := t + Vector2(0, 2.0 + (1.0 if pulse else 0.0))
+				spx(e, int(dr.x), int(dr.y), col)
+				spx(e, int(dr.x), int(dr.y) + 1, Color(col, 0.6))
+			"crit":   # прицельное кольцо
+				for i in 6:
+					var a := TAU * i / 6.0
+					spx(e, int(t.x + cos(a) * 2.4), int(t.y + sin(a) * 2.4), Color(col, 0.85))
+			"armor":   # бронепластина
+				var pl := hand.lerp(tip, 0.55)
+				srect(b, int(pl.x) - 1, int(pl.y) - 1, 3, 3, Color(0.6, 0.66, 0.78))
+				spx(e, int(pl.x), int(pl.y), col)
+			"multi":   # три искры-копии
+				for i in 3:
+					var q := t + sd * (i - 1) * 2.5 - wd * absf(i - 1)
+					spx(e, int(q.x), int(q.y), col)
+			"luck":   # звёздочка
+				spx(e, int(t.x), int(t.y) - 2, col)
+				spx(e, int(t.x) - 1, int(t.y) - 1, col)
+				spx(e, int(t.x) + 1, int(t.y) - 1, col)
+			"magnet":   # подкова-гравитон
+				for i in 5:
+					var a := PI * i / 4.0
+					spx(e, int(t.x + sd.x * cos(a) * 2.5 + wd.x * sin(a) * 2.5), int(t.y + sd.y * cos(a) * 2.5 + wd.y * sin(a) * 2.5), col)
+			_:   # кольцо силы
+				for i in 8:
+					var a := TAU * i / 8.0 + f * 0.4
+					spx(e, int(t.x + cos(a) * 2.8), int(t.y + sin(a) * 2.0), Color(col, 0.8))
+		spx(e, int(t.x), int(t.y), Color.WHITE.lerp(col, 0.5))
+	if fused:
+		# Эволюция-слияние: оружие окружено вторым кольцом энергии
+		for i in 10:
+			var a := TAU * i / 10.0 - f * 0.5
+			var r := 4.0 + (0.5 if (i + f) % 2 == 0 else 0.0)
+			spx(e, int(tip.x + cos(a) * r), int(tip.y + sin(a) * r * 0.8), Color(Color.WHITE.lerp(col, 0.6), 0.85))
+		var m := hand.lerp(tip, 0.5)
+		sline(e, int(m.x + sd.x * 1.5), int(m.y + sd.y * 1.5), int(tip.x + sd.x * 1.5), int(tip.y + sd.y * 1.5), Color(col, 0.6))

@@ -197,6 +197,26 @@ func _draw_poi_arrows() -> void:
 		_poi_layer.draw_colored_polygon(pts, Color(col, 0.9))
 		var name_txt: String = p.title() if p.has_method("title") else "Алтарь мобов"
 		_poi_layer.draw_string(ThemeDB.fallback_font, edge - dir * 22.0 + Vector2(-60, 5), "%s  %dм" % [name_txt, int(d.length() / 100.0)], HORIZONTAL_ALIGNMENT_CENTER, 120, 13, Color(col, 0.9))
+	# Павшие напарники: крупная стрелка их цветом, пока их не видно на экране
+	if main.coop:
+		for pl in main.players:
+			if not is_instance_valid(pl) or not pl._dead or main.game_over:
+				continue
+			if main.on_screen(pl.position):
+				continue
+			var d: Vector2 = pl.position - me
+			var col: Color = pl.player_color()
+			var dir := d.normalized()
+			var edge := c + Vector2(dir.x * (vs.x * 0.42), dir.y * (vs.y * 0.38))
+			var pulse := 1.0 + 0.2 * sin(_t * 8.0)
+			var pts := PackedVector2Array([edge + dir * 24.0 * pulse, edge + dir.rotated(2.5) * 17.0 * pulse, edge + dir.rotated(-2.5) * 17.0 * pulse])
+			_poi_layer.draw_colored_polygon(pts, Color(0.02, 0.0, 0.05, 0.9))
+			var pts2 := PackedVector2Array([edge + dir * 19.0 * pulse, edge + dir.rotated(2.5) * 13.0 * pulse, edge + dir.rotated(-2.5) * 13.0 * pulse])
+			_poi_layer.draw_colored_polygon(pts2, col)
+			var txt := "✚ ИГРОК %d  %dм" % [int(pl.pid) + 1, int(d.length() / 100.0)]
+			var tp := edge - dir * 34.0 + Vector2(-80, 6)
+			_poi_layer.draw_string_outline(ThemeDB.fallback_font, tp, txt, HORIZONTAL_ALIGNMENT_CENTER, 160, 16, 6, Color(0.02, 0.0, 0.06))
+			_poi_layer.draw_string(ThemeDB.fallback_font, tp, txt, HORIZONTAL_ALIGNMENT_CENTER, 160, 16, col)
 	# Сундуки: золотые стрелки к краю экрана
 	for ch in get_tree().get_nodes_in_group("chests"):
 		if not is_instance_valid(ch):

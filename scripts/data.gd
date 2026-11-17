@@ -692,7 +692,7 @@ static func _weapon_base(id: String, lvl: int, evo := false) -> Dictionary:
 				"count": 2 if evo else 1 + int(lvl >= 5),
 				"damage": 4.0 + 2.0 * lvl + (4.0 if evo else 0.0),
 				"radius": (120.0 + 12.0 * lvl) * (1.3 if evo else 1.0),
-				"duration": 1.8 + 0.15 * lvl, "pull": 260.0 if evo else 170.0,
+				"duration": 1.8 + 0.15 * lvl, "pull": (160.0 + 20.0 * lvl) * (1.35 if evo else 1.0),
 				"blast": 22.0 + 10.0 * lvl + (25.0 if evo else 0.0),
 			}
 		"scatter":
