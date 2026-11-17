@@ -200,6 +200,14 @@ func _build() -> void:
 			if Settings.has_signal("coop_split_changed"):
 				Settings.emit_signal("coop_split_changed"))
 		grid.add_child(sp_opt)
+	if Settings.get("map_mode") != null:
+		grid.add_child(_row_label("Карта в бою"))
+		var mp_opt := _option(["Пауза — бой стоит", "Поверх боя — бой идёт"])
+		mp_opt.selected = 1 if Settings.map_mode == "overlay" else 0
+		mp_opt.item_selected.connect(func(i: int):
+			Settings.map_mode = "overlay" if i == 1 else "pause"
+			Settings.save_settings())
+		grid.add_child(mp_opt)
 	_build_common_rows(grid)
 
 

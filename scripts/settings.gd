@@ -1,5 +1,5 @@
 extends Node
-const REV := 15026   # версия скрипта автозагрузки (см. hotswap.gd)
+const REV := 15036   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Настройки экрана и звука: режим окна, формат, разрешение, громкость.
 ## Сохраняются в user://settings.cfg и применяются при каждом запуске.
 ## Подключён как автозагрузка «Settings».
@@ -398,6 +398,7 @@ func load_settings() -> void:
 	brightness = clampf(float(cfg.get_value("graphics", "brightness", brightness)), 0.6, 1.6)
 	joystick = str(cfg.get_value("controls", "joystick", joystick))
 	coop_split = str(cfg.get_value("controls", "coop_split", coop_split))
+	map_mode = str(cfg.get_value("controls", "map_mode", map_mode))
 	fx3d = bool(cfg.get_value("graphics", "fx3d", fx3d))
 	touch_size = cfg.get_value("mobile", "touch_size", touch_size)
 
@@ -429,6 +430,7 @@ func save_settings() -> void:
 	cfg.set_value("graphics", "brightness", brightness)
 	cfg.set_value("controls", "joystick", joystick)
 	cfg.set_value("controls", "coop_split", coop_split)
+	cfg.set_value("controls", "map_mode", map_mode)
 	cfg.set_value("graphics", "fx3d", fx3d)
 	cfg.set_value("mobile", "touch_size", touch_size)
 	cfg.save(PATH)
@@ -479,6 +481,8 @@ var joystick := "float"
 ## "shared" — одна общая камера, герои не выходят за край экрана и тянут её за собой
 var coop_split := "dynamic"
 signal coop_split_changed
+## Карта боя: "pause" — игра встаёт на паузу; "overlay" — полупрозрачная поверх боя, бой идёт
+var map_mode := "pause"
 ## Яркость изображения (3D-мира): 0.6 … 1.6
 var brightness := 1.0
 signal brightness_changed
@@ -656,6 +660,7 @@ const HINTS := {
 	"pause": {"kb": "ESC", "pad": "START", "touch": "II"},
 	"ability": {"kb": "ПРОБЕЛ", "pad": "A", "touch": "2× ТАП"},
 	"stats": {"kb": "TAB", "pad": "SELECT", "touch": "≡"},
+	"map": {"kb": "M", "pad": "Y", "touch": "КАРТА"},
 	"interact": {"kb": "E", "pad": "A", "touch": "ВОЙТИ"},
 	"talk": {"kb": "F", "pad": "Y", "touch": "ГОВОРИТЬ"},
 	"move": {"kb": "WASD", "pad": "левый стик", "touch": "касание и сдвиг пальца"},
@@ -680,9 +685,9 @@ func key(action: String) -> String:
 # ---------- Переназначение клавиш (ПК) ----------
 const BIND_ACTIONS := [["move_up", "Идти вверх"], ["move_down", "Идти вниз"], ["move_left", "Идти влево"],
 	["move_right", "Идти вправо"], ["ability", "Способность героя"], ["interact", "Войти / действие"],
-	["talk", "Поговорить с жителем"], ["stats", "Статистика боя"], ["pause", "Пауза"]]
+	["talk", "Поговорить с жителем"], ["stats", "Статистика боя"], ["map", "Карта боя"], ["pause", "Пауза"]]
 const BIND_DEFAULT := {"move_up": KEY_W, "move_down": KEY_S, "move_left": KEY_A, "move_right": KEY_D,
-	"ability": KEY_SPACE, "interact": KEY_E, "talk": KEY_F, "stats": KEY_TAB, "pause": KEY_ESCAPE}
+	"ability": KEY_SPACE, "interact": KEY_E, "talk": KEY_F, "stats": KEY_TAB, "map": KEY_M, "pause": KEY_ESCAPE}
 ## Запасные клавиши: работают всегда, если не заняты основной клавишей другого действия
 const BIND_EXTRA := {"move_up": [KEY_UP], "move_down": [KEY_DOWN], "move_left": [KEY_LEFT], "move_right": [KEY_RIGHT],
 	"ability": [KEY_SHIFT], "interact": [KEY_ENTER], "pause": [KEY_P]}
@@ -868,7 +873,7 @@ func _setup_input() -> void:
 	var joy_btns := {"move_left": [JOY_BUTTON_DPAD_LEFT], "move_right": [JOY_BUTTON_DPAD_RIGHT],
 		"move_up": [JOY_BUTTON_DPAD_UP], "move_down": [JOY_BUTTON_DPAD_DOWN],
 		"ability": [JOY_BUTTON_A, JOY_BUTTON_X, JOY_BUTTON_RIGHT_SHOULDER],
-		"interact": [JOY_BUTTON_A], "talk": [JOY_BUTTON_Y], "stats": [JOY_BUTTON_BACK], "pause": [JOY_BUTTON_START]}
+		"interact": [JOY_BUTTON_A], "talk": [JOY_BUTTON_Y], "stats": [JOY_BUTTON_BACK], "map": [JOY_BUTTON_Y], "pause": [JOY_BUTTON_START]}
 	# В меню и окнах: A — выбрать, B — назад (на любом геймпаде)
 	for pair in [["ui_accept", JOY_BUTTON_A], ["ui_cancel", JOY_BUTTON_B]]:
 		var jb := InputEventJoypadButton.new()

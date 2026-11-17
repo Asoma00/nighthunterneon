@@ -1,5 +1,5 @@
 extends CanvasLayer
-const REV := 15023   # версия скрипта автозагрузки (см. hotswap.gd)
+const REV := 15036   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Сенсорное управление для телефона (Android).
 ## Плавающий джойстик: появляется там, где коснулись экрана (кроме кнопок и окон интерфейса).
 ## Способность — двойное касание в любом месте экрана (кроме кнопок интерфейса),
@@ -70,6 +70,8 @@ func _buttons() -> Dictionary:
 	if _ctx == "battle":
 		out["pause"] = [Vector2(vs.x - 48.0 * k, 118.0 + 10.0 * k + sm[1]), 34.0 * k, "II", CYAN]
 		out["stats"] = [Vector2(vs.x - 48.0 * k, 200.0 + 18.0 * k + sm[1]), 30.0 * k, "≡", GOLD]
+		if InputMap.has_action("map"):
+			out["map"] = [Vector2(vs.x - 48.0 * k, 274.0 + 30.0 * k + sm[1]), 30.0 * k, "КАРТА", Color(0.45, 1.0, 0.7)]
 	elif _ctx == "hub":
 		var scene := _scene()
 		var talk_i: int = int(scene.get("_near_talk")) if scene != null and scene.get("_near_talk") != null else -1

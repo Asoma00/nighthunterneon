@@ -158,7 +158,7 @@ func _update_tracker() -> void:
 	if not mats.is_empty():
 		lines.append("  ".join(mats))
 	_tracker.text = "\n".join(lines)
-	_tracker.visible = not lines.is_empty()
+	_tracker.visible = not lines.is_empty() and not (_map != null and _map.visible and _map.overlay and portrait())
 	var sm: Array = Settings.safe_margins()
 	_tracker.position = Vector2(14.0 + float(sm[0]), (240.0 if portrait() else 150.0) + float(sm[1]))
 
@@ -413,6 +413,7 @@ func _update_stats_panel(delta: float) -> void:
 func _process(delta: float) -> void:
 	_t += delta
 	_update_stats_panel(delta)
+	_map_tick(delta)
 	if main and "pois" in main:
 		_update_pois()
 	var modal: Control = null
@@ -1668,7 +1669,7 @@ func _highlight_cards(delta: float, on: bool) -> void:
 
 
 func is_modal_open() -> bool:
-	return _levelup_root.visible or _chest_root.visible or _over_root.visible or _pause_root.visible \
+	return map_paused() or _levelup_root.visible or _chest_root.visible or _over_root.visible or _pause_root.visible \
 		or (_endless_root != null and _endless_root.visible)
 
 
@@ -1839,3 +1840,127 @@ func _build_pcards() -> void:
 		xp.custom_minimum_size = Vector2(196, 4)
 		v.add_child(xp)
 		_pcards.append({"p": p, "panel": panel, "hp": hp, "hp_l": hp_l, "xp": xp, "ab": ab_l, "ic": ic, "sh": sh})
+
+
+# ---------- Карта боя (M / Y / кнопка «КАРТА») ----------
+
+var _map = null   # battle_map.gd
+var _map_t := 0.0
+var map_marks := {}     # найденные места: id -> {pos, kind, title, color, done}
+
+
+func _map_mode() -> String:
+	var m = Settings.get("map_mode")
+	return "overlay" if str(m) == "overlay" else "pause"
+
+
+## Открыта плотная карта, и игра из-за неё на паузе.
+func map_paused() -> bool:
+	return _map != null and _map.visible and not _map.overlay
+
+
+func toggle_map() -> void:
+	if _map == null:
+		_map = preload("res://scripts/battle_map.gd").new()
+		_map.main = main
+		_map.marks = map_marks
+		_map.visible = false
+		add_child(_map)
+	if not _map.visible:
+		if main.game_over or _levelup_root.visible or _chest_root.visible or _over_root.visible or _pause_root.visible \
+				or (_endless_root != null and _endless_root.visible):
+			return
+		_collect_marks()
+		_map.overlay = _map_mode() == "overlay"
+		_map.mouse_filter = Control.MOUSE_FILTER_IGNORE if _map.overlay else Control.MOUSE_FILTER_STOP
+		_map.visible = true
+		move_child(_map, get_child_count() - 1)
+		if not _map.overlay and main.net_mode != "client":
+			get_tree().paused = true
+		Sound.play("click")
+	else:
+		_close_map()
+
+
+func _close_map() -> void:
+	if _map == null or not _map.visible:
+		return
+	var was_paused: bool = not _map.overlay
+	_map.visible = false
+	if was_paused and main.net_mode != "client" and not _pause_root.visible:
+		get_tree().paused = false
+
+
+func _map_tick(delta: float) -> void:
+	if main == null or not ("pois" in main):
+		return
+	_map_t -= delta
+	if _map_t <= 0.0:
+		_map_t = 0.25
+		_collect_marks()
+	var map_key: bool = InputMap.has_action("map") and Input.is_action_just_pressed("map")
+	if map_key:
+		toggle_map()
+	if _tracker != null:
+		# Карта поверх боя на вертикальном экране закрывает список заданий — прячем его
+		if _map != null and _map.visible and _map.overlay and portrait():
+			_tracker.visible = false
+	if not map_key and _map != null and _map.visible:
+		if _map.get_index() != get_child_count() - 1:
+			move_child(_map, get_child_count() - 1)   # поверх плашек зоны и подсказок
+		if not _map.overlay and (Input.is_action_just_pressed("pause") or Input.is_action_just_pressed("ui_cancel")):
+			_close_map()
+		elif _map.overlay and (main.game_over or _levelup_root.visible or _chest_root.visible or _over_root.visible \
+				or _pause_root.visible or (_endless_root != null and _endless_root.visible)):
+			_close_map()   # окна боя важнее карты поверх
+
+
+func _near_player(pos: Vector2, d: float) -> bool:
+	for pl in main.players:
+		if is_instance_valid(pl) and pl.position.distance_squared_to(pos) < d * d:
+			return true
+	return false
+
+
+## Отмечает найденные места: те, к которым ведёт стрелка, и всё, что герой видел рядом.
+## Тайник — только если его заметили (на него нет стрелки).
+func _collect_marks() -> void:
+	var live := {}
+	for p in main.pois:
+		if not is_instance_valid(p):
+			continue
+		var id: int = p.get_instance_id()
+		var kind := str(p.get("kind"))
+		var seen: bool = map_marks.has(id) or _near_player(p.position, 750.0)
+		if not seen:
+			if kind == "cache":
+				seen = bool(p.get("found"))
+			elif p.has_method("arrow_visible"):
+				seen = p.arrow_visible()
+			else:
+				seen = true   # алтари: о них сообщает стрелка у края экрана
+		if not seen:
+			continue
+		live[id] = true
+		var done: bool = str(p.get("state")) == "done"
+		var pos: Vector2 = p.target_pos() if p.has_method("target_pos") else p.position
+		if not pos.is_finite():
+			pos = p.position
+		map_marks[id] = {"pos": pos, "kind": kind, "title": p.title() if p.has_method("title") else kind,
+			"done": done or bool(map_marks.get(id, {}).get("done", false))}
+	# Алтари мобов — разрушаемые «враги»
+	for e in main.enemies_node.get_children():
+		if str(e.get("ai")) != "altar":
+			continue
+		var id: int = e.get_instance_id()
+		if not map_marks.has(id) and not _near_player(e.position, 1100.0):
+			continue
+		live[id] = true
+		map_marks[id] = {"pos": e.position, "kind": "mob_altar", "title": "Алтарь мобов", "done": bool(e.dead)}
+	# Исчезнувшие: выполненные остаются отмеченными, брошенные пропадают с карты
+	for id in map_marks.keys():
+		if not live.has(id):
+			if map_marks[id]["done"] or str(map_marks[id]["kind"]) == "mob_altar":
+				map_marks[id]["done"] = true
+			else:
+				map_marks.erase(id)
