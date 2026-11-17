@@ -565,7 +565,9 @@ func _process_body(delta: float) -> void:
 		Fx.burst(main, position, [Pixel.hdr(color, 1.6), Color(color, 0.0)], 4, 60.0, 0.25, 2.5)
 		queue_free()
 		return
-	for e in main.get_enemies():
+	var seg_mid := (prev + position) * 0.5
+	var seg_r := prev.distance_to(position) * 0.5 + radius + 40.0
+	for e in main.enemies_near(seg_mid, seg_r):
 		if not e.can_be_hit() or _hit_ids.has(e.get_instance_id()):
 			continue
 		var r: float = radius + e.radius + (20.0 if style == "wave" else 0.0)

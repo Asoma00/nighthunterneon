@@ -1362,7 +1362,7 @@ func _update_ability(delta: float) -> void:
 		var prev := position
 		position += _dash_dir * 1400.0 * delta
 		Fx.afterimage(main, prev, _body.texture, _body.offset, _body.flip_h, Color(0.3, 0.9, 1.0), float(_frames.get("k", 1.0)))
-		for e in main.get_enemies():
+		for e in main.enemies_near((prev + position) * 0.5, prev.distance_to(position) * 0.5 + 40.0):
 			if not e.can_be_hit() or _dash_hit.has(e.get_instance_id()):
 				continue
 			var closest := Geometry2D.get_closest_point_to_segment(e.position, prev, position)
@@ -1612,7 +1612,7 @@ func _check_contact() -> void:
 	# Касания врагов у сетевого клиента считает хост (там враги настоящие)
 	if _invuln > 0.0 or (main.net_mode == "client" and not remote):
 		return
-	for e in main.get_enemies():
+	for e in main.enemies_near(position, radius):
 		if not e.can_hurt():
 			continue
 		var r: float = radius + e.radius - 2.0
@@ -1998,10 +1998,11 @@ func _update_blades(delta: float, s: Dictionary) -> void:
 	var r := _blade_radius(s)
 	var blade_r := 14.0 * area_mult
 	var status := "shock" if _blades_charged > 0.0 else "bleed"
+	var near_blades: Array = main.enemies_near(position, r + blade_r)
 	for i in count:
 		var a := _orbit_angle + TAU * i / count
 		var bp: Vector2 = position + Vector2(cos(a), sin(a)) * r
-		for e in main.get_enemies():
+		for e in near_blades:
 			if not e.can_be_hit():
 				continue
 			var id: int = e.get_instance_id()
@@ -2024,7 +2025,7 @@ func _update_aura(delta: float, s: Dictionary) -> void:
 	_aura_timer = s["tick"]
 	var r: float = s["radius"] * area_mult
 	var healed := 0.0
-	for e in main.get_enemies():
+	for e in main.enemies_near(position, r):
 		if not e.can_be_hit():
 			continue
 		var rr: float = r + e.radius
@@ -2042,7 +2043,7 @@ func _update_aura(delta: float, s: Dictionary) -> void:
 
 func _cast_lightning(s: Dictionary) -> void:
 	var candidates: Array = []
-	for e in main.get_enemies():
+	for e in main.enemies_near(position, 560.0):
 		if e.can_be_hit() and position.distance_squared_to(e.position) < 560.0 * 560.0:
 			candidates.append(e)
 	candidates.shuffle()
@@ -2139,7 +2140,7 @@ func _quake(s: Dictionary, scale_k: float) -> void:
 	Sound.play("slam", -2.0, 1.0 / scale_k, 0.08)
 	main.energize(position, r, "quake", "chill")
 	var shattered := 0
-	for e in main.get_enemies():
+	for e in main.enemies_near(position, r):
 		if not e.can_be_hit() or e.position.distance_to(position) > r + e.radius:
 			continue
 		var dmg: float = s["damage"] * damage_mult
@@ -2265,7 +2266,7 @@ func _vortex_pulse(v: Dictionary) -> void:
 	if k % 4 == 0:
 		# Граница всасывания: кольцо стягивается от края зоны к ядру
 		Fx.ring(main, center, r, VORTEX_CORE * 0.6, Pixel.hdr(v["col"], 1.5 if r > VORTEX_CORE * 1.3 else 1.8), 0.4, 2.5)
-	for e in main.get_enemies():
+	for e in main.enemies_near(center, r):
 		if not e.can_be_hit():
 			continue
 		var d: Vector2 = center - e.position
@@ -2296,7 +2297,7 @@ func _end_vortex(v: Dictionary, blast: bool) -> void:
 	_src = "vortex"
 	main.attacker = self
 	var charged := 0
-	for e in main.get_enemies():
+	for e in main.enemies_near(center, VORTEX_CORE * 1.7):
 		if e.can_be_hit() and e.position.distance_to(center) < VORTEX_CORE * 1.7 and e.statuses.has("shock"):
 			charged += 1
 	var br: float = VORTEX_CORE * 1.7 * (1.0 + minf(0.08 * charged, 0.6))

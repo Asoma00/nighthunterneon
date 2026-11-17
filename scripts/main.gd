@@ -730,7 +730,7 @@ func mirror(sprite: Sprite2D, anchor: Node2D, emissive: bool, is_static := false
 		s3.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
 	s3.visible = false
 	_mirror_root.add_child(s3)
-	_mirrors.append([sprite, s3, anchor, emissive, is_static, false])
+	_mirrors.append([sprite, s3, anchor, emissive, is_static, false, null, 0.0])
 
 
 ## Свет 2D-источника дублируется 3D-светом, чтобы освещать стоящие спрайты.
@@ -963,16 +963,19 @@ func _sync_mirrors() -> void:
 		if m[4] and m[5] and (_frame + i) % 4 != 0:
 			i -= 1
 			continue
-		if not _on_view(anc.global_position):
-			s3.visible = false
+		var gp := anc.global_position
+		if not _on_view(gp):
+			if s3.visible:
+				s3.visible = false
 			i -= 1
 			continue
 		m[5] = true
-		var vis := sprite.is_visible_in_tree() and sprite.texture != null
-		s3.visible = vis
+		var tex := sprite.texture
+		var vis := tex != null and sprite.is_visible_in_tree()
+		if s3.visible != vis:
+			s3.visible = vis
 		if vis:
-			var anchor: Node2D = m[2]
-			var gp := anchor.global_position
+			var anchor: Node2D = anc
 			var sgp := sprite.global_position
 			var gs := sprite.global_scale
 			var height := -(sgp.y - gp.y) / Pixel.STAND * PLANE_TEXEL
@@ -980,8 +983,8 @@ func _sync_mirrors() -> void:
 			if m[3]:
 				s3.position += toward_cam
 			# Свойства меняем только при изменении: каждое присваивание перестраивает меш спрайта
-			if s3.texture != sprite.texture:
-				s3.texture = sprite.texture
+			if s3.texture != tex:
+				s3.texture = tex
 			if s3.flip_h != sprite.flip_h:
 				s3.flip_h = sprite.flip_h
 			var px_size := PLANE_TEXEL * absf(gs.x)
@@ -994,8 +997,11 @@ func _sync_mirrors() -> void:
 			if s3.offset != off:
 				s3.offset = off
 			# Нижний непрозрачный пиксель спрайта не уходит под пол и не висит над ним
-			var half_h: float = sprite.texture.get_height() / 2.0
-			var low := _lowest_row(sprite.texture)
+			if m[6] != tex:
+				m[6] = tex
+				m[7] = _lowest_row(tex)
+			var half_h: float = tex.get_height() / 2.0
+			var low: float = m[7]
 			var bottom: float = (half_h - low - sprite.offset.y) * s3.pixel_size * s3.scale.y
 			if height + bottom < 0.0:
 				s3.position.y += -(height + bottom)
@@ -1613,25 +1619,103 @@ func get_enemies() -> Array[Node]:
 	return enemies_node.get_children()
 
 
+## Сетка врагов для быстрых запросов «кто рядом»: строится один раз за кадр по первому
+## запросу. Раньше каждый снаряд, клинок, лужа и выбор цели перебирали всех врагов уровня.
+const GRID_CELL := 128.0
+var _grid := {}
+var _grid_frame := -1
+var _grid_pad := 48.0
+
+
+func _grid_ready() -> void:
+	var f := Engine.get_process_frames()
+	if _grid_frame == f:
+		return
+	_grid_frame = f
+	_grid.clear()
+	var mr := 0.0
+	for e in enemies_node.get_children():
+		var k := Vector2i(floori(e.position.x / GRID_CELL), floori(e.position.y / GRID_CELL))
+		var arr = _grid.get(k)
+		if arr == null:
+			_grid[k] = [e]
+		else:
+			arr.append(e)
+		if e.radius > mr:
+			mr = e.radius
+	# Запас: самый крупный враг и сдвиг врагов за кадр после построения сетки
+	_grid_pad = mr + 48.0
+
+
+## Враги, которые могут оказаться в радиусе r от pos (с запасом на свой размер).
+## Дальше фильтровать так же, как раньше фильтровали весь список.
+func enemies_near(pos: Vector2, r: float) -> Array:
+	if r > 1400.0 or not pos.is_finite():
+		return enemies_node.get_children()
+	_grid_ready()
+	var rr := r + _grid_pad
+	var x0 := floori((pos.x - rr) / GRID_CELL)
+	var x1 := floori((pos.x + rr) / GRID_CELL)
+	var y0 := floori((pos.y - rr) / GRID_CELL)
+	var y1 := floori((pos.y + rr) / GRID_CELL)
+	var out: Array = []
+	for cx in range(x0, x1 + 1):
+		for cy in range(y0, y1 + 1):
+			var arr = _grid.get(Vector2i(cx, cy))
+			if arr != null:
+				for e in arr:
+					if is_instance_valid(e):
+						out.append(e)
+	return out
+
+
 ## aim — взгляд героя: враги по направлению взгляда в приоритете, сзади — в последнюю очередь.
 func nearest_enemies_to(pos: Vector2, count: int, max_dist: float, exclude: Node, aim := Vector2.ZERO) -> Array:
-	var list: Array = []
 	var max_sq := max_dist * max_dist
-	for e in enemies_node.get_children():
-		if e == exclude or not e.can_be_hit():
+	if count == 1:
+		# Один ближайший — без списка и сортировки
+		var best: Node = null
+		var best_d := INF
+		for e in enemies_near(pos, max_dist):
+			if e == exclude:
+				continue
+			var d: float = pos.distance_squared_to(e.position)
+			if d < max_sq:
+				if aim != Vector2.ZERO and d > 1.0:
+					var dot: float = aim.dot((e.position - pos) / sqrt(d))
+					var w := 1.0 + 2.5 * (1.0 - dot)
+					d *= w * w
+				if d < best_d and e.can_be_hit():
+					best_d = d
+					best = e
+		return [] if best == null else [best]
+	# Несколько ближайших: держим только count лучших (вставкой), без сортировки всей толпы
+	var ds: Array[float] = []
+	var es: Array = []
+	for e in enemies_near(pos, max_dist):
+		if e == exclude:
 			continue
 		var d: float = pos.distance_squared_to(e.position)
-		if d < max_sq:
-			if aim != Vector2.ZERO and d > 1.0:
-				var dot: float = aim.dot((e.position - pos) / sqrt(d))
-				var w := 1.0 + 2.5 * (1.0 - dot)
-				d *= w * w
-			list.append([d, e])
-	list.sort_custom(func(a, b): return a[0] < b[0])
-	var result: Array = []
-	for i in mini(count, list.size()):
-		result.append(list[i][1])
-	return result
+		if d >= max_sq:
+			continue
+		if aim != Vector2.ZERO and d > 1.0:
+			var dot: float = aim.dot((e.position - pos) / sqrt(d))
+			var w := 1.0 + 2.5 * (1.0 - dot)
+			d *= w * w
+		var n := ds.size()
+		if n >= count and d >= ds[n - 1]:
+			continue
+		if not e.can_be_hit():
+			continue
+		var at := n
+		while at > 0 and ds[at - 1] > d:
+			at -= 1
+		ds.insert(at, d)
+		es.insert(at, e)
+		if ds.size() > count:
+			ds.pop_back()
+			es.pop_back()
+	return es
 
 
 ## Самая большая зона поражения — не больше экрана (радиус в мировых px).
@@ -1640,7 +1724,7 @@ const AREA_MAX_R := 520.0
 
 func damage_area(pos: Vector2, r: float, dmg: float, exclude: Node, status := "") -> void:
 	r = minf(r, AREA_MAX_R)
-	for e in enemies_node.get_children():
+	for e in enemies_near(pos, r):
 		if e == exclude or not e.can_be_hit():
 			continue
 		var rr: float = r + e.radius

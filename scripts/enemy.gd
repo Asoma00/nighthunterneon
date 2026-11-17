@@ -482,6 +482,11 @@ const POSE_BASE := {"windup": 20, "run": 24, "cast": 28, "summon": 32, "vanish":
 const POSE_FPS := {"windup": 7.0, "run": 13.0, "cast": 9.0, "summon": 8.0, "vanish": 16.0}
 
 
+const EMIT_FLASH := Color(1, 1, 1, 0.7)
+const EMIT_NORMAL := Color(1.3, 1.3, 1.3, 1.0)
+const EMIT_HELL := Color(2.2, 0.99, 0.44, 1.0)
+
+
 func _animate(dir: Vector2) -> void:
 	var count: int = _frames["base"].size()
 	var f := int(_t * _fps * speed_mult()) % count
@@ -516,16 +521,21 @@ func _animate(dir: Vector2) -> void:
 			f = 6 + int(_t * 10.0) % 4
 		else:
 			f = int(_t * _fps * speed_mult()) % 6
-	_body.texture = _frames["base"][f]
-	if _flash > 0.0:
-		_emit.texture = _frames["flash"][f]
-		_emit.modulate = Color(1, 1, 1, 0.7)
-	else:
-		_emit.texture = _frames["emit"][f]
-		_emit.modulate = Pixel.hdr(Color(1.0, 0.45, 0.2), 2.2) if hell else Pixel.hdr(Color.WHITE, 1.3)
+	# Свойства спрайта меняем только при изменении: каждое присваивание — перерисовка
+	var bt: Texture2D = _frames["base"][f]
+	if _body.texture != bt:
+		_body.texture = bt
+	var et: Texture2D = _frames["flash" if _flash > 0.0 else "emit"][f]
+	if _emit.texture != et:
+		_emit.texture = et
+	var em: Color = EMIT_FLASH if _flash > 0.0 else (EMIT_HELL if hell else EMIT_NORMAL)
+	if _emit.modulate != em:
+		_emit.modulate = em
 	if absf(dir.x) > 0.05:
-		_body.flip_h = dir.x < 0.0
-		_emit.flip_h = _body.flip_h
+		var fl := dir.x < 0.0
+		if _body.flip_h != fl:
+			_body.flip_h = fl
+			_emit.flip_h = fl
 
 	var squash := _flash * (1.0 if is_boss else 2.5)
 	# Живой шаг: тяжёлые твари приседают на каждом шаге, в покое — дышат
@@ -541,8 +551,9 @@ func _animate(dir: Vector2) -> void:
 		bomb_k = clampf(1.0 - position.distance_to(player.position) / 220.0, 0.0, 1.0)
 		squash -= 0.12 * bomb_k * absf(sin(_t * (8.0 + 22.0 * bomb_k)))
 	var sc := Vector2(1.0 + squash, (1.0 - squash) * Pixel.STAND) * Pixel.PX * size_mult * _k
-	_body.scale = sc
-	_emit.scale = sc
+	if _body.scale != sc:
+		_body.scale = sc
+		_emit.scale = sc
 	# Наклон корпуса (в 3D — сдвигом спрайта): замах — назад, бросок — вперёд
 	if _lean != 0.0 or _leaned:
 		var lx := _lean * (7.0 + radius * 0.3) * (-1.0 if _body.flip_h else 1.0)
@@ -577,7 +588,9 @@ func _animate(dir: Vector2) -> void:
 		tint = Color(2.2, 0.5, 0.4)
 	if _sw > 0.0 and int(_t * 24.0) % 2 == 0:
 		tint = tint.lerp(Color(1.8, 0.6, 0.55), 0.5)
-	_body.modulate = Color(tint, _body.modulate.a)
+	var bm := Color(tint, _body.modulate.a)
+	if _body.modulate != bm:
+		_body.modulate = bm
 
 
 # ---------- Статусы ----------

@@ -136,7 +136,7 @@ func _process_body(delta: float) -> void:
 	_tick_t -= delta
 	if _tick_t <= 0.0:
 		_tick_t = tick
-		for e in main.get_enemies():
+		for e in main.enemies_near(position, radius):
 			if not e.can_be_hit():
 				continue
 			var d: float = e.position.distance_to(position)
@@ -151,7 +151,7 @@ func _process_body(delta: float) -> void:
 						owner_pl.combo("flask", e.position)
 				e.hit(damage, position, 0.0 if pull > 0.0 else 30.0, status)
 	if pull > 0.0:
-		for e in main.get_enemies():
+		for e in main.enemies_near(position, radius * 1.8):
 			if e.dead or e.is_boss:
 				continue
 			var to: Vector2 = position - e.position

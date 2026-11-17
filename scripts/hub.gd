@@ -4315,7 +4315,9 @@ func _fill_library() -> void:
 		var known: bool = e[3]
 		var b := _button(e[1] if known else "???", accent if e[0] == _lib_sel else accent.darkened(0.6))
 		b.custom_minimum_size = Vector2(minf(232, _avail()), 42)
-		b.add_theme_font_size_override("font_size", 15)
+		# Длинные названия — чуть мельче, чтобы влезали в кнопку списка
+		var nm: String = b.text
+		b.add_theme_font_size_override("font_size", 15 if nm.length() <= 19 else (14 if nm.length() <= 21 else 13))
 		b.icon = e[2]
 		b.expand_icon = true
 		b.add_theme_constant_override("icon_max_width", 32)
@@ -4359,8 +4361,13 @@ func _fill_library() -> void:
 func _para(text: String, color := Color(0.86, 0.86, 1.0), size := 16) -> Label:
 	var l := _label(text, size, color)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(minf(570 if _portrait() else 640, _avail()), 0)
+	l.custom_minimum_size = Vector2(minf(570 if _portrait() else 640, _art_w()), 0)
 	return l
+
+
+## Ширина колонки статьи библиотеки: в альбомной ориентации слева ещё список записей.
+func _art_w() -> float:
+	return _avail() - (20.0 if _portrait() else 300.0)
 
 
 func _section(art: VBoxContainer, title: String) -> void:
@@ -4374,7 +4381,7 @@ func _icon_line(art: VBoxContainer, tex: Texture2D, text: String, color := Color
 	h.add_child(_pic(tex, 1.6))
 	var l := _label(text, 16, color)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(minf(520 if _portrait() else 600, _avail()), 0)
+	l.custom_minimum_size = Vector2(minf(520 if _portrait() else 600, _art_w() - 60.0), 0)
 	h.add_child(l)
 	art.add_child(h)
 
@@ -4393,7 +4400,7 @@ func _lib_head(art: VBoxContainer, tex: Texture2D, k: float, title: String, sub:
 		var sl := _label(sub, 17, col.lightened(0.3))
 		sl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		var fw: float = frame.get_combined_minimum_size().x
-		sl.custom_minimum_size = Vector2(clampf(_avail() - fw - 60.0, 160.0, 460.0), 0)
+		sl.custom_minimum_size = Vector2(clampf(_art_w() - fw - 40.0, 160.0, 460.0), 0)
 		v.add_child(sl)
 	head.add_child(v)
 	art.add_child(head)

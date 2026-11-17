@@ -331,6 +331,13 @@ func _label(text: String, size: int, color := Color.WHITE, glow := Color(0, 0, 0
 	return l
 
 
+## Длинная подсказка переносится по словам и не шире экрана (вертикальный телефон).
+func _wrap(l: Label, max_w := 760.0) -> Label:
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size.x = minf(max_w, get_viewport().get_visible_rect().size.x - 60.0)
+	return l
+
+
 func _box(border: Color, bg := PANEL_BG, width := 2, glow := 8) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color = bg
@@ -366,7 +373,9 @@ func _page(name: String) -> VBoxContainer:
 	var center := CenterContainer.new()
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	center.custom_minimum_size = get_viewport().get_visible_rect().size - Vector2(0, 2)
+	# По высоте — весь экран (страница по центру), по ширине — сколько даёт прокрутка:
+	# иначе при появлении полосы прокрутки страница становится шире экрана
+	center.custom_minimum_size = Vector2(0.0, get_viewport().get_visible_rect().size.y - 2.0)
 	sc.add_child(center)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 18)
@@ -638,6 +647,7 @@ func _build_saves_page() -> void:
 	v.add_child(title)
 	var hint := _label("Выберите слот, чтобы играть им. Пустой слот — новая игра с нуля.", 16, Color(0.8, 0.8, 0.95))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_wrap(hint)
 	v.add_child(hint)
 	_saves_box = HFlowContainer.new()
 	_saves_box.alignment = FlowContainer.ALIGNMENT_CENTER
@@ -829,6 +839,7 @@ func _build_profile_page() -> void:
 			vk.tree_exited.connect(func(): if is_instance_valid(_nick_btn): _nick_btn.grab_focus()))
 		nick_row.add_child(_nick_btn)
 	var hint := _label("Ник виден напарнику над героем в сетевой игре" if Settings.is_mobile() else "Выберите ник и нажмите A (или кликните), чтобы изменить. Ник виден напарнику в сетевой игре", 14, Color(0.7, 0.7, 0.85))
+	_wrap(hint, 620.0)
 	box.add_child(hint)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 30)
@@ -1260,6 +1271,7 @@ func _build_net_page() -> void:
 	_net_v.add_child(title)
 	_net_status = _label("От 2 до 5 устройств в одной локальной сети (Wi-Fi или кабель). Бой можно начинать вдвоём.", 16, Color(0.8, 0.8, 0.95))
 	_net_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_wrap(_net_status)
 	_net_v.add_child(_net_status)
 
 	# Подключение
@@ -1346,7 +1358,7 @@ func _net_fill_hosts() -> void:
 	for c in _net_hosts_box.get_children():
 		c.queue_free()
 	if Net.hosts.is_empty():
-		var l := _label("Поиск...  (хост должен нажать «Создать игру»)", 14, Color(0.6, 0.6, 0.75))
+		var l := _wrap(_label("Поиск...  (хост должен нажать «Создать игру»)", 14, Color(0.6, 0.6, 0.75)), 520.0)
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_net_hosts_box.add_child(l)
 		return

@@ -196,6 +196,23 @@ static func _pmesh(kind: String) -> Mesh:
 
 static func _emit3d(main: Node, pos: Vector2, h: float, mesh_kind: String, colors: Array, amount: int,
 		speed: float, life: float, size: float, gravity: float, up: float, spread: float, spin := false) -> void:
+	var key := "3|%s|%s|%d|%.1f|%.2f|%.2f|%.1f|%.1f|%.0f|%s" % [mesh_kind, str(colors), amount, speed, life, size, gravity, up, spread, spin]
+	if _pm3d.has(key):
+		# Такой всплеск уже был: материал частиц готов — без построения CPU-частиц и градиентов
+		var gc := GPUParticles3D.new()
+		gc.process_material = _pm3d[key][0]
+		gc.draw_pass_1 = _pm3d[key][1]
+		gc.amount = maxi(1, amount)
+		gc.lifetime = life
+		gc.one_shot = true
+		gc.explosiveness = 0.92
+		gc.local_coords = false
+		gc.position = main._bl(pos, h)
+		gc.visibility_aabb = AABB(Vector3(-6, -2, -6), Vector3(12, 10, 12))
+		main._mirror_root.add_child(gc)
+		gc.emitting = true
+		main.get_tree().create_timer(life + 0.3, false).timeout.connect(gc.queue_free)
+		return
 	var p := CPUParticles3D.new()
 	p.mesh = _pmesh(mesh_kind)
 	p.one_shot = true
@@ -222,7 +239,6 @@ static func _emit3d(main: Node, pos: Vector2, h: float, mesh_kind: String, color
 		p.angular_velocity_max = 720.0
 		p.particle_flag_rotate_y = true
 	p.position = main._bl(pos, h)
-	var key := "3|%s|%s|%d|%.1f|%.2f|%.2f|%.1f|%.1f|%.0f" % [mesh_kind, str(colors), amount, speed, life, size, gravity, up, spread]
 	var g := gpu3d(p, key)
 	g.visibility_aabb = AABB(Vector3(-6, -2, -6), Vector3(12, 10, 12))
 	main._mirror_root.add_child(g)

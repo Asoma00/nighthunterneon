@@ -501,11 +501,15 @@ func push_out(pos: Vector2, r: float, iterations := 2) -> Vector2:
 
 
 func _push_once(pos: Vector2, r: float) -> Vector2:
-	var cx := floori(pos.x / CELL)
-	var cy := floori(pos.y / CELL)
-	for dx in range(-1, 2):
-		for dy in range(-1, 2):
-			var arr = _grid.get(Vector2i(cx + dx, cy + dy))
+	# Препятствие записано во все клетки, которых касается, поэтому достаточно клеток,
+	# которые задевает сам круг (обычно 1–4 вместо 9)
+	var x0 := floori((pos.x - r) / CELL)
+	var x1 := floori((pos.x + r) / CELL)
+	var y0 := floori((pos.y - r) / CELL)
+	var y1 := floori((pos.y + r) / CELL)
+	for gx in range(x0, x1 + 1):
+		for gy in range(y0, y1 + 1):
+			var arr = _grid.get(Vector2i(gx, gy))
 			if arr == null:
 				continue
 			for o in arr:
