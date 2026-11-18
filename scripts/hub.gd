@@ -1215,7 +1215,7 @@ func _update_avatar(delta: float) -> void:
 		flat.y = clampf(flat.y, ro.z - float(ri["d"]) / 2.0 + 0.45, front)
 	elif flat.length() > 22.0:
 		flat = flat.normalized() * 22.0
-	if Data.party and _inside == "" and not _party_in.is_empty() and not _hsplit_mode():
+	if Data.party and not _party_in.is_empty() and not _hsplit_mode() and _party_close():
 		var cl := _shared_clamp(Vector3(flat.x, 0, flat.y), 0)
 		flat = Vector2(cl.x, cl.z)
 	_avatar.position = Vector3(flat.x, 0, flat.y)
@@ -1282,7 +1282,8 @@ func _collide(pos: Vector3, r: float) -> Vector3:
 func _update_camera(delta: float) -> void:
 	_cine_t = maxf(0.0, _cine_t - delta)
 	var focus := _avatar.position
-	if _cine_t <= 0.0 and Data.party and _inside == "" and not _party_in.is_empty():
+	if _cine_t <= 0.0 and Data.party and not _party_in.is_empty():
+		# Отряд: и на улице, и внутри зданий камера одна на всех или свои — по настройке
 		_hsplit_centers()
 		focus = _hvc[0] if _hsplit_mode() else _party_center()
 	_cam_target = _cam_target.lerp(_cine_focus if _cine_t > 0.0 else focus, minf(1.0, delta * (2.5 if _cine_t > 0.0 else 4.0)))
@@ -3269,8 +3270,9 @@ func _party_tick(delta: float) -> void:
 		var to_p1 := Vector2(pos.x - _avatar.position.x, pos.z - _avatar.position.z)
 		# В здании — держимся рядом; снаружи: свои камеры — гуляем свободно (подтягиваемся,
 		# только если Игрок 1 вошёл/вышел), общая камера — не выходим за край экрана
-		var far := 9.0 if (_inside != "" or not _hsplit_mode()) else 45.0
-		if _inside == "" and not _hsplit_mode() and to_p1.length() <= 30.0:
+		# В здании комната небольшая: ходим по ней свободно, подтягиваемся только при входе/выходе
+		var far := 24.0 if _inside != "" else (9.0 if not _hsplit_mode() else 45.0)
+		if not _hsplit_mode() and to_p1.length() <= 30.0:
 			pos = _shared_clamp(pos, i)
 		elif to_p1.length() > far:
 			var off := Vector3(-1.0 + 0.7 * k, 0, 1.1)
@@ -5231,6 +5233,18 @@ func _rebuild_tavern_heroes(prev_pos := Vector3.INF) -> void:
 var _tav_prev := ""
 
 
+## Свободная точка в таверне: не внутри стола, стойки или бочек.
+func _tav_free_spot(o: Vector3, hw: float, hd: float) -> Vector3:
+	var best := o
+	for _k in 16:
+		var p := o + Vector3(randf_range(-hw, hw * 0.6), 0, randf_range(-0.8, hd))
+		var q := _collide(p, 0.45)
+		if Vector2(q.x - p.x, q.z - p.z).length() < 0.01:
+			return p
+		best = q
+	return best
+
+
 func _update_tavern(delta: float) -> void:
 	var info: Dictionary = INTERIORS["hall"]
 	var o: Vector3 = info["o"]
@@ -5247,11 +5261,21 @@ func _update_tavern(delta: float) -> void:
 				h["wait"] = float(h["wait"]) - delta
 				if h["wait"] <= 0.0:
 					h["wait"] = randf_range(2.0, 6.0)
-					h["target"] = o + Vector3(randf_range(-hw, hw * 0.6), 0, randf_range(-0.8, hd))
+					h["target"] = _tav_free_spot(o, hw, hd)
+					h["stuck"] = 0.0
 			else:
 				moving = true
-				var np := node.position + to.normalized() * minf(to.length(), 1.5 * delta)
+				var step := minf(to.length(), 1.5 * delta)
+				var np := node.position + to.normalized() * step
+				var was: Vector3 = node.position
 				node.position = _collide(np, 0.35)
+				# Упёрся в стол или стойку: недолго постоит и выберет другое место
+				var moved := Vector2(node.position.x - was.x, node.position.z - was.z).length()
+				h["stuck"] = float(h.get("stuck", 0.0)) + delta if moved < step * 0.35 else 0.0
+				if float(h["stuck"]) > 0.5:
+					h["stuck"] = 0.0
+					h["target"] = node.position
+					h["wait"] = randf_range(0.4, 1.2)
 				(h["base"] as Sprite3D).flip_h = to.x < 0.0
 				(h["emit"] as Sprite3D).flip_h = to.x < 0.0
 		var fr: Dictionary = h["frames"]
@@ -6537,6 +6561,14 @@ func _party_positions() -> Array:
 	return out
 
 
+## Весь отряд в одном месте (не в момент входа/выхода из здания, когда кто-то ещё снаружи).
+func _party_close() -> bool:
+	for q in _party_positions():
+		if Vector2(q.x - _avatar.position.x, q.z - _avatar.position.z).length() > 30.0:
+			return false
+	return true
+
+
 func _party_center() -> Vector3:
 	var ps := _party_positions()
 	var g := Vector3.ZERO
@@ -6651,7 +6683,7 @@ func _hsplit_centers() -> void:
 func _hsplit_sync(delta: float) -> void:
 	if _hsplit_mat == null:
 		return
-	var active := _hsplit and _cine_t <= 0.0 and _inside == "" and _panel_id == "" and _hvc.size() == Data.coop_heroes.size()
+	var active := _hsplit and _cine_t <= 0.0 and _panel_id == "" and _hvc.size() == Data.coop_heroes.size()
 	var ps := _party_positions()
 	var sz := Vector2(_vp.size)
 	var sites: Array = []
