@@ -2873,7 +2873,8 @@ func _build_choices(player: Node2D) -> Array:
 	# Качество каждого улучшения выпадает случайно (удача чуть повышает шансы)
 	var luck := clampf(float(player.chest_bonus), 0.0, 0.6)
 	for c in choices:
-		var r := Data.roll_rarity(luck)
+		# Первое появление оружия или модуля — всегда обычное качество
+		var r := 0 if bool(c.get("new", false)) else Data.roll_rarity(luck)
 		c["rarity"] = r
 		var k: float = float(Data.RARITY[r]["k"])
 		match c["type"]:
