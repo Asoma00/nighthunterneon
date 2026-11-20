@@ -788,7 +788,7 @@ func _build_decor() -> void:
 		var a := rng.randf() * TAU
 		var d := rng.randf_range(13.0, 20.5)
 		var p := Vector3(cos(a) * d, 0, sin(a) * d)
-		if _near_building(p, 3.2) or absf(p.x) < 3.6 or _near_any(spots, p, 4.6) or p.distance_to(CAMPFIRE) < 5.0 or not _free(p, 2.0):
+		if _near_building(p, 3.2) or absf(p.x) < 3.6 or _near_any(spots, p, 4.6) or p.distance_to(CAMPFIRE) < 5.0 or not _free(p, 2.0) or _hides_sign(p, 2.4):
 			continue
 		spots.append(p)
 		if spots.size() >= 12:
@@ -814,7 +814,7 @@ func _build_decor() -> void:
 		var a := rng.randf() * TAU
 		var d := rng.randf_range(12.0, 22.5)
 		var p := Vector3(cos(a) * d, 0, sin(a) * d)
-		if _near_building(p, 4.0) or _near_any(spots, p, 2.6) or absf(p.x) < 2.6:
+		if _near_building(p, 4.0) or _near_any(spots, p, 2.6) or absf(p.x) < 2.6 or _hides_sign(p, 1.2):
 			continue
 		if rng.randf() < 0.65:
 			_pine(p, rng)
@@ -837,7 +837,7 @@ func _build_decor() -> void:
 		var a := rng.randf() * TAU
 		var d := rng.randf_range(8.0, 22.5)
 		var p := Vector3(cos(a) * d, 0, sin(a) * d)
-		if _near_building(p, 3.4) or absf(p.x) < 2.4 or p.distance_to(CAMPFIRE) < 3.5 or not _free(p, 1.1):
+		if _near_building(p, 3.4) or absf(p.x) < 2.4 or p.distance_to(CAMPFIRE) < 3.5 or not _free(p, 1.1) or _hides_sign(p, 0.6):
 			continue
 		var kind: String = det[rng.randi() % det.size()]
 		_prop(kind, p, rng.randf() * TAU, 1.0, not kind.begins_with("bush") and not kind.begins_with("mushroom"))
@@ -3470,7 +3470,8 @@ func _fill_client_hall() -> void:
 ## Особые места убежища (их обходит декор): костёр, тренировочный плац, колодец, сад.
 const CAMPFIRE := Vector3(0, 0, -13)
 const TRAINING := Vector3(-15, 0, 3)
-const WELL := Vector3(4.6, 0, 2.4)   # колодец у самой площади
+const WELL := Vector3(0, 0, 12.2)   # колодец между таверной и лабораторией, над садом
+const WELL_K := 0.6
 const GARDEN := Vector3(0, 0, 17)
 const LIBRARY := Vector3(14, 0, -8)
 const MONUMENT := Vector3(-14, 0, -8)
@@ -4068,17 +4069,22 @@ func _build_places() -> void:
 	_prox_labels.append([_label3d(_world, "ПЛАЦ", TRAINING + Vector3(0, 2.6, 0), Color(1.0, 0.6, 0.8), 30), TRAINING, 4.0])
 
 	# Колодец с неоновой водой
-	_add(_world, _cyl(1.0, 1.1, 0.9, 12), stone, WELL + Vector3(0, 0.45, 0))
-	var water := _add(_world, _cyl(0.85, 0.85, 0.05, 12), _emat(Color(0.2, 0.6, 1.0), 1.8, 0.85), WELL + Vector3(0, 0.88, 0))
+	# (меньше, в масштабе к зданиям)
+	var wr := Node3D.new()
+	wr.position = WELL
+	wr.scale = Vector3.ONE * WELL_K
+	_world.add_child(wr)
+	_add(wr, _cyl(1.0, 1.1, 0.9, 12), stone, Vector3(0, 0.45, 0))
+	var water := _add(wr, _cyl(0.85, 0.85, 0.05, 12), _emat(Color(0.2, 0.6, 1.0), 1.8, 0.85), Vector3(0, 0.88, 0))
 	_flicker.append([water.material_override, 1.8, 3.0])
 	for x in [-0.9, 0.9]:
-		_add(_world, _cyl(0.06, 0.06, 1.6, 6), wood, WELL + Vector3(x, 1.3, 0))
-	_add(_world, _box(2.0, 0.1, 0.1), wood, WELL + Vector3(0, 2.1, 0))
+		_add(wr, _cyl(0.06, 0.06, 1.6, 6), wood, Vector3(x, 1.3, 0))
+	_add(wr, _box(2.0, 0.1, 0.1), wood, Vector3(0, 2.1, 0))
 	var roofw := PrismMesh.new()
 	roofw.size = Vector3(2.4, 0.7, 1.4)
-	_add(_world, roofw, _mat(Color(0.4, 0.18, 0.22), 0.8, 0.1, "wood", 1.0), WELL + Vector3(0, 2.5, 0))
-	_light(_world, WELL + Vector3(0, 1.2, 0), Color(0.3, 0.6, 1.0), 0.8, 4.0)
-	_obstacles.append([WELL, 1.2])
+	_add(wr, roofw, _mat(Color(0.4, 0.18, 0.22), 0.8, 0.1, "wood", 1.0), Vector3(0, 2.5, 0))
+	_light(_world, WELL + Vector3(0, 0.8, 0), Color(0.3, 0.6, 1.0), 0.6, 3.0)
+	_obstacles.append([WELL, 1.2 * WELL_K])
 
 	# Сад светоцветов: грядки, светящиеся растения и грибы
 	for r in 3:
@@ -7031,6 +7037,21 @@ func _sign_targets() -> Array:
 	]
 
 
+## Объект в точке p (радиус r) закрывал бы табличку: стоит рядом или между ней и камерой (камера — с юга, +Z).
+func _hides_sign(p: Vector3, r: float) -> bool:
+	for t in _sign_targets():
+		if t[0] == "portal":
+			continue
+		var sp := _sign_pos(t[0], t[3])
+		var dx := absf(p.x - sp.x)
+		var dz := p.z - sp.z
+		if Vector2(dx, dz).length() < r + 1.4:
+			return true
+		if dx < r + 1.2 and dz > 0.0 and dz < 8.0:
+			return true
+	return false
+
+
 ## Табличка у входа в здание — сбоку от двери, со стороны, дальней от площади.
 func _sign_pos(id: String, pos: Vector3) -> Vector3:
 	if id == "market":
@@ -7062,7 +7083,7 @@ func _build_signs() -> void:
 		_add(sg, _box(1.2, 0.55, 0.06), wood, Vector3(0, 1.15, 0))
 		_add(sg, _box(1.26, 0.04, 0.07), _emat(t[4], 2.0), Vector3(0, 1.43, 0))
 		_add(sg, _box(1.26, 0.04, 0.07), _emat(t[4], 2.0), Vector3(0, 0.87, 0))
-		var pl := _label3d(sg, "%s\n%s" % [t[1], t[2]], Vector3(0, 1.15, 0.05), t[4], 20)
+		var pl := _label3d(sg, str(t[1]), Vector3(0, 1.15, 0.05), t[4], 22)
 		pl.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 		pl.no_depth_test = false
 

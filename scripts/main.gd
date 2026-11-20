@@ -1520,13 +1520,13 @@ func screen_flash(amount: float) -> void:
 func _handle_spawning(delta: float) -> void:
 	_spawn_timer -= delta
 	if _spawn_timer <= 0.0:
-		_spawn_timer = maxf(0.16, 1.0 - time_alive / 160.0) * (2.0 if boss != null else 1.0) / float(level["rate"]) / (1.0 + 0.3 * endless_min)
+		_spawn_timer = maxf(0.16, 1.0 - diff_t() / 160.0) * (2.0 if boss != null else 1.0) / float(level["rate"]) / (1.0 + 0.3 * endless_min)
 		if events != null:
 			_spawn_timer /= events.spawn_k
 		if challenge == "swarm":
 			_spawn_timer /= 1.3
 		_spawn_timer *= tutorial_k("rate")
-		var count := 1 + int(time_alive / (55.0 * tutorial_k("grow"))) + endless_min
+		var count := 1 + int(diff_t() / (55.0 * tutorial_k("grow"))) + endless_min
 		if endless:
 			# Адских меньше, но каждый опасен; с минутами их становится больше
 			# Бесконечный режим: плотные толпы адских мобов, с каждой минутой гуще
@@ -1537,7 +1537,7 @@ func _handle_spawning(delta: float) -> void:
 				break
 			spawn_enemy(_pick_enemy_kind())
 	var elites: Array = level["elites"]
-	if _elite_i < elites.size() and time_alive >= elites[_elite_i]:
+	if _elite_i < elites.size() and diff_t() >= elites[_elite_i]:
 		_elite_i += 1
 		spawn_enemy("brute")
 		shake(6.0)
@@ -1569,7 +1569,7 @@ func _pick_enemy_kind() -> String:
 		return hp[rng.randi_range(0, hp.size() - 1)]
 	var pool: Array = level["enemies"]
 	# В начале уровня — только первые два вида, остальные подключаются со временем
-	var n := clampi(2 + int(time_alive / 45.0), 2, pool.size())
+	var n := clampi(2 + int(diff_t() / 45.0), 2, pool.size())
 	return pool[rng.randi_range(0, n - 1)]
 
 
@@ -1589,7 +1589,7 @@ func spawn_enemy(kind: String, at := Vector2.INF) -> void:
 	e.player = nearest_player(at if at != Vector2.INF else anchor_pos)
 	e.kind = kind
 	# Со временем враги заметно крепнут: здоровье растёт быстрее чем линейно, урон — тоже
-	var tm := time_alive
+	var tm := diff_t()
 	var scale_hp := float(level["hp"]) * (1.0 + tm / 100.0 + pow(tm / 220.0, 2.0)) * (1.0 + 0.35 * endless_min)
 	# Угроза и испытание вылазки
 	scale_hp *= (1.0 + 0.06 * threat) * (1.35 if challenge == "armored" else 1.0)
@@ -2376,7 +2376,7 @@ func _spawn_boss(kind: String, is_super := false, at := Vector2.INF, vid := "") 
 		b.variant = vd["id"]
 		b.boss_name = String(vd["name"]).to_upper()
 	# Боссы — настоящее испытание: очень плотные и крепнут вместе с боем
-	b.max_hp = info["hp"] * 2.2 * (0.7 + 0.3 * float(level["hp"])) * (1.0 + time_alive / 300.0) * (1.0 + 0.35 * endless_min) * (3.0 if is_super else 1.0)
+	b.max_hp = info["hp"] * 2.2 * (0.7 + 0.3 * float(level["hp"])) * (1.0 + diff_t() / 300.0) * (1.0 + 0.35 * endless_min) * (3.0 if is_super else 1.0)
 	b.is_super = is_super
 	if is_super:
 		b.boss_name = "★ " + (String(vd["name"]).to_upper() if not vd.is_empty() else "СУПЕР-" + info["name"]) + " ★"
@@ -2384,7 +2384,7 @@ func _spawn_boss(kind: String, is_super := false, at := Vector2.INF, vid := "") 
 	b.max_hp *= tutorial_k("boss")
 	b.hp = b.max_hp
 	b.speed = info["speed"]
-	b.damage = info["damage"] * 1.35 * (1.0 + time_alive / 600.0) * (1.4 if is_super else 1.0) * lerpf(1.0, tutorial_k("boss"), 0.7)
+	b.damage = info["damage"] * 1.35 * (1.0 + diff_t() / 600.0) * (1.4 if is_super else 1.0) * lerpf(1.0, tutorial_k("boss"), 0.7)
 	b.radius = info["radius"] * (1.35 if is_super else 1.0)
 	b.color = info["color"].lerp(Color(1.0, 0.85, 0.3), 0.35) if is_super else info["color"]
 	if not vd.is_empty() and not vd.get("keep", false):
@@ -4171,7 +4171,7 @@ func extra_view_centers() -> Array:
 ## переносится к тому, кто ближе к боссу. После победы камеры снова расходятся.
 func _boss_camera() -> void:
 	var boss_on: bool = boss != null and is_instance_valid(boss) and not boss.dead
-	if boss_on and not _boss_lock and _split_wanted():
+	if boss_on and not _boss_lock and _split_wanted() and not _split_fixed():
 		_boss_lock = true
 		if _split_on:
 			_split_teardown()
@@ -4234,6 +4234,15 @@ var _cm_queue: Array = []       # стражи, ждущие своей очер
 var _cm_final: Node2D = null
 var _cm_warn := 0
 var _cm_used_rooms := {}
+var _cm_best := 0.0             # самая дальняя точка пути, куда дошёл отряд
+
+
+## Сила врагов: обычно время забега; на карте главы — пройденная часть пути
+## (линейное нарастание от входа к арене), а время лишь немного добавляет.
+func diff_t() -> float:
+	if cmap == null:
+		return time_alive
+	return maxf(time_alive * 0.3, _cm_best / maxf(cmap.total, 1.0) * float(level["time"]) * 0.75)
 
 
 func _cm_goal() -> String:
@@ -4302,6 +4311,8 @@ func _cm_tick() -> void:
 			Fx.text_pop(self, center() + Vector2(0, -90), "ВРЕМЯ ВЫШЛО", Pixel.hdr(Color(1.0, 0.3, 0.3), 1.6), 34)
 			_end_game(false)
 			return
+	for p in players:
+		_cm_best = maxf(_cm_best, cmap.progress(p.position))
 	# Входы в залы: рассказ и стражи
 	for k in cmap.rooms.size():
 		if _cm_seen.has(k):
@@ -4327,9 +4338,24 @@ func _cm_tick() -> void:
 func _cm_enter_room(k: int) -> void:
 	var st := CStory.get_level(cmap.hero, cmap.step)
 	var rooms: Array = st.get("rooms", [])
-	if k < rooms.size():
-		hud.show_story(str(rooms[k][0]), str(rooms[k][1]))
-		Fx.text_pop(self, center() + Vector2(0, -120), str(rooms[k][0]), Pixel.hdr(Color(1.0, 0.92, 0.75), 1.3), 24)
+	# Записи сюжета разложены по залам пути равномерно
+	var nr: int = cmap.rooms.size()
+	for j in rooms.size():
+		if int(j * nr / maxi(rooms.size(), 1)) == k:
+			hud.show_story(str(rooms[j][0]), str(rooms[j][1]))
+			Fx.text_pop(self, center() + Vector2(0, -120), str(rooms[j][0]), Pixel.hdr(Color(1.0, 0.92, 0.75), 1.3), 24)
+	if not _cm_guards.has(k):
+		# Зал без стража — засада: волна тварей, тем гуще, чем дальше по пути
+		var rc: Vector2 = cmap.room_center(k)
+		var n: int = 6 + k * 2 + int(cmap.step) * 2
+		var pool: Array = level["enemies"]
+		for i in n:
+			if enemies_node.get_child_count() >= max_enemies():
+				break
+			spawn_enemy(pool[rng.randi() % pool.size()], rc + Vector2.RIGHT.rotated(TAU * i / n) * cmap.room_radius(k) * 0.8)
+		if k >= 2:
+			spawn_enemy("brute", rc + Vector2(0, -cmap.room_radius(k) * 0.6))
+		Fx.text_pop(self, center() + Vector2(0, -80), "ЗАСАДА!", Pixel.hdr(Color(1.0, 0.45, 0.35), 1.4), 26)
 	if _cm_guards.has(k):
 		if boss == null:
 			_cm_spawn_guard(k, _cm_guards[k])
