@@ -541,7 +541,6 @@ func _build_portal() -> void:
 	_spinners.append([disc, Vector3.UP, -2.0])
 	_light(root, Vector3(0, 2.0, 1.2), Color(0.75, 0.4, 1.0), 2.5, 9.0)
 	_particles(root, Vector3(0, 1.9, 0), Color(0.8, 0.5, 1.0), 40, Vector3(1.0, 1.0, 0.1), Vector3(0, 0.6, 0), 2.0, 0.07)
-	_label3d(root, "ПОРТАЛ", Vector3(0, 4.6, 0), Color(1.0, 0.7, 1.0), 44)
 
 
 # ================= Здания =================
@@ -593,7 +592,6 @@ func _rebuild_building(id: String) -> void:
 		_add(root, _box(0.6, 0.6, 0.6), plank, Vector3(1.0, 0.65, 1.0), Vector3(0, 20, 0))
 		_add(root, _cyl(0.12, 0.12, 1.6, 6), plank, Vector3(-0.6, 0.45, 1.1), Vector3(0, 0, 90))
 		_add(root, _cyl(0.12, 0.12, 1.6, 6), plank, Vector3(-0.6, 0.68, 1.1), Vector3(0, 10, 90))
-		_label3d(root, "%s\nСТРОЙКА — У ТРАКТИРЩИКА" % info["name"] if id != "hall" else "%s\nОТКРЫТА — ИДЁТ РЕМОНТ" % info["name"], Vector3(0, 3.5, 0), Color(col, 0.9), 30)
 		if id == "hall":
 			# Таверна работает и во время стройки: временный вход под навесом
 			_add(root, _box(2.2, 1.6, 1.6), _mat(Color(0.35, 0.25, 0.18), 0.9, 0.0, "wood", 1.4), Vector3(0, 1.1, 0.6))
@@ -714,7 +712,6 @@ func _rebuild_building(id: String) -> void:
 			_add(root, _box(3.6, 0.08, 0.14), plank, Vector3(0, top * 0.6, z))
 		_add(root, _box(0.5, 0.5, 0.5), _emat(Color(1.0, 0.7, 0.2), 1.6), Vector3(1.2, top + 0.9, 1.2))
 		stars += "\n⚒ стройка ур. %d — ещё %d выл." % [int(Meta.construct["lvl"]), int(Meta.construct["left"])]
-	_label3d(root, "%s\n%s" % [info["name"], stars], Vector3(0, top + 3.0 if id != "beacon" else top + 4.4, 0), col.lightened(0.3), 30)
 
 
 ## Дверь на фасаде: створка, рама, неоновая подсветка и фонарь.
@@ -803,6 +800,8 @@ func _build_decor() -> void:
 		if kind == "manor0" and (_near_building(p, 7.0) or _near_any(spots.slice(0, i), p, 7.0)):
 			kind = "house2"
 		_prop(kind, p, atan2(-p.x, -p.z), 0.75)
+		# Дом жителя: у двери (фасад смотрит на площадь) — без подсветки и подписи
+		_houses.append(p + Vector3(-p.x, 0, -p.z).normalized() * 1.9)
 
 	# ---- Рыночные лавки: на свободных местах, подальше от зданий ----
 	var stalls := STALLS
@@ -1576,6 +1575,7 @@ func _build_hud() -> void:
 	title.offset_right = 300
 	title.offset_top = 14
 	root.add_child(title)
+	title.visible = false   # без названия убежища поверх экрана
 	_title_l = title
 
 	_hero_label = _label("", 18, CYAN)
@@ -1585,6 +1585,7 @@ func _build_hud() -> void:
 	_hero_label.offset_right = -18
 	_hero_label.offset_top = 18
 	root.add_child(_hero_label)
+	_hero_label.visible = false   # без надписи о герое в правом верхнем углу
 	_update_hero_label()
 
 	var hint := _label(_hint_text(), 15, Color(0.75, 0.75, 0.9))
@@ -1595,6 +1596,7 @@ func _build_hud() -> void:
 	hint.offset_top = -34
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(hint)
+	hint.visible = false   # без строки подсказок управления
 	_hint_l = hint
 	Settings.input_mode_changed.connect(_on_input_mode)
 	_layout_top()
@@ -3468,13 +3470,13 @@ func _fill_client_hall() -> void:
 ## Особые места убежища (их обходит декор): костёр, тренировочный плац, колодец, сад.
 const CAMPFIRE := Vector3(0, 0, -13)
 const TRAINING := Vector3(-15, 0, 3)
-const WELL := Vector3(14, 0, 4)
+const WELL := Vector3(4.6, 0, 2.4)   # колодец у самой площади
 const GARDEN := Vector3(0, 0, 17)
 const LIBRARY := Vector3(14, 0, -8)
 const MONUMENT := Vector3(-14, 0, -8)
-## Рынок: все лавки стоят вместе подковой, открытой к порталу
-const MARKET := Vector3(-6.6, 0, -7.0)
-const STALLS := [Vector3(-8.1, 0, -4.4), Vector3(-9.6, 0, -7.0), Vector3(-8.1, 0, -9.6), Vector3(-5.1, 0, -9.7)]
+## Рынок: все лавки стоят вместе подковой, открытой к площади
+const MARKET := Vector3(14.0, 0, 4.5)   # на месте старого колодца, подковой к площади
+const STALLS := [Vector3(13.5, 0, 1.6), Vector3(16.4, 0, 2.8), Vector3(16.4, 0, 6.2), Vector3(13.5, 0, 7.4)]
 ## Места на площади перед порталом, где ждут жители с просьбами
 const QUEST_SLOTS := [Vector3(-1.8, 0, 5.0), Vector3(1.8, 0, 5.0)]
 
@@ -3499,6 +3501,19 @@ const NPC_TITLES := {"merchant": "торговка", "guard": "стражник"
 	"barkeep": "трактирщик", "blacksmith": "кузнец", "priestess": "жрица", "engineer": "инженер", "commander": "командир"}
 
 
+var _prox_labels: Array = []  # [Label3D, место, радиус]: подпись видна только рядом
+var _houses: Array = []      # двери домиков: у каждого жителя свой дом
+var _job_v: Dictionary = {}  # житель, для которого сейчас подбираются места дела
+
+
+## Дом жителя по номеру (по кругу, если домов меньше).
+func _house_door(i: int) -> Vector3:
+	if _houses.is_empty():
+		var a := TAU * i / 7.0
+		return Vector3(cos(a), 0, sin(a)) * 15.0
+	return _houses[i % _houses.size()]
+
+
 func _spawn_npcs() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 4242
@@ -3510,9 +3525,12 @@ func _spawn_npcs() -> void:
 	# Стража обходит стену
 	for i in 3:
 		add.call("guard", Vector3(cos(i * 2.1), 0, sin(i * 2.1)) * 20.0, {"ang": i * 2.1, "dir": 1.0 if i % 2 == 0 else -1.0})
-	# Дети носятся по площади
+	# Дети играют у своих домов
+	var hn := 0
 	for i in 3:
-		add.call("kid", Vector3(rng.randf_range(-4, 4), 0, rng.randf_range(2, 6)))
+		var hd := _house_door(hn)
+		add.call("kid", hd, {"house": hd})
+		hn += 1
 	# Подмастерье у кузни, монах у портала, музыкант и старейшины у костра
 	var fp: Vector3 = Meta.BUILDINGS["forge"]["pos"]
 	add.call("smith", fp + Vector3(2.4, 0, 1.2), {"home": fp + Vector3(2.4, 0, 1.2)})
@@ -3521,18 +3539,22 @@ func _spawn_npcs() -> void:
 	for i in 3:
 		var a := PI + i * 0.9 - 0.9
 		var sp := CAMPFIRE + Vector3(cos(a), 0, sin(a)) * 2.0
-		add.call("elder", sp, {"home": sp})
+		add.call("elder", sp, {"home": sp, "house": _house_door(hn)})
+		hn += 1
 	# Новобранцы на плацу, садовница, робот-уборщики и просто жители
 	for i in 2:
 		add.call("trainee", TRAINING + Vector3(1.4, 0, -1.0 + i * 2.0), {"home": TRAINING + Vector3(1.4, 0, -1.0 + i * 2.0)})
-	add.call("gardener", GARDEN + Vector3(1.5, 0, 0))
+	add.call("gardener", GARDEN + Vector3(1.5, 0, 0), {"house": _house_door(hn)})
+	hn += 1
 	# Командир Ворон у доски заданий — ведёт сюжет
 	add.call("commander", COMMANDER_POS, {"home": COMMANDER_POS})
 	for i in 2:
-		add.call("robot", Vector3(rng.randf_range(-6, 6), 0, rng.randf_range(-2, 8)))
+		var rd := _house_door(i * 5 + 2)
+		add.call("robot", rd, {"house": rd})
 	for i in 6:
-		var a := rng.randf() * TAU
-		add.call("walker", Vector3(cos(a), 0, sin(a)) * rng.randf_range(4.0, 12.0))
+		var hd2 := _house_door(hn)
+		add.call("walker", hd2, {"house": hd2})
+		hn += 1
 
 
 var _npc_n := 0
@@ -3575,9 +3597,9 @@ func _make_npc(role: String, pos: Vector3, seed: int, nm: String) -> Dictionary:
 	if role == "robot":
 		node.scale = Vector3.ONE * 0.8
 		_light(node, Vector3(0, 0.6, 0.3), CYAN, 0.5, 2.5)
-	var name_l := _label3d(node, "%s, %s" % [nm, NPC_TITLES[role]] if role != "robot" else "Б-%d" % (seed % 100), Vector3(0, 1.55, 0), Color(0.85, 0.85, 1.0, 0.95), 30)
+	var name_l := _label3d(node, "%s, %s" % [nm, NPC_TITLES[role]] if role != "robot" else "Б-%d" % (seed % 100), Vector3(0, 1.5, 0), Color(0.85, 0.85, 1.0, 0.95), 18)
 	name_l.visible = false
-	var bubble := _label3d(node, "", Vector3(0, 2.0, 0), Color(1, 1, 1), 32)
+	var bubble := _label3d(node, "", Vector3(0, 1.8, 0), Color(1, 1, 1), 20)
 	bubble.visible = false
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed
@@ -3798,6 +3820,12 @@ func _unstick(v: Dictionary) -> void:
 
 ## Поведение NPC по ролям.
 func _update_villagers(delta: float) -> void:
+	# Подписи мест и лавок — только когда герой рядом
+	for pl in _prox_labels:
+		var lb: Label3D = pl[0]
+		var on: bool = Vector2(_avatar.position.x - pl[1].x, _avatar.position.z - pl[1].z).length() < float(pl[2])
+		if lb.visible != on:
+			lb.visible = on
 	for v in _villagers:
 		var node: Node3D = v["node"]
 		v["t"] += delta
@@ -3806,6 +3834,7 @@ func _update_villagers(delta: float) -> void:
 			# Ждёт на площади, пока у него не возьмут просьбу; потом вернётся к своим делам
 			v["target"] = QUEST_SLOTS[int(v["qslot"])]
 			v.erase("steps")
+			node.visible = true
 		else:
 			match role:
 				"guard":
@@ -3822,9 +3851,11 @@ func _update_villagers(delta: float) -> void:
 					if node.position.distance_to(v["target"]) < 0.4:
 						v["wait"] = float(v["wait"]) - delta
 						if v["wait"] <= 0.0:
-							v["wait"] = randf_range(1.0, 3.0)
+							v["wait"] = randf_range(1.5, 4.0)
+							# Робот-уборщик метёт у домов, а не носится по площади
 							var a := randf() * TAU
-							v["target"] = Vector3(cos(a), 0, sin(a)) * randf_range(2.0, 12.0)
+							var hb: Vector3 = v.get("house", Vector3.ZERO)
+							v["target"] = hb + Vector3(cos(a), 0, sin(a)) * randf_range(1.0, 4.0) if v.has("house") else Vector3(cos(a), 0, sin(a)) * randf_range(10.0, 16.0)
 				"gardener":
 					if node.position.distance_to(v["target"]) < 0.4:
 						v["wait"] = float(v["wait"]) - delta
@@ -3919,7 +3950,14 @@ func _update_villagers(delta: float) -> void:
 			bs.position.y = by - low
 			es.position.y = by - low
 		# Имя — когда герой рядом
-		(v["name"] as Label3D).visible = node.position.distance_to(_avatar.position) < 2.4 and not _bubble_shown(v)
+		var near_me := node.visible and node.position.distance_to(_avatar.position) < NPC_TEXT_R
+		(v["name"] as Label3D).visible = near_me and not _bubble_shown(v)
+		# Реплики видны только вблизи — убежище не завалено текстом
+		var bl: Label3D = v["bubble"]
+		var ba := 1.0 if near_me else 0.0
+		if bl.modulate.a != ba:
+			bl.modulate.a = ba
+			bl.outline_modulate.a = ba
 		# Реплики по роли
 		v["bubble_t"] = float(v["bubble_t"]) - delta
 		var bubble: Label3D = v["bubble"]
@@ -4010,7 +4048,7 @@ func _build_places() -> void:
 		b.rotation.y = -a + PI / 2.0
 		_obstacles.append([CAMPFIRE + Vector3(cos(a), 0, sin(a)) * 2.7, 0.6])
 	_obstacles.append([CAMPFIRE, 1.0])
-	_label3d(_world, "КОСТЁР", CAMPFIRE + Vector3(0, 3.0, 0), Color(1.0, 0.75, 0.4), 30)
+	_prox_labels.append([_label3d(_world, "КОСТЁР", CAMPFIRE + Vector3(0, 3.0, 0), Color(1.0, 0.75, 0.4), 30), CAMPFIRE, 4.0])
 
 	# Тренировочный плац: манекены и стойка с оружием
 	_add(_world, _box(5.0, 0.06, 5.0), _mat(Color(0.3, 0.24, 0.2), 0.95, 0.0, "wood", 0.8), TRAINING + Vector3(0, 0.03, 0))
@@ -4027,7 +4065,7 @@ func _build_places() -> void:
 	_add(_world, _box(0.2, 1.4, 2.0), wood, rack + Vector3(0, 0.7, 0))
 	for k in 4:
 		_add(_world, _box(0.05, 1.3, 0.05), _emat([CYAN, MAGENTA, GOLD, CYAN][k] as Color, 1.6), rack + Vector3(0.15, 0.9, -0.7 + k * 0.45), Vector3(0, 0, 10))
-	_label3d(_world, "ПЛАЦ", TRAINING + Vector3(0, 2.6, 0), Color(1.0, 0.6, 0.8), 30)
+	_prox_labels.append([_label3d(_world, "ПЛАЦ", TRAINING + Vector3(0, 2.6, 0), Color(1.0, 0.6, 0.8), 30), TRAINING, 4.0])
 
 	# Колодец с неоновой водой
 	_add(_world, _cyl(1.0, 1.1, 0.9, 12), stone, WELL + Vector3(0, 0.45, 0))
@@ -4057,7 +4095,7 @@ func _build_places() -> void:
 		_add(_world, _cyl(0.04, 0.05, 0.25, 5), _mat(Color(0.8, 0.8, 0.75), 1.0, 0.0), mp + Vector3(0, 0.12, 0))
 		_add(_world, _sphere(0.16), _emat(Color(0.7, 0.4, 1.0), 1.6), mp + Vector3(0, 0.28, 0))
 	_particles(_world, GARDEN + Vector3(0, 0.8, 0), Color(0.5, 1.0, 0.6), 30, Vector3(2.6, 0.5, 2.0), Vector3(0, 0.15, 0), 4.0, 0.05)
-	_label3d(_world, "САД СВЕТОЦВЕТОВ", GARDEN + Vector3(0, 2.0, 0), Color(0.6, 1.0, 0.7), 28)
+	_prox_labels.append([_label3d(_world, "САД СВЕТОЦВЕТОВ", GARDEN + Vector3(0, 2.0, 0), Color(0.6, 1.0, 0.7), 28), GARDEN, 4.0])
 	_obstacles.append([GARDEN, 2.4])
 
 	# Доска итогов вылазки у портала (справа)
@@ -4069,7 +4107,7 @@ func _build_places() -> void:
 		var paper := _add(_world, _box(0.3, 0.35, 0.02), _emat([GOLD, CYAN, Color(1, 1, 1), MAGENTA][k] as Color, 0.6), nb + Vector3(-0.45 + k * 0.3, 1.5 + (0.12 if k % 2 == 0 else -0.12), 0.05))
 		paper.rotation.z = randf_range(-0.15, 0.15)
 		_flicker.append([paper.material_override, 0.6, randf() * 10.0])
-	_label3d(_world, "ИТОГИ ВЫЛАЗКИ", nb + Vector3(0, 2.5, 0), CYAN.lightened(0.2), 24)
+	_prox_labels.append([_label3d(_world, "ИТОГИ ВЫЛАЗКИ", nb + Vector3(0, 2.5, 0), CYAN.lightened(0.2), 24), nb, 4.0])
 	_obstacles.append([nb, 0.6])
 
 
@@ -4124,7 +4162,6 @@ func _build_library() -> void:
 	_particles(root, Vector3(0, 5.2, 1.0), Color(0.6, 0.8, 1.0), 18, Vector3(0.4, 0.2, 0.4), Vector3(0, 0.6, 0), 2.0, 0.05)
 	_light(root, Vector3(0, 2.4, 2.4), Color(0.95, 0.75, 0.4), 1.4, 6.0)
 	_light(root, Vector3(0, 5.0, 1.2), Color(0.6, 0.7, 1.0), 0.9, 4.0)
-	_label3d(_world, "БИБЛИОТЕКА", LIBRARY + Vector3(0, 6.4, 0), Color(0.8, 0.7, 1.0), 32)
 	_obstacles.append([LIBRARY, 2.4])
 	_obstacles.append([LIBRARY + Vector3(2.2, 0, -0.4).rotated(Vector3.UP, root.rotation.y), 1.1])
 
@@ -4145,7 +4182,7 @@ func _build_board() -> void:
 		var paper := _add(root, _box(0.36, 0.44, 0.02), _emat(cols[i], 1.3), Vector3(-0.62 + i * 0.41, 1.45 + (0.12 if i % 2 == 0 else -0.08), 0.08), Vector3(0, 0, (i - 1.5) * 5.0))
 		_flicker.append([paper.material_override, 1.3, randf() * 10.0])
 	_light(root, Vector3(0, 2.2, 0.8), GOLD, 0.9, 4.0)
-	_label3d(_world, "ДОСКА ЗАДАНИЙ", BOARD + Vector3(0, 2.9, 0), GOLD.lightened(0.2), 28)
+	_prox_labels.append([_label3d(_world, "ДОСКА ЗАДАНИЙ", BOARD + Vector3(0, 2.9, 0), GOLD.lightened(0.2), 28), BOARD, 4.0])
 	_obstacles.append([BOARD, 0.9])
 
 
@@ -5711,14 +5748,14 @@ func _npc_active(v: Dictionary) -> Dictionary:
 func _update_marks() -> void:
 	# Подписи: только у ближайшего жителя — чтобы имена не наезжали друг на друга
 	var nearest: Dictionary = {}
-	var nd := 3.0
+	var nd := NPC_TEXT_R
 	for v in _villagers:
 		var d := (v["node"] as Node3D).position.distance_to(_avatar.position)
 		(v["name"] as Label3D).visible = false
 		if d < nd:
 			nd = d
 			nearest = v
-	if not nearest.is_empty():
+	if not nearest.is_empty() and (nearest["node"] as Node3D).visible and not _bubble_shown(nearest):
 		(nearest["name"] as Label3D).visible = true
 	# Просьбы жителей — по очереди: не больше двух побочных сразу (и сюжет у Ворона),
 	# пока обещаний меньше трёх. Такие жители выходят на площадь и ждут
@@ -5763,7 +5800,7 @@ func _talk_target() -> int:
 	var bd := 1.5
 	for i in _villagers.size():
 		var v: Dictionary = _villagers[i]
-		if not v.has("profile"):
+		if not v.has("profile") or not (v["node"] as Node3D).visible:
 			continue
 		var d := (v["node"] as Node3D).position.distance_to(_avatar.position)
 		if d < bd:
@@ -5780,7 +5817,7 @@ func _update_chats(delta: float) -> void:
 		var walkers: Array = []
 		var free: Array = []
 		for v in _villagers:
-			if v.has("profile") and not v.has("chat") and int(v.get("qslot", -1)) < 0 and v["role"] in ["walker", "elder", "trainee", "gardener", "merchant", "musician"]:
+			if v.has("profile") and not v.has("chat") and (v["node"] as Node3D).visible and int(v.get("qslot", -1)) < 0 and v["role"] in ["walker", "elder", "trainee", "gardener", "merchant", "musician"]:
 				free.append(v)
 				if v["role"] == "walker":
 					walkers.append(v)
@@ -6020,7 +6057,6 @@ func _build_monument() -> void:
 		_flicker.append([fm.material_override, 4.0, randf() * 10.0])
 	_particles(root, Vector3(0, 5.6, 0), GOLD, 14, Vector3(0.4, 0.3, 0.4), Vector3(0, 0.5, 0), 2.0, 0.05)
 	_light(root, Vector3(0, 3.0, 1.5), GOLD, 1.2, 6.0)
-	_label3d(_world, "МОНУМЕНТ ОХОТНИКОВ", MONUMENT + Vector3(0, 6.6, 0), Color(1.0, 0.85, 0.5), 30)
 	_obstacles.append([MONUMENT, 2.0])
 
 
@@ -6254,21 +6290,23 @@ func _sprite_ok(fr: Dictionary) -> bool:
 # поработать там (анимация, искры, капли, листья…), что-то понести с собой.
 
 const JOB_SETS := {
-	"Мира": ["gate_watch", "monument_flowers", "warm_fire", "letters_read"],
-	"Лекс": ["terminal", "board_read", "portal_scan", "antenna"],
-	"Ада": ["herbs", "bandage", "pray", "water"],
-	"Нико": ["map_sketch", "portal_scan", "gate_watch", "board_read"],
-	"Рей": ["lantern_fix", "robot_fix", "crates", "terminal"],
-	"Зоя": ["letters", "letters", "water", "warm_fire"],
-	"Флора": ["water_plants", "herbs", "flowers_market"],
-	"Бабушка Гедда": ["sit_fire", "tell_story", "monument_flowers"],
-	"Старый Йорг": ["sit_fire", "tell_story", "library_read"],
-	"Марта": ["sit_fire", "crates", "water"],
-	"_walker": ["water", "crates", "sit_fire", "board_read", "monument_flowers", "lantern_fix", "market_shop"],
-	"_kid": ["tag", "pebbles", "chase_robot", "ball", "training_watch"],
-	"_gardener": ["water_plants", "herbs", "flowers_market"],
-	"_elder": ["sit_fire", "tell_story", "sit_fire"],
+	"Мира": ["gate_watch", "monument_flowers", "warm_fire", "letters_read", "home_inside", "home_chores", "home_inside"],
+	"Лекс": ["terminal", "board_read", "portal_scan", "antenna", "home_inside", "home_chores", "home_inside"],
+	"Ада": ["herbs", "bandage", "pray", "water", "home_inside", "home_chores", "home_inside"],
+	"Нико": ["map_sketch", "portal_scan", "gate_watch", "board_read", "home_inside", "home_chores", "home_inside"],
+	"Рей": ["lantern_fix", "robot_fix", "crates", "terminal", "home_inside", "home_chores", "home_inside"],
+	"Зоя": ["letters", "letters", "water", "warm_fire", "home_inside", "home_chores", "home_inside"],
+	"Флора": ["water_plants", "herbs", "flowers_market", "home_inside", "home_chores", "home_inside"],
+	"Бабушка Гедда": ["sit_fire", "tell_story", "monument_flowers", "home_inside", "home_chores", "home_inside"],
+	"Старый Йорг": ["sit_fire", "tell_story", "library_read", "home_inside", "home_chores", "home_inside"],
+	"Марта": ["sit_fire", "crates", "water", "home_inside", "home_chores", "home_inside"],
+	"_walker": ["water", "crates", "sit_fire", "board_read", "monument_flowers", "lantern_fix", "market_shop", "home_inside", "home_chores", "home_inside"],
+	"_kid": ["tag", "pebbles", "chase_robot", "ball", "training_watch", "home_inside", "home_chores", "home_inside"],
+	"_gardener": ["water_plants", "herbs", "flowers_market", "home_inside", "home_chores", "home_inside"],
+	"_elder": ["sit_fire", "tell_story", "sit_fire", "home_inside", "home_chores", "home_inside"],
 }
+
+const NPC_TEXT_R := 1.6   # имена и реплики жителей — только совсем рядом
 
 const JOB_SAY := {
 	"water": ["Вода в колодце светится…", "Тяжёлое ведро!"], "crates": ["Куда это нести?", "Раз-два, взяли!"],
@@ -6283,7 +6321,7 @@ const JOB_SAY := {
 	"chase_robot": ["Робот, стой!", "Хи-хи!"], "ball": ["Лови!", "Пас!"], "training_watch": ["Ух ты!", "Я тоже так смогу!"],
 	"water_plants": ["Пейте, мои хорошие.", "Растите!"], "flowers_market": ["Свежий светоцвет!", "Кому цветы?"],
 	"market_shop": ["Почём кристаллы?", "Дороговато…"], "library_read": ["Интересно…", "Где-то тут было про Омегу."],
-	"antenna": ["Чуть левее…", "Есть приём!"], "letters_read": ["От него ничего…", "Может, завтра."],
+	"antenna": ["Чуть левее…", "Есть приём!"], "home_chores": ["Подмету-ка двор.", "Дел по дому — гора."], "letters_read": ["От него ничего…", "Может, завтра."],
 }
 
 
@@ -6308,15 +6346,28 @@ func _spot(id: String) -> Vector3:
 					return (o["node"] as Node3D).position + Vector3(0.6, 0, 0.3)
 			return WELL
 		"square":
+			if _job_v.has("house"):
+				return _yard(_job_v["house"])
 			var a2 := randf() * TAU
 			return Vector3(cos(a2), 0, sin(a2)) * randf_range(1.5, 5.5)
+		"yard":
+			return _yard(_job_v.get("house", _house_door(randi())))
 		"door":
 			var ids := Meta.BUILDINGS.keys()
 			return _place(ids[randi() % ids.size()])
 		"house":
+			if _job_v.has("house"):
+				return _job_v["house"]
 			var a3 := randf() * TAU
 			return Vector3(cos(a3), 0, sin(a3)) * randf_range(12.0, 17.0)
 	return _place(id)
+
+
+## Двор у дома: рядом с дверью, в сторону от площади.
+func _yard(door: Vector3) -> Vector3:
+	var out := Vector3(door.x, 0, door.z).normalized()
+	var side := Vector3(out.z, 0, -out.x)
+	return door - out * randf_range(0.6, 2.2) + side * randf_range(-2.2, 2.2)
 
 
 ## Шаги дела: {to, dur, fx, pose, carry, say}
@@ -6376,6 +6427,11 @@ func _job_steps(id: String) -> Array:
 			return [S.call("training", 5.0, "", "", "", true)]
 		"water_plants":
 			return [S.call("well", 2.0, "water", "work"), S.call("garden", 3.5, "water", "work", "bucket", true), S.call("garden", 3.5, "water", "work", "bucket")]
+		"home_inside":
+			# Зашёл домой: какое-то время его не видно
+			return [S.call("house", randf_range(14.0, 26.0), "", "inside")]
+		"home_chores":
+			return [S.call("yard", randf_range(6.0, 10.0), "dust", "work", "", true), S.call("yard", randf_range(4.0, 7.0), "", "work")]
 		"flowers_market":
 			return [S.call("garden", 3.0, "leaf", "kneel"), S.call("market", 4.0, "", "", "flowers", true)]
 	return [S.call("square", 2.0)]
@@ -6391,7 +6447,9 @@ func _job_tick(v: Dictionary, delta: float) -> void:
 		var jobs: Array = v["jobs"]
 		var jid: String = jobs[randi() % jobs.size()]
 		v["job"] = jid
+		_job_v = v
 		steps = _job_steps(jid)
+		_job_v = {}
 		v["steps"] = steps
 	var st: Dictionary = steps[0]
 	if not st.get("claimed", false):
@@ -6408,6 +6466,8 @@ func _job_tick(v: Dictionary, delta: float) -> void:
 		return
 	# На месте: работает
 	v["pose"] = st["pose"]
+	if st["pose"] == "inside" and node.visible:
+		node.visible = false
 	if not st.get("started", false):
 		st["started"] = true
 		if st["say"] and randf() < 0.7:
@@ -6431,6 +6491,7 @@ func _job_tick(v: Dictionary, delta: float) -> void:
 		_job_fx(node.position, st["fx"])
 	if float(st["dur"]) <= 0.0:
 		steps.pop_front()
+		node.visible = true
 		if steps.is_empty():
 			_set_carry(v, "")
 			v["pose"] = ""
@@ -6966,19 +7027,33 @@ func _sign_targets() -> Array:
 		["lab", "ЛАБОРАТОРИЯ", "прокачка модулей", B["lab"]["pos"], B["lab"]["color"]],
 		["library", "БИБЛИОТЕКА", "всё об открытом", LIBRARY, Color(0.6, 0.8, 1.0)],
 		["path", "МОНУМЕНТ", "путь и навыки", MONUMENT, GOLD],
+		["market", "РЫНОК", "торговцы и товары", MARKET, GOLD],
 	]
+
+
+## Табличка у входа в здание — сбоку от двери, со стороны, дальней от площади.
+func _sign_pos(id: String, pos: Vector3) -> Vector3:
+	if id == "market":
+		return MARKET + Vector3(-3.3, 0, 2.7)   # у входа в подкову лавок, подальше от алтаря
+	if Meta.BUILDINGS.has(id):
+		# Дверь зданий — на южной стороне фундамента (+Z)
+		var out := 1.0 if pos.x > 0.0 else -1.0
+		return pos + Vector3(out * 1.55, 0, 2.35)
+	# Библиотека и монумент стоят фасадом к площади: табличка у входа, с внешней стороны
+	var face := Vector3(-pos.x, 0, -pos.z).normalized()
+	var side := Vector3(face.z, 0, -face.x)
+	if side.dot(Vector3(pos.x, 0, pos.z)) < 0.0:
+		side = -side
+	return pos + face * 2.9 + side * 1.6
 
 
 func _build_signs() -> void:
 	var wood := _mat(Color(0.32, 0.22, 0.14), 0.9, 0.0, "wood", 1.2)
 	# Таблички у входа в каждое здание: название и что там делать
 	for t in _sign_targets():
-		var pos: Vector3 = t[3]
-		var dir := Vector3(-pos.x, 0, 3.0 - pos.z).normalized()
-		var side := Vector3(dir.z, 0, -dir.x)
-		var at := pos + dir * (2.9 if t[0] != "portal" else 1.4) + side * 1.5
 		if t[0] == "portal":
-			at = PORTAL_POS + Vector3(-1.9, 0, 2.2)
+			continue  # портал виден и так — без таблички
+		var at := _sign_pos(t[0], t[3])
 		var sg := Node3D.new()
 		sg.position = at
 		_world.add_child(sg)
@@ -7077,15 +7152,14 @@ func _label_stalls() -> void:
 		var nm: String = _villagers[best]["profile"]["name"]
 		var tag: String = str(Meta.SELLERS.get(nm, {}).get("tag", "товары для прокачки"))
 		var col: Color = [CYAN, MAGENTA, GOLD, Color(0.4, 1.0, 0.5)][si % 4]
-		var l := _label3d(_world, "ЛАВКА • %s\n%s" % [nm.to_upper(), tag], sp + Vector3(0, 2.75, 0), col, 26)
+		var l := _label3d(_world, "ЛАВКА • %s\n%s" % [nm.to_upper(), tag], sp + Vector3(0, 2.6, 0), col, 18)
 		l.no_depth_test = false
+		_prox_labels.append([l, sp, 3.0])
 
 
 
 ## Рынок: вывеска над площадью торговцев и гирлянда фонарей между лавками.
 func _market_decor() -> void:
-	var l := _label3d(_world, "РЫНОК", MARKET + Vector3(0, 3.6, 0), GOLD, 40)
-	l.no_depth_test = false
 	for i in STALLS.size() - 1:
 		var a: Vector3 = STALLS[i]
 		var b: Vector3 = STALLS[i + 1]
