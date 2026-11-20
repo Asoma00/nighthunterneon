@@ -2,6 +2,7 @@ extends Node2D
 ## Герой: выбранный персонаж, движение, здоровье, опыт, активная способность,
 ## оружие (с эволюциями и синергиями) и все визуальные слои.
 
+const Awaken := preload("res://scripts/awaken.gd")
 const Data := preload("res://scripts/data.gd")
 const Pixel := preload("res://scripts/pixel.gd")
 const Fx := preload("res://scripts/fx.gd")
@@ -224,6 +225,9 @@ func setup(id: String) -> void:
 	dodge += float(hm.get("dodge", 0.0))
 	damage_mult *= float(hm.get("damage", 1.0))
 	laststand = bool(hm.get("laststand", false))
+	# Пробуждение: подкласс героя после его главы
+	if profile.is_empty():
+		Awaken.apply(self)
 
 
 func _ready() -> void:
@@ -598,6 +602,8 @@ func _later(t: float, f: Callable) -> void:
 
 func _process_body(delta: float) -> void:
 	_update_down_mark(delta)
+	if not puppet and not remote:
+		Awaken.tick(self, delta)
 	if puppet:
 		_puppet_tick(delta)
 		return
@@ -1642,9 +1648,13 @@ func take_damage(amount: float) -> void:
 		Fx.text_pop(main, position + Vector2(0, -20), "щит", Color(0.5, 0.9, 1.0), 16)
 		Sound.play("zap", -6.0, 1.4)
 		return
+	if Awaken.on_hurt(self):
+		_invuln = 0.5
+		return
 	if dodge > 0.0 and randf() < dodge:
 		_invuln = 0.3
 		Fx.text_pop(main, position + Vector2(0, -20), "уклон", Color(1.0, 0.6, 0.6), 16)
+		Awaken.on_dodge(self)
 		return
 	amount = maxf(1.0, amount * dmg_taken_k - armor - floorf(_bastion))
 	hp -= amount

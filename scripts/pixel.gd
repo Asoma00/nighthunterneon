@@ -276,6 +276,8 @@ static func frames(key: String, cache_key := "") -> Dictionary:
 
 ## Размеры и параметры спрайта; скины героев («rin~oni») берут параметры базового героя.
 static func _spec(key: String) -> Array:
+	if key.begins_with("cmob~"):
+		return SPECS.get(key.get_slice("~", 2), [18, 24, 8, true])
 	var base := base_key(key)
 	if SPECS.has(base):
 		return SPECS[base]
@@ -589,6 +591,10 @@ static func _paint_mods(b: Image, e: Image, L: Dictionary, f: int) -> void:
 
 
 static func _paint(key: String, b: Image, e: Image, f: int) -> void:
+	if key.begins_with("cmob~"):
+		# Тварь главы героя: свой облик края
+		load("res://scripts/chapter_art.gd").paint_mob(key, b, e, f)
+		return
 	# «imp~hue140»: обычный враг в гамме своей локации (главы героев)
 	var hi := key.find("~hue")
 	if hi > 0:
@@ -4193,6 +4199,11 @@ static func _paint_boss_variant(key: String, b: Image, e: Image, f: int) -> void
 	var d: Dictionary = Bosses.by_id(key.substr(bk.length() + 1))
 	if d.is_empty():
 		_paint_boss(bk, b, e, f)
+		return
+	var CA = load("res://scripts/chapter_art.gd")
+	if not CA.look_of(d).is_empty():
+		# Владыка главы героя: своё тело, а не перекраска общего босса
+		CA.paint_boss(d, b, e, f)
 		return
 	var P := _boss_pose(f)
 	var A: Dictionary = BOSS_ANCHOR[bk].duplicate()

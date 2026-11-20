@@ -18,6 +18,7 @@ static var last_reward := {}
 static var last_run := {}   # итоги последней вылазки — для доски у портала (сохраняются)
 static var levels_cleared := 0
 static var level_best := {}
+static var subclass := {}         # пробуждение: герой -> id подкласса
 static var hero_ch := {}          # главы героев: герой -> сколько уровней пройдено
 static var nickname := "Охотник"
 static var stats := {}  # статистика профиля: kills, time, bosses, wins, deaths, reactions, max_level, best_endless, heroes{}
@@ -256,6 +257,7 @@ static func reset() -> void:
 	levels_cleared = 0
 	level_best = {}
 	hero_ch = {}
+	subclass = {}
 	nickname = "Охотник"
 	stats = {}
 	seen = {}
@@ -310,6 +312,7 @@ static func ensure_loaded() -> void:
 	levels_cleared = cfg.get_value("meta", "levels_cleared", 0)
 	level_best = cfg.get_value("meta", "level_best", {})
 	hero_ch = cfg.get_value("meta", "hero_ch", {})
+	subclass = cfg.get_value("meta", "subclass", {})
 	trees = cfg.get_value("meta", "trees", {})
 	if cfg.has_section_key("meta", "heroes_owned"):
 		heroes_owned = cfg.get_value("meta", "heroes_owned", ["vega"])
@@ -384,6 +387,7 @@ static func save() -> void:
 	cfg.set_value("meta", "levels_cleared", levels_cleared)
 	cfg.set_value("meta", "level_best", level_best)
 	cfg.set_value("meta", "hero_ch", hero_ch)
+	cfg.set_value("meta", "subclass", subclass)
 	cfg.set_value("meta", "trees", trees)
 	cfg.set_value("meta", "heroes_owned", heroes_owned)
 	cfg.set_value("meta", "seen", seen)

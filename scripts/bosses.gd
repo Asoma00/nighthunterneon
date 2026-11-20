@@ -107,6 +107,6 @@ static func by_id(id: String) -> Dictionary:
 	for d in ROSTER:
 		if d["id"] == id:
 			return d
-	if id.begins_with("h"):
+	if id.begins_with("h") or id.begins_with("gh"):
 		return preload("res://scripts/hero_chapters.gd").boss_by_id(id)
 	return {}

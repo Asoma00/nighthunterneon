@@ -99,7 +99,7 @@ func _ready() -> void:
 	_dnoise.cellular_return_type = FastNoiseLite.RETURN_CELL_VALUE
 	_dnoise.frequency = 0.45
 	_dnoise.fractal_type = FastNoiseLite.FRACTAL_NONE
-	var g := Pixel.ground()
+	var g: Dictionary = _ground_tex()
 	_period = float(g["size"]) * Pixel.PX
 	_ground = _make_ground_sprite(g["base"])
 	_ground_emit = _make_ground_sprite(g["emit"])
@@ -109,6 +109,19 @@ func _ready() -> void:
 	if not at.is_empty():
 		_ground.modulate = at["ground"]
 		_ground_emit.modulate = at["glow"]
+
+
+## Пол: на собранной карте главы — свой рисунок края.
+static var _cground := {}
+
+
+func _ground_tex() -> Dictionary:
+	if main != null and main.get("cmap") != null:
+		var h: String = main.cmap.hero
+		if not _cground.has(h):
+			_cground[h] = load("res://scripts/chapter_art.gd").ground(h)
+		return _cground[h]
+	return Pixel.ground()
 
 
 func _make_ground_sprite(t: Texture2D) -> Sprite2D:
@@ -140,7 +153,7 @@ func _process(delta: float) -> void:
 	# Свои камеры на одном экране: базовый пол есть и вокруг каждого отдельного вида
 	var ex: Array = main.extra_view_centers() if main.has_method("extra_view_centers") else []
 	while _extra.size() < ex.size():
-		var g := Pixel.ground()
+		var g: Dictionary = _ground_tex()
 		var eb := _make_ground_sprite(g["base"])
 		var ee := _make_ground_sprite(g["emit"])
 		ee.material = Pixel.mat_add()
@@ -196,6 +209,12 @@ func _build_chunk(key: Vector2i) -> Array:
 	_chunk_obst[key] = []
 	var biome: Dictionary = BIOMES[biome_at(key)]
 	var origin := Vector2(key) * CHUNK
+	if main != null and main.get("cmap") != null:
+		# Собранная карта главы: только свои стены и убранство, без случайной застройки
+		_lights = 0
+		for it in main.cmap.placements(key):
+			nodes.append(_make_prop(it[1], it[0], it[3], false, it[2]))
+		return nodes
 
 	# Цветовой оттенок области — мягкое пятно цвета биома на земле
 	var tint := Sprite2D.new()
@@ -394,8 +413,9 @@ func _make_decal(kind: String, pos: Vector2, rng: RandomNumberGenerator, scale_k
 
 
 func _make_prop(kind: String, pos: Vector2, with_light: bool, flip: bool, rot := 0.0) -> Node2D:
-	var fr := Pixel.frames(kind)
-	var size: Vector2 = fr["size"] * Pixel.PX
+	var chap := kind.begins_with("c_")
+	var fr: Dictionary = {} if chap else Pixel.frames(kind)
+	var size: Vector2 = (Props3D.csize(kind) if chap else fr["size"]) * Pixel.PX
 	var root := Node2D.new()
 	root.position = pos
 	props_parent.add_child(root)
@@ -470,8 +490,8 @@ func _prop_extras(kind: String, pos: Vector2, root: Node2D, size: Vector2, with_
 		occ.occluder = poly
 		root.add_child(occ)
 
-	if with_light and LIGHT_PROPS.has(kind):
-		var col: Color = LIGHT_PROPS[kind]
+	if with_light and (LIGHT_PROPS.has(kind) or kind.begins_with("c_")):
+		var col: Color = Props3D.cglow(kind) if kind.begins_with("c_") else LIGHT_PROPS[kind]
 		var top := Vector2(0, -size.y * Pixel.STAND * 0.75)
 		var light := PointLight2D.new()
 		light.texture = Pixel.glow()
@@ -516,6 +536,8 @@ func is_free(pos: Vector2, r: float) -> bool:
 func push_out(pos: Vector2, r: float, iterations := 2) -> Vector2:
 	for _it in iterations:
 		pos = _push_once(pos, r)
+	if main != null and main.cmap != null:
+		pos = main.cmap.clamp_pos(pos, r)
 	return pos
 
 
@@ -669,6 +691,8 @@ var _dnoise := FastNoiseLite.new()
 
 func district_at(key: Vector2i) -> String:
 	var list: Array = main.level.get("districts", ["street", "market", "park", "forest"]) if main and main.level else ["street"]
+	if main != null and main.cmap != null:
+		return list[0]
 	key = wrap_key(key)
 	if key == Vector2i.ZERO:
 		return list[0]

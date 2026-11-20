@@ -24,6 +24,8 @@ const PIXEL_KINDS: Array = []
 
 
 static func supports(kind: String) -> bool:
+	if kind.begins_with("c_"):
+		return true
 	return kind in KINDS and not (kind in PIXEL_KINDS)
 
 
@@ -119,6 +121,11 @@ static func build(kind: String, rng: RandomNumberGenerator) -> Node3D:
 	if kind in VOXEL_KINDS:
 		return _vox_build(kind, rng)
 	var root := Node3D.new()
+	if kind.begins_with("c_"):
+		_chap3d(root, kind, rng)
+		var cs := rng.randf_range(0.94, 1.08)
+		root.scale = Vector3(cs, cs, cs)
+		return root
 	var stone := mat(Color(0.34, 0.31, 0.4), "brick", 2.2)
 	var dark := mat(Color(0.2, 0.19, 0.26), "panel", 2.0)
 	var wood := mat(Color(0.45, 0.32, 0.24), "wood", 2.4)
@@ -288,6 +295,14 @@ static func build(kind: String, rng: RandomNumberGenerator) -> Node3D:
 ## ["r", центр_x, центр_z, полуширина, полуглубина] или ["c", центр_x, центр_z, радиус].
 ## Кусты и грибы — проходимые, у них форм нет.
 static func shapes(kind: String) -> Array:
+	if kind.begins_with("c_"):
+		match kind.get_slice("_", 2):
+			"w":
+				return [["r", 0.0, 0.0, 0.62, 0.2]]
+			"b":
+				return [["c", 0.0, 0.0, 0.42]]
+			_:
+				return [["c", 0.0, 0.0, 0.1]]
 	match kind:
 		"house0", "house1":
 			return [["r", 0.0, 0.0, 0.8, 0.62]]
@@ -740,3 +755,334 @@ static func set_fade_any(gi: GeometryInstance3D, k: float) -> void:
 			c.albedo_color.a = (base as StandardMaterial3D).albedo_color.a * (1.0 - float(q) / 10.0)
 			_alpha_cache[key] = c
 		mi.set_surface_override_material(i, _alpha_cache[key])
+
+
+# ================= Свои объекты глав героев =================
+# У каждой главы — свой набор: стена коридора (w), крупный объект (b), убранство (d).
+# Всё собрано из примитивов по лору края, а не из общих объектов поля боя.
+
+const CHAP_COL := {"vega": Color(0.69, 0.40, 1.00), "rin": Color(1.00, 0.29, 0.42), "bram": Color(1.00, 0.54, 0.16),
+	"kira": Color(0.23, 1.00, 0.78), "skyla": Color(0.75, 0.85, 1.00), "orm": Color(1.00, 0.72, 0.29),
+	"mora": Color(0.75, 0.25, 1.00), "zephyr": Color(0.48, 0.82, 1.00), "iris": Color(0.54, 1.00, 0.23),
+	"lyra": Color(1.00, 0.42, 0.82), "sol": Color(1.00, 0.87, 0.33), "volt": Color(0.27, 0.87, 1.00), "kai": Color(0.55, 0.55, 1.00)}
+
+
+## Размер объекта главы в пикселях спрайта (для границ видимости и света).
+static func csize(kind: String) -> Vector2:
+	match kind.get_slice("_", 2):
+		"w":
+			return Vector2(46, 40)
+		"b":
+			return Vector2(36, 90)
+	return Vector2(18, 20)
+
+
+static func cglow(kind: String) -> Color:
+	return CHAP_COL.get(kind.get_slice("_", 1), CYAN)
+
+
+static func _chap3d(root: Node3D, kind: String, rng: RandomNumberGenerator) -> void:
+	var h := kind.get_slice("_", 1)
+	var part := kind.get_slice("_", 2)
+	var g: Color = CHAP_COL.get(h, CYAN)
+	var gl := emat(g, 1.6)
+	var gs := emat(g, 0.8)
+	match h + "_" + part:
+		# ---- Вега: сгоревшая Академия техномагии ----
+		"vega_w":
+			var char_w := mat(Color(0.16, 0.12, 0.16), "wood", 2.4)
+			_add(root, _box(1.3, 1.25, 0.36), char_w, Vector3(0, 0.62, 0))
+			for y: float in [0.3, 0.68, 1.05]:
+				_add(root, _box(1.2, 0.04, 0.3), mat(Color(0.1, 0.08, 0.1), "", 1.0), Vector3(0, y - 0.12, 0.02))
+				for k in 7:
+					if rng.randf() < 0.75:
+						var bh := rng.randf_range(0.18, 0.28)
+						_add(root, _box(0.11, bh, 0.24), mat(Color(0.25 + rng.randf() * 0.2, 0.12, 0.2 + rng.randf() * 0.2), "", 1.0), Vector3(-0.5 + k * 0.165, y - 0.1 + bh / 2.0, 0.03), Vector3(0, 0, rng.randf_range(-8, 8)))
+			_add(root, _box(1.32, 0.03, 0.03), gl, Vector3(0, 1.26, 0.19), Vector3.ZERO, false)
+			_add(root, _box(0.5, 0.08, 0.02), emat(Color(1.0, 0.45, 0.2), 2.4), Vector3(rng.randf_range(-0.3, 0.3), 0.08, 0.19), Vector3.ZERO, false)
+		"vega_b":
+			var st := mat(Color(0.3, 0.27, 0.36), "brick", 2.0)
+			_add(root, _cyl(0.4, 0.46, 0.3, 8), st, Vector3(0, 0.15, 0))
+			_add(root, _cyl(0.22, 0.28, 2.2, 8), st, Vector3(0, 1.4, 0), Vector3(0, 0, 4))
+			_add(root, _box(0.7, 0.12, 0.5), mat(Color(0.18, 0.14, 0.2), "wood", 2.0), Vector3(0.05, 2.5, 0), Vector3(-18, 0, 4))
+			for k in 3:
+				var an := TAU * k / 3.0
+				_add(root, _box(0.08, 0.16, 0.02), gs, Vector3(cos(an) * 0.32, 2.85 + k * 0.12, sin(an) * 0.32), Vector3(0, -rad_to_deg(an), 20), false)
+			_add(root, _sph(0.12, 8), gl, Vector3(0, 2.95, 0), Vector3.ZERO, false)
+		"vega_d":
+			for k in 4:
+				_add(root, _box(0.36 - k * 0.04, 0.08, 0.26 - k * 0.02), mat(Color(0.3, 0.16, 0.3).lightened(k * 0.08), "", 1.0), Vector3(0, 0.04 + k * 0.08, 0), Vector3(0, rng.randf_range(-25, 25), 0))
+			_add(root, _box(0.18, 0.18, 0.01), gl, Vector3(0, 0.55, 0), Vector3(0, 30, 0), false)
+		# ---- Рин: поместье клана Тэцу ----
+		"rin_w":
+			var wd := mat(Color(0.28, 0.14, 0.12), "wood", 2.6)
+			for x: float in [-0.6, 0.6]:
+				_add(root, _box(0.1, 1.5, 0.12), wd, Vector3(x, 0.75, 0))
+			_add(root, _box(1.3, 0.1, 0.14), wd, Vector3(0, 1.5, 0))
+			_add(root, _box(1.3, 0.08, 0.14), wd, Vector3(0, 0.08, 0))
+			_add(root, _box(1.1, 1.3, 0.04), emat(Color(1.0, 0.9, 0.82), 0.45), Vector3(0, 0.78, 0))
+			for x: float in [-0.2, 0.2]:
+				_add(root, _box(0.03, 1.3, 0.06), wd, Vector3(x, 0.78, 0))
+			_add(root, _box(1.1, 0.03, 0.06), wd, Vector3(0, 0.8, 0))
+			_add(root, _box(0.18, 0.18, 0.02), gl, Vector3(0.38, 1.15, 0.04), Vector3(0, 0, 45), false)
+		"rin_b":
+			var red := mat(Color(0.62, 0.12, 0.14), "wood", 2.0)
+			for x: float in [-0.55, 0.55]:
+				_add(root, _cyl(0.09, 0.11, 2.4, 8), red, Vector3(x, 1.2, 0))
+				_add(root, _cyl(0.14, 0.14, 0.18, 8), mat(Color(0.1, 0.08, 0.08), "", 1.0), Vector3(x, 0.09, 0))
+			_add(root, _box(1.7, 0.16, 0.22), mat(Color(0.12, 0.08, 0.08), "wood", 2.0), Vector3(0, 2.45, 0))
+			_add(root, _box(1.45, 0.12, 0.16), red, Vector3(0, 2.1, 0))
+			_add(root, _box(0.24, 0.32, 0.04), gl, Vector3(0, 2.27, 0.1), Vector3.ZERO, false)
+		"rin_d":
+			var wd2 := mat(Color(0.2, 0.1, 0.08), "wood", 2.0)
+			_add(root, _box(0.5, 0.06, 0.12), wd2, Vector3(0, 0.05, 0))
+			for x: float in [-0.2, 0.2]:
+				_add(root, _box(0.05, 0.45, 0.08), wd2, Vector3(x, 0.25, 0))
+			for k in 2:
+				_add(root, _box(0.62, 0.025, 0.02), gl if k == 0 else mat(Color(0.75, 0.75, 0.8), "", 1.0, 0.3), Vector3(0, 0.3 + k * 0.13, 0.05), Vector3(0, 0, 6), false)
+		# ---- Брам: подгорные штольни и рунные кузни ----
+		"bram_w":
+			var wd := mat(Color(0.32, 0.22, 0.14), "wood", 2.4)
+			var rk := mat(Color(0.26, 0.22, 0.22), "brick", 1.4)
+			var r := _add(root, _sph(0.6, 8), rk, Vector3(0, 0.35, 0))
+			r.scale = Vector3(1.15, 0.75, 0.42)
+			for x: float in [-0.5, 0.5]:
+				_add(root, _box(0.14, 1.3, 0.14), wd, Vector3(x, 0.65, 0.12))
+			_add(root, _box(1.3, 0.16, 0.16), wd, Vector3(0, 1.32, 0.12))
+			_add(root, _sph(0.07, 6), emat(Color(1.0, 0.7, 0.3), 2.6), Vector3(0, 1.18, 0.22), Vector3.ZERO, false)
+			for k in 3:
+				_add(root, _sph(0.05, 5), gs, Vector3(rng.randf_range(-0.5, 0.5), rng.randf_range(0.2, 0.55), 0.24), Vector3.ZERO, false)
+		"bram_b":
+			var iron := mat(Color(0.22, 0.22, 0.26), "panel", 2.0, 0.4)
+			_add(root, _cyl(0.5, 0.6, 0.5, 8), mat(Color(0.3, 0.26, 0.24), "brick", 1.6), Vector3(0, 0.25, 0))
+			_add(root, _box(0.5, 0.35, 0.4), iron, Vector3(0, 0.68, 0))
+			_add(root, _box(1.2, 0.26, 0.5), iron, Vector3(0.1, 0.98, 0))
+			_add(root, _prism(0.4, 0.26, 0.5), iron, Vector3(-0.68, 0.98, 0), Vector3(0, 0, 90))
+			_add(root, _box(0.9, 0.03, 0.03), gl, Vector3(0.1, 0.98, 0.26), Vector3.ZERO, false)
+			for k in 3:
+				_add(root, _box(0.1, 0.1, 0.02), gl, Vector3(-0.2 + k * 0.2, 0.68, 0.21), Vector3(0, 0, 45), false)
+		"bram_d":
+			var ir := mat(Color(0.3, 0.26, 0.24), "panel", 2.0)
+			_add(root, _box(0.5, 0.26, 0.34), ir, Vector3(0, 0.2, 0))
+			for x: float in [-0.18, 0.18]:
+				_add(root, _cyl(0.07, 0.07, 0.38, 8), mat(Color(0.12, 0.12, 0.14), "", 1.0), Vector3(x, 0.07, 0), Vector3(90, 0, 0))
+			for k in 4:
+				_add(root, _sph(0.08, 5), gl, Vector3(rng.randf_range(-0.15, 0.15), 0.36, rng.randf_range(-0.1, 0.1)), Vector3.ZERO, false)
+		# ---- Кира: серверные катакомбы ----
+		"kira_w":
+			var bl := mat(Color(0.08, 0.1, 0.12), "panel", 3.0, 0.4)
+			for x: float in [-0.33, 0.33]:
+				_add(root, _box(0.6, 1.6, 0.42), bl, Vector3(x, 0.8, 0))
+				for y in 8:
+					_add(root, _box(0.5, 0.02, 0.02), emat(Color(0.1, 0.25, 0.25), 0.6), Vector3(x, 0.18 + y * 0.18, 0.21), Vector3.ZERO, false)
+					if rng.randf() < 0.55:
+						_add(root, _box(0.04, 0.04, 0.02), gl if rng.randf() < 0.7 else emat(Color(1.0, 0.3, 0.3), 2.0), Vector3(x + rng.randf_range(-0.2, 0.2), 0.24 + y * 0.18, 0.22), Vector3.ZERO, false)
+		"kira_b":
+			var mt := mat(Color(0.2, 0.24, 0.26), "panel", 2.0, 0.4)
+			_add(root, _cyl(0.32, 0.42, 0.3, 6), mt, Vector3(0, 0.15, 0))
+			_add(root, _cyl(0.06, 0.12, 3.0, 6), mt, Vector3(0, 1.7, 0))
+			for k in 3:
+				_add(root, _cyl(0.17 - k * 0.03, 0.17 - k * 0.03, 0.03, 10), gs, Vector3(0, 1.4 + k * 0.6, 0), Vector3.ZERO, false)
+			_add(root, _sph(0.1, 8), gl, Vector3(0, 3.25, 0), Vector3.ZERO, false)
+			for a in 4:
+				var an := TAU * a / 4.0
+				_add(root, _cyl(0.025, 0.025, 1.3, 4), mat(Color(0.05, 0.05, 0.06), "", 1.0), Vector3(cos(an) * 0.45, 0.6, sin(an) * 0.45), Vector3(sin(an) * 25, 0, -cos(an) * 25))
+		"kira_d":
+			for k in 3:
+				var t := _add(root, _cyl(0.24 - k * 0.05, 0.24 - k * 0.05, 0.06, 12), mat(Color(0.06, 0.07, 0.08), "", 1.0), Vector3(0, 0.03 + k * 0.06, 0))
+				t.scale = Vector3(1, 1, 0.8)
+			_add(root, _box(0.06, 0.06, 0.06), gl, Vector3(0.12, 0.2, 0.1), Vector3.ZERO, false)
+		# ---- Скайла: туманный тракт Серебряных Сов ----
+		"skyla_w":
+			var lg := mat(Color(0.32, 0.3, 0.3), "wood", 2.2)
+			for k in 6:
+				var hh := rng.randf_range(1.1, 1.45)
+				_add(root, _cyl(0.1, 0.11, hh, 6), lg, Vector3(-0.55 + k * 0.22, hh / 2.0, 0), Vector3(0, 0, rng.randf_range(-4, 4)))
+				_add(root, _cyl(0.0, 0.1, 0.18, 6), lg, Vector3(-0.55 + k * 0.22, hh + 0.09, 0))
+			_add(root, _box(1.35, 0.08, 0.06), mat(Color(0.22, 0.2, 0.2), "wood", 2.0), Vector3(0, 0.75, 0.1))
+			_add(root, _box(0.05, 0.12, 0.02), gl, Vector3(0.1, 0.95, 0.13), Vector3(0, 0, 20), false)
+		"skyla_b":
+			var lg2 := mat(Color(0.3, 0.28, 0.28), "wood", 2.2)
+			for a in 4:
+				var an := TAU * a / 4.0 + PI / 4.0
+				_add(root, _cyl(0.05, 0.07, 2.4, 5), lg2, Vector3(cos(an) * 0.32, 1.2, sin(an) * 0.32), Vector3(sin(an) * -5, 0, cos(an) * 5))
+			_add(root, _box(0.9, 0.08, 0.9), lg2, Vector3(0, 2.4, 0))
+			_add(root, _box(0.7, 0.5, 0.7), mat(Color(0.26, 0.26, 0.3), "wood", 2.0), Vector3(0, 2.7, 0))
+			_add(root, _prism(1.0, 0.45, 1.0), mat(Color(0.2, 0.22, 0.3), "wood", 2.0), Vector3(0, 3.18, 0))
+			for x: float in [-0.12, 0.12]:
+				_add(root, _sph(0.07, 6), gl, Vector3(x, 2.75, 0.36), Vector3.ZERO, false)
+		"skyla_d":
+			var wh := _add(root, _cyl(0.3, 0.3, 0.06, 10), mat(Color(0.3, 0.26, 0.22), "wood", 2.0), Vector3(0, 0.3, 0), Vector3(80, 0, 0))
+			wh.scale = Vector3.ONE
+			_add(root, _cyl(0.04, 0.04, 0.5, 4), mat(Color(0.2, 0.2, 0.2), "", 1.0), Vector3(0.3, 0.25, 0.1))
+			_add(root, _box(0.1, 0.12, 0.1), gl, Vector3(0.3, 0.55, 0.1), Vector3.ZERO, false)
+		# ---- Орм: медная цитадель ----
+		"orm_w":
+			var cu := mat(Color(0.62, 0.38, 0.2), "panel", 2.4, 0.35)
+			_add(root, _box(1.35, 1.35, 0.3), cu, Vector3(0, 0.68, 0))
+			for x in 4:
+				for y in 3:
+					_add(root, _sph(0.03, 4), mat(Color(0.8, 0.6, 0.35), "", 1.0, 0.3), Vector3(-0.55 + x * 0.36, 0.25 + y * 0.45, 0.16))
+			_add(root, _cyl(0.07, 0.07, 1.4, 8), mat(Color(0.45, 0.28, 0.16), "panel", 2.0, 0.35), Vector3(0, 1.0, 0.2), Vector3(0, 0, 90))
+			_add(root, _box(0.18, 0.18, 0.04), gl, Vector3(0.4, 0.55, 0.16), Vector3(0, 0, 45), false)
+		"orm_b":
+			var cu2 := mat(Color(0.6, 0.36, 0.18), "panel", 2.2, 0.35)
+			_add(root, _cyl(0.5, 0.55, 1.3, 12), cu2, Vector3(0, 0.65, 0))
+			_add(root, _sph(0.5, 12), cu2, Vector3(0, 1.3, 0))
+			_add(root, _cyl(0.1, 0.12, 1.4, 8), mat(Color(0.25, 0.2, 0.18), "panel", 2.0), Vector3(0.2, 2.2, 0))
+			_add(root, _cyl(0.2, 0.2, 0.04, 12), gl, Vector3(0, 0.6, 0.48), Vector3(90, 0, 0), false)
+			_add(root, _sph(0.08, 6), emat(Color(1.0, 0.5, 0.2), 2.5), Vector3(0.2, 2.95, 0), Vector3.ZERO, false)
+		"orm_d":
+			var cu3 := mat(Color(0.55, 0.34, 0.18), "panel", 2.0, 0.35)
+			_add(root, _cyl(0.06, 0.06, 0.5, 8), cu3, Vector3(0, 0.25, 0))
+			_add(root, _cyl(0.06, 0.06, 0.4, 8), cu3, Vector3(0.18, 0.5, 0), Vector3(0, 0, 90))
+			_add(root, _cyl(0.12, 0.12, 0.03, 10), gl, Vector3(0, 0.55, 0.05), Vector3(90, 0, 0), false)
+		# ---- Мора: кладбище данных ----
+		"mora_w":
+			var gr := mat(Color(0.22, 0.2, 0.26), "brick", 2.0)
+			for x: float in [-0.4, 0.4]:
+				var hh := rng.randf_range(0.9, 1.25)
+				_add(root, _box(0.5, hh, 0.16), gr, Vector3(x, hh / 2.0, 0), Vector3(0, 0, rng.randf_range(-6, 6)))
+				_add(root, _cyl(0.25, 0.25, 0.16, 10), gr, Vector3(x, hh, 0), Vector3(90, 0, 0))
+				_add(root, _box(0.3, 0.22, 0.02), gs, Vector3(x, hh * 0.65, 0.09), Vector3.ZERO, false)
+				_add(root, _box(0.3 * rng.randf_range(0.2, 1.0), 0.03, 0.02), gl, Vector3(x - 0.05, hh * 0.45, 0.09), Vector3.ZERO, false)
+		"mora_b":
+			var gr2 := mat(Color(0.24, 0.2, 0.28), "brick", 2.0)
+			_add(root, _box(0.8, 0.3, 0.8), gr2, Vector3(0, 0.15, 0))
+			_add(root, _cyl(0.0, 0.32, 2.6, 4), gr2, Vector3(0, 1.6, 0), Vector3(0, 45, 0))
+			_add(root, _cyl(0.22, 0.22, 0.03, 14), gs, Vector3(0, 3.0, 0), Vector3(80, 0, 0), false)
+			for a in 3:
+				_add(root, _box(0.06, 0.6, 0.02), gs, Vector3(-0.15 + a * 0.15, 1.0, 0.16), Vector3.ZERO, false)
+		"mora_d":
+			_add(root, _box(0.3, 0.2, 0.06), mat(Color(0.22, 0.2, 0.26), "brick", 2.0), Vector3(0, 0.1, 0))
+			for x: float in [-0.08, 0.08]:
+				_add(root, _cyl(0.025, 0.025, 0.14, 5), mat(Color(0.85, 0.82, 0.75), "", 1.0), Vector3(x, 0.27, 0.06))
+				_add(root, _sph(0.03, 5), gl, Vector3(x, 0.36, 0.06), Vector3.ZERO, false)
+		# ---- Зефир: степь грозы ----
+		"zephyr_w":
+			for k in 4:
+				var hh := rng.randf_range(0.7, 1.5)
+				_add(root, _cyl(0.0, rng.randf_range(0.14, 0.24), hh, 4), mat(Color(0.5, 0.65, 0.75, 1.0), "", 1.0, 0.1), Vector3(-0.5 + k * 0.33, hh / 2.0, rng.randf_range(-0.08, 0.08)), Vector3(rng.randf_range(-12, 12), rng.randf_range(0, 90), rng.randf_range(-12, 12)))
+			_add(root, _box(0.03, 0.7, 0.03), gl, Vector3(0.1, 0.4, 0.12), Vector3(0, 0, 18), false)
+		"zephyr_b":
+			var cu := mat(Color(0.5, 0.34, 0.2), "panel", 2.0, 0.35)
+			for k in 4:
+				_add(root, _cyl(0.24 - k * 0.03, 0.26 - k * 0.03, 0.6, 6), cu, Vector3(0, 0.3 + k * 0.6, 0), Vector3(0, k * 30, 0))
+				_add(root, _box(0.16, 0.08, 0.02), gl, Vector3(0, 0.36 + k * 0.6, 0.24 - k * 0.03), Vector3.ZERO, false)
+			for x: float in [-1.0, 1.0]:
+				_add(root, _box(0.5, 0.06, 0.08), cu, Vector3(x * 0.35, 2.1, 0), Vector3(0, 0, x * 20))
+			_add(root, _cyl(0.0, 0.03, 0.8, 4), gl, Vector3(0, 2.8, 0), Vector3.ZERO, false)
+		"zephyr_d":
+			var rk2 := _add(root, _sph(0.22, 6), mat(Color(0.32, 0.36, 0.42), "", 1.0), Vector3(0, 0.12, 0))
+			rk2.scale = Vector3(1.2, 0.6, 1.0)
+			for k in 3:
+				_add(root, _cyl(0.01, 0.01, 0.25 + k * 0.08, 3), gl, Vector3(-0.08 + k * 0.08, 0.35, 0), Vector3.ZERO, false)
+		# ---- Ирис: карантин «Сплава» ----
+		"iris_w":
+			var yl := mat(Color(0.75, 0.68, 0.18), "panel", 2.0)
+			var bk := mat(Color(0.1, 0.1, 0.1), "", 1.0)
+			for x: float in [-0.55, 0.55]:
+				_add(root, _box(0.1, 0.9, 0.3), bk, Vector3(x, 0.45, 0))
+			for k in 6:
+				_add(root, _box(0.2, 0.2, 0.06), yl if k % 2 == 0 else bk, Vector3(-0.5 + k * 0.2, 0.75, 0.02))
+			_add(root, _box(1.2, 0.04, 0.04), gl, Vector3(0, 0.35, 0.05), Vector3.ZERO, false)
+			_add(root, _box(1.3, 0.5, 0.02), emat(Color(0.5, 1.0, 0.3), 0.25), Vector3(0, 1.15, 0), Vector3.ZERO, false)
+		"iris_b":
+			var mt2 := mat(Color(0.3, 0.32, 0.3), "panel", 2.0, 0.4)
+			_add(root, _cyl(0.45, 0.5, 0.3, 12), mt2, Vector3(0, 0.15, 0))
+			_add(root, _cyl(0.38, 0.38, 1.7, 12), emat(Color(g.r * 0.45, g.g * 0.45, g.b * 0.45), 0.6), Vector3(0, 1.15, 0))
+			_add(root, _cyl(0.45, 0.45, 0.25, 12), mt2, Vector3(0, 2.1, 0))
+			var blob := _add(root, _sph(0.22, 8), mat(Color(0.15, 0.18, 0.12), "", 1.0), Vector3(0, 1.1, 0))
+			blob.scale = Vector3(1.0, 1.5, 0.8)
+			for k in 3:
+				_add(root, _cyl(0.03, 0.03, 0.6, 4), mt2, Vector3(-0.2 + k * 0.2, 2.5, 0), Vector3(0, 0, -20 + k * 20))
+		"iris_d":
+			_add(root, _cyl(0.17, 0.17, 0.42, 10), mat(Color(0.7, 0.62, 0.15), "panel", 2.0), Vector3(0, 0.21, 0))
+			_add(root, _cyl(0.1, 0.1, 0.02, 3), emat(Color(0.05, 0.05, 0.05), 0.0), Vector3(0, 0.25, 0.17), Vector3(90, 0, 0), false)
+			_add(root, _cyl(0.12, 0.12, 0.03, 10), gl, Vector3(0, 0.43, 0), Vector3.ZERO, false)
+		# ---- Лира: цирк «Сплав» ----
+		"lyra_w":
+			for k in 7:
+				_add(root, _box(0.17, 0.7, 0.14), mat(Color(0.85, 0.82, 0.86) if k % 2 == 0 else Color(0.7, 0.15, 0.35), "wood", 2.0), Vector3(-0.54 + k * 0.18, 0.35, 0))
+				_add(root, _sph(0.06, 6), gl if k % 2 == 0 else emat(Color(1.0, 0.85, 0.4), 2.0), Vector3(-0.54 + k * 0.18, 0.76, 0), Vector3.ZERO, false)
+			_add(root, _box(1.3, 0.06, 0.18), mat(Color(0.75, 0.6, 0.25), "", 1.0, 0.3), Vector3(0, 0.7, 0))
+		"lyra_b":
+			_add(root, _cyl(0.06, 0.08, 3.0, 8), mat(Color(0.8, 0.7, 0.4), "", 1.0, 0.3), Vector3(0, 1.5, 0))
+			for k in 8:
+				var an := TAU * k / 8.0
+				_add(root, _cyl(0.0, 0.32, 0.7, 3), mat(Color(0.85, 0.82, 0.86) if k % 2 == 0 else Color(0.75, 0.15, 0.4), "", 1.0), Vector3(cos(an) * 0.18, 2.75, sin(an) * 0.18), Vector3(sin(an) * -25, -rad_to_deg(an), cos(an) * 25))
+			_add(root, _sph(0.1, 6), gl, Vector3(0, 3.15, 0), Vector3.ZERO, false)
+			for k in 6:
+				_add(root, _sph(0.045, 5), emat(Color(1.0, 0.85, 0.4), 2.2), Vector3(cos(k) * 0.5, 2.3 - k * 0.2, sin(k) * 0.5), Vector3.ZERO, false)
+		"lyra_d":
+			_add(root, _cyl(0.2, 0.2, 0.3, 12), mat(Color(0.7, 0.15, 0.35), "", 1.0), Vector3(0, 0.15, 0))
+			_add(root, _cyl(0.21, 0.21, 0.03, 12), gl, Vector3(0, 0.31, 0), Vector3.ZERO, false)
+			_add(root, _sph(0.14, 10), mat(Color(0.2, 0.4, 0.95), "", 1.0), Vector3(0, 0.46, 0))
+		# ---- Сол: рассвет над Вратами ----
+		"sol_w":
+			var mb := mat(Color(0.82, 0.78, 0.7), "brick", 1.2, 0.5)
+			_add(root, _box(1.4, 0.14, 0.34), mb, Vector3(0, 0.07, 0))
+			_add(root, _box(1.4, 0.14, 0.34), mb, Vector3(0, 0.95, 0))
+			for k in 6:
+				_add(root, _cyl(0.06, 0.09, 0.74, 8), mb, Vector3(-0.55 + k * 0.22, 0.51, 0))
+			_add(root, _box(1.4, 0.03, 0.03), gl, Vector3(0, 1.03, 0.18), Vector3.ZERO, false)
+		"sol_b":
+			var mb2 := mat(Color(0.82, 0.78, 0.7), "brick", 1.2, 0.5)
+			_add(root, _box(0.7, 0.3, 0.7), mb2, Vector3(0, 0.15, 0))
+			_add(root, _cyl(0.2, 0.24, 2.2, 10), mb2, Vector3(0, 1.4, 0))
+			_add(root, _cyl(0.32, 0.32, 0.05, 16), mat(Color(0.75, 0.6, 0.3), "", 1.0, 0.3), Vector3(0, 2.75, 0), Vector3(90, 0, 0))
+			_add(root, _cyl(0.18, 0.18, 0.07, 14), gs, Vector3(0, 2.75, 0.02), Vector3(90, 0, 0), false)
+		"sol_d":
+			_add(root, _cyl(0.2, 0.08, 0.3, 8), mat(Color(0.6, 0.45, 0.22), "", 1.0, 0.3), Vector3(0, 0.35, 0))
+			_add(root, _cyl(0.04, 0.04, 0.2, 6), mat(Color(0.6, 0.45, 0.22), "", 1.0, 0.3), Vector3(0, 0.1, 0))
+			_add(root, _cyl(0.0, 0.14, 0.24, 6), emat(Color(1.0, 0.6, 0.2), 2.6), Vector3(0, 0.6, 0), Vector3.ZERO, false)
+		# ---- Вольт: сердце грозы ----
+		"volt_w":
+			var mt3 := mat(Color(0.22, 0.26, 0.3), "panel", 2.4, 0.4)
+			_add(root, _box(1.3, 1.0, 0.46), mt3, Vector3(0, 0.5, 0))
+			for k in 6:
+				_add(root, _box(0.04, 0.8, 0.06), mat(Color(0.15, 0.17, 0.2), "", 1.0), Vector3(-0.5 + k * 0.2, 0.5, 0.24))
+			_add(root, _prism(0.24, 0.24, 0.02), emat(Color(1.0, 0.85, 0.2), 1.8), Vector3(0.35, 0.75, 0.25), Vector3.ZERO, false)
+			for x: float in [-0.35, 0.0]:
+				_add(root, _cyl(0.06, 0.08, 0.3, 8), mat(Color(0.75, 0.75, 0.7), "", 1.0, 0.3), Vector3(x, 1.15, 0))
+			_add(root, _box(1.2, 0.03, 0.03), gl, Vector3(0, 0.12, 0.24), Vector3.ZERO, false)
+		"volt_b":
+			var mt4 := mat(Color(0.3, 0.32, 0.36), "panel", 2.0, 0.4)
+			for a in 3:
+				var an := TAU * a / 3.0
+				_add(root, _box(0.07, 3.0, 0.07), mt4, Vector3(cos(an) * 0.25, 1.5, sin(an) * 0.25), Vector3(sin(an) * -4, 0, cos(an) * 4))
+			for k in 4:
+				_add(root, _cyl(0.2 - k * 0.025, 0.2 - k * 0.025, 0.05, 10), gs, Vector3(0, 0.8 + k * 0.6, 0), Vector3.ZERO, false)
+			_add(root, _sph(0.22, 10), gl, Vector3(0, 3.15, 0), Vector3.ZERO, false)
+		"volt_d":
+			_add(root, _cyl(0.04, 0.05, 0.6, 6), mat(Color(0.3, 0.25, 0.2), "wood", 2.0), Vector3(0, 0.3, 0))
+			for k in 3:
+				_add(root, _cyl(0.08, 0.08, 0.05, 8), mat(Color(0.75, 0.85, 0.8), "", 1.0, 0.2), Vector3(0, 0.45 + k * 0.07, 0))
+			_add(root, _sph(0.04, 5), gl, Vector3(0, 0.68, 0), Vector3.ZERO, false)
+		# ---- Кай: свитки Безлунных ----
+		"kai_w":
+			var bm := mat(Color(0.3, 0.42, 0.22), "wood", 3.0)
+			for k in 8:
+				var hh := rng.randf_range(1.2, 2.0)
+				var x := -0.6 + k * 0.17 + rng.randf_range(-0.03, 0.03)
+				_add(root, _cyl(0.045, 0.05, hh, 6), bm, Vector3(x, hh / 2.0, rng.randf_range(-0.12, 0.12)), Vector3(0, 0, rng.randf_range(-5, 5)))
+				for y in int(hh / 0.4):
+					_add(root, _cyl(0.055, 0.055, 0.03, 6), mat(Color(0.2, 0.3, 0.15), "", 1.0), Vector3(x, 0.4 + y * 0.4, 0))
+			_add(root, _box(0.03, 0.3, 0.03), gl, Vector3(0.2, 1.2, 0.15), Vector3.ZERO, false)
+		"kai_b":
+			var st2 := mat(Color(0.34, 0.34, 0.38), "brick", 1.4)
+			_add(root, _box(0.6, 0.2, 0.6), st2, Vector3(0, 0.1, 0))
+			_add(root, _cyl(0.1, 0.12, 0.7, 6), st2, Vector3(0, 0.55, 0))
+			_add(root, _box(0.5, 0.4, 0.5), st2, Vector3(0, 1.1, 0))
+			_add(root, _box(0.3, 0.22, 0.52), gl, Vector3(0, 1.1, 0), Vector3.ZERO, false)
+			for k in 2:
+				_add(root, _prism(0.9 - k * 0.25, 0.3, 0.9 - k * 0.25), st2, Vector3(0, 1.45 + k * 0.32, 0))
+		"kai_d":
+			_add(root, _cyl(0.02, 0.02, 0.6, 4), mat(Color(0.2, 0.15, 0.1), "", 1.0), Vector3(0, 0.3, 0))
+			var mk := _add(root, _sph(0.13, 8), mat(Color(0.92, 0.9, 0.86), "", 1.0), Vector3(0, 0.65, 0.02))
+			mk.scale = Vector3(0.9, 1.15, 0.45)
+			for x: float in [-0.05, 0.05]:
+				_add(root, _box(0.04, 0.015, 0.02), gl, Vector3(x, 0.68, 0.08), Vector3.ZERO, false)
+			_add(root, _box(0.02, 0.1, 0.02), emat(Color(1.0, 0.25, 0.3), 1.6), Vector3(0, 0.58, 0.08), Vector3.ZERO, false)
+		_:
+			_add(root, _box(0.6, 0.6, 0.6), mat(Color(0.3, 0.3, 0.35), "panel", 2.0), Vector3(0, 0.3, 0))

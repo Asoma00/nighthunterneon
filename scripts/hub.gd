@@ -3,6 +3,7 @@ extends Node
 ## 3D-мир с наклонной камерой, светом и тенями, а герои и жители — пиксельные спрайты.
 ## Здесь строятся и улучшаются здания, призываются жители, выбирается герой.
 
+const Awaken := preload("res://scripts/awaken.gd")
 const Data := preload("res://scripts/data.gd")
 const Pixel := preload("res://scripts/pixel.gd")
 const Meta := preload("res://scripts/meta.gd")
@@ -807,6 +808,7 @@ func _build_decor() -> void:
 	var stalls := STALLS
 	for i in stalls.size():
 		_stall(stalls[i], [CYAN, MAGENTA, GOLD, Color(0.4, 1.0, 0.5)][i] as Color, rng)
+	_market_decor()
 
 	# ---- Деревья: тёмные ели со светящимися шишками и кибер-деревья ----
 	for i in 60:
@@ -1024,7 +1026,7 @@ func _house(p: Vector3, rng: RandomNumberGenerator) -> void:
 func _stall(p: Vector3, col: Color, rng: RandomNumberGenerator) -> void:
 	var root := Node3D.new()
 	root.position = p
-	root.rotation.y = atan2(-p.x, -p.z)
+	root.rotation.y = atan2(MARKET.x - p.x, MARKET.z - p.z)
 	_world.add_child(root)
 	var wood := _mat(Color(0.34, 0.24, 0.18), 0.9, 0.0, "wood", 1.0)
 	_add(root, _box(1.8, 0.8, 0.8), wood, Vector3(0, 0.4, 0))
@@ -2229,7 +2231,56 @@ func _fill_hero_chapter(c: Dictionary) -> void:
 		g.custom_minimum_size = Vector2(minf(600, _avail()), 0)
 		col.add_child(g)
 	_panel_box.add_child(_centered(col))
+	_fill_awaken(hid, hc)
 	_add_close()
+
+
+## Пробуждение: после главы герой выбирает один из трёх подклассов (навсегда).
+func _fill_awaken(hid: String, hc: Dictionary) -> void:
+	var opts: Array = Awaken.options(hid)
+	if opts.is_empty():
+		return
+	var done := int(Meta.hero_ch.get(hid, 0))
+	_panel_box.add_child(_centered(_label("✦ ПРОБУЖДЕНИЕ ✦", 22, GOLD, Color(hc["color"], 0.8))))
+	if done < HeroCh.STEPS:
+		var lk := _label("Пройдите главу целиком — и %s пробудится: откроется выбор одного из трёх подклассов." % Data.CHARACTERS[hid]["name"], 13, Color(0.7, 0.7, 0.8))
+		lk.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lk.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lk.custom_minimum_size = Vector2(minf(620, _avail()), 0)
+		_panel_box.add_child(_centered(lk))
+	var cur := Awaken.chosen(hid)
+	var row := HFlowContainer.new()
+	row.alignment = FlowContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("h_separation", 10)
+	row.add_theme_constant_override("v_separation", 10)
+	row.custom_minimum_size = Vector2(minf(760, _avail()), 0)
+	for o in opts:
+		var picked: bool = not cur.is_empty() and cur["id"] == o["id"]
+		var can := done >= HeroCh.STEPS and cur.is_empty() and Net.mode != "client"
+		var ocol: Color = o["col"]
+		var box := VBoxContainer.new()
+		box.add_theme_constant_override("separation", 4)
+		box.custom_minimum_size = Vector2(minf(240, _avail()), 0)
+		var b := _button(("✓ " if picked else "") + str(o["name"]), ocol if (can or picked) else Color(0.35, 0.35, 0.4), can)
+		b.custom_minimum_size = Vector2(minf(240, _avail()), 46)
+		b.add_theme_font_size_override("font_size", 16)
+		var oid: String = o["id"]
+		var oname: String = o["name"]
+		b.pressed.connect(func():
+			Meta.subclass[hid] = oid
+			Meta.save()
+			Sound.play("evolve", -2.0)
+			_toast_text("%s пробуждается: %s" % [Data.CHARACTERS[hid]["name"], oname])
+			_fill_panel())
+		box.add_child(b)
+		var d := _label(str(o["desc"]) + "\n" + Awaken.stats_text(o["stats"]), 12, Color(0.85, 0.85, 0.95) if (can or picked) else Color(0.55, 0.55, 0.62))
+		d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		d.custom_minimum_size = Vector2(minf(240, _avail()), 0)
+		box.add_child(d)
+		row.add_child(box)
+	_panel_box.add_child(_centered(row))
+	if cur.is_empty() and done >= HeroCh.STEPS:
+		_panel_box.add_child(_centered(_label("Выбор навсегда — подумайте.", 12, Color(1.0, 0.8, 0.5))))
 
 
 # ================= Академия / Арсенал / Лаборатория: деревья =================
@@ -3421,7 +3472,9 @@ const WELL := Vector3(14, 0, 4)
 const GARDEN := Vector3(0, 0, 17)
 const LIBRARY := Vector3(14, 0, -8)
 const MONUMENT := Vector3(-14, 0, -8)
-const STALLS := [Vector3(-4.2, 0, -7.3), Vector3(4.2, 0, -7.3), Vector3(-11.0, 0, 12.0), Vector3(11.0, 0, 12.0)]
+## Рынок: все лавки стоят вместе подковой, открытой к порталу
+const MARKET := Vector3(-6.6, 0, -7.0)
+const STALLS := [Vector3(-8.1, 0, -4.4), Vector3(-9.6, 0, -7.0), Vector3(-8.1, 0, -9.6), Vector3(-5.1, 0, -9.7)]
 ## Места на площади перед порталом, где ждут жители с просьбами
 const QUEST_SLOTS := [Vector3(-1.8, 0, 5.0), Vector3(1.8, 0, 5.0)]
 
@@ -3452,7 +3505,7 @@ func _spawn_npcs() -> void:
 	var add := _add_npc
 	# Торговцы за прилавками
 	for p in STALLS:
-		var d := Vector3(-p.x, 0, -p.z).normalized()
+		var d := Vector3(MARKET.x - p.x, 0, MARKET.z - p.z).normalized()
 		add.call("merchant", p - d * 1.1, {"home": p - d * 1.1})
 	# Стража обходит стену
 	for i in 3:
@@ -3556,7 +3609,8 @@ func _place(id: String) -> Vector3:
 		"well":
 			return WELL + Vector3(randf_range(-1.2, 1.2), 0, 1.8)
 		"market":
-			return STALLS[randi() % STALLS.size()] + Vector3(0, 0, 1.6)
+			var sp: Vector3 = STALLS[randi() % STALLS.size()]
+			return sp + (MARKET - sp).normalized() * 1.6
 	if Meta.BUILDINGS.has(id):
 		return Meta.BUILDINGS[id]["pos"] + Vector3(randf_range(-1.2, 1.2), 0, 2.7)
 	return Vector3.ZERO
@@ -3930,6 +3984,7 @@ func _npc_work(v: Dictionary, delta: float) -> void:
 func _build_places() -> void:
 	_reserved = [CAMPFIRE, TRAINING, WELL, GARDEN, PORTAL_POS + Vector3(3.6, 0, 1.5), LIBRARY, MONUMENT]
 	_reserved.append_array(STALLS)
+	_reserved.append(MARKET)
 	_build_library()
 	_build_monument()
 	var stone := _mat(Color(0.26, 0.24, 0.32), 0.85, 0.1, "brick", 1.4)
@@ -7024,3 +7079,20 @@ func _label_stalls() -> void:
 		var col: Color = [CYAN, MAGENTA, GOLD, Color(0.4, 1.0, 0.5)][si % 4]
 		var l := _label3d(_world, "ЛАВКА • %s\n%s" % [nm.to_upper(), tag], sp + Vector3(0, 2.75, 0), col, 26)
 		l.no_depth_test = false
+
+
+
+## Рынок: вывеска над площадью торговцев и гирлянда фонарей между лавками.
+func _market_decor() -> void:
+	var l := _label3d(_world, "РЫНОК", MARKET + Vector3(0, 3.6, 0), GOLD, 40)
+	l.no_depth_test = false
+	for i in STALLS.size() - 1:
+		var a: Vector3 = STALLS[i]
+		var b: Vector3 = STALLS[i + 1]
+		for k in 4:
+			var t := (k + 0.5) / 4.0
+			var p := a.lerp(b, t) + Vector3(0, 2.3 - sin(t * PI) * 0.35, 0)
+			var root := Node3D.new()
+			root.position = p
+			_world.add_child(root)
+			_add(root, _sphere(0.08), _emat([CYAN, MAGENTA, GOLD][(i + k) % 3], 2.0), Vector3.ZERO)

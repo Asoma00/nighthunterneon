@@ -486,6 +486,12 @@ func _process(delta: float) -> void:
 	_level_label.text = "УР %d" % p.level
 	if main.endless:
 		_time_label.text = "∞ %s  •  мин %d" % [_fmt_time(main.time_alive), main.endless_min]
+	elif main.cmap != null:
+		# Карта главы: обратный отсчёт и пройденная часть пути
+		var left := maxf(0.0, float(main.level["time"]) - main.time_alive)
+		var pr := 100 if main.cmap.locked else int(clampf(main.cmap.progress(main.view_center()) / main.cmap.total, 0.0, 1.0) * 100.0)
+		_time_label.text = "⏳ %s  •  путь %d%%" % [_fmt_time(left), pr]
+		_time_label.modulate = Color(1.0, 0.45, 0.4) if left < 60.0 else Color.WHITE
 	else:
 		_time_label.text = "%s / %s" % [_fmt_time(main.time_alive), _fmt_time(main.level["time"])]
 	_kills_label.text = str(main.kills)
@@ -1365,6 +1371,10 @@ func show_game_over(victory: bool, time_alive: float, kills: int, level: int, re
 	var after := ""
 	if victory and main.level_index >= 100:
 		after = "«" + str(main.level.get("after", "")) + "»\n\n"
+		if int(main.level.get("step", 0)) == 2 and preload("res://scripts/awaken.gd").pending(str(main.level.get("hero", ""))):
+			after += "✦ ПРОБУЖДЕНИЕ! Глава пройдена — выберите подкласс героя в портале (вкладка главы).\n\n"
+	elif not victory and main.cmap != null and main.time_alive >= float(main.level["time"]):
+		after = "Время вышло — до владыки нужно дойти быстрее.\n\n"
 	elif victory and main.level_index < main.Story.LEVEL_STORY.size():
 		after = "«" + str(main.Story.LEVEL_STORY[main.level_index]["after"]) + "»\n\n"
 	_over_stats.text = after + "%s  •  %s\n\nВремя:  %s\nУничтожено:  %d\nУровень:  %d\nРеакций:  %d" % [

@@ -18,6 +18,9 @@ const Meta := preload("res://scripts/meta.gd")
 const Arsenal := preload("res://scripts/arsenal.gd")
 const Dialog := preload("res://scripts/dialog.gd")
 const Scenes := preload("res://scripts/scenes.gd")
+const ChapterMap := preload("res://scripts/chapter_map.gd")
+const CStory := preload("res://scripts/chapter_story.gd")
+const Awaken := preload("res://scripts/awaken.gd")
 
 const MAX_ENEMIES := 320
 
@@ -172,6 +175,14 @@ func _ready() -> void:
 	rng.randomize()
 	level_index = Data.selected_level if HeroCh.is_hero_level(Data.selected_level) else clampi(Data.selected_level, 0, Data.LEVELS.size() - 1)
 	level = Data.level_data(level_index)
+	# Глава героя: собранная вручную неизменная карта; таймер — ограничение по времени
+	cmap = ChapterMap.for_level(level_index)
+	if cmap != null:
+		var gl: Array = level.get("bosses", [])
+		for i in gl.size():
+			var ri: int = cmap.rooms.size() - gl.size() + i
+			if ri >= 0:
+				_cm_guards[ri] = str(gl[i][1])
 	_setup_input()
 	RenderingServer.set_default_clear_color(Color(0.03, 0.02, 0.06))
 	_setup_view3d()
@@ -318,7 +329,9 @@ func _ready() -> void:
 		# Глава героя: своё название, вступление и условие прохождения
 		var hc: Dictionary = HeroCh.CHAPTERS[HeroCh.hero_of(level_index)]
 		Fx.text_pop(self, player.position + Vector2(0, -40), "%s • %d. %s" % [hc["name"], HeroCh.step_of(level_index) + 1, level["name"]], Color(1.0, 0.9, 1.0), 30)
-		hud.show_story.call_deferred(str(hc["name"]) + "  •  " + str(level["name"]), str(level["brief"]) + "\n\nУсловие: " + str(level["goal"]))
+		hud.show_story.call_deferred(str(hc["name"]) + "  •  " + str(level["name"]), str(level["brief"]) + "\n\nУсловие: " + _cm_goal())
+		if cmap != null:
+			get_tree().create_timer(0.8).timeout.connect(func(): _cm_say("intro"))
 	else:
 		Fx.text_pop(self, player.position + Vector2(0, -40), "%d. %s" % [level_index + 1, level["name"]], Color(1.0, 0.9, 1.0), 30)
 	if HeroCh.is_hero_level(level_index):
@@ -878,11 +891,11 @@ func prop3d(kind: String, anchor: Node2D, rng: RandomNumberGenerator, rot := 0.0
 	n.position = _bl(anchor.global_position, 0.0) if anchor.is_inside_tree() else Vector3(0, -50, 0)
 	n.visible = _on_view(anchor.global_position) if not _cull_c.is_empty() else true
 	_mirror_root.add_child(n)
-	var fr := Pixel.frames(kind)
-	var half: float = fr["size"].x * Pixel.PX * 0.5 * n.scale.x
+	var fsz: Vector2 = Props3D.csize(kind) if kind.begins_with("c_") else Pixel.frames(kind)["size"]
+	var half: float = fsz.x * Pixel.PX * 0.5 * n.scale.x
 	# Повёрнутый объект шире по глубине — берём габарит с запасом
-	half = maxf(half, absf(sin(rot)) * fr["size"].x * Pixel.PX * 0.5)
-	_props3d.append([n, anchor, half, 0.0, fr["size"].y * Pixel.PX * Pixel.STAND])
+	half = maxf(half, absf(sin(rot)) * fsz.x * Pixel.PX * 0.5)
+	_props3d.append([n, anchor, half, 0.0, fsz.y * Pixel.PX * Pixel.STAND])
 	return n
 
 
@@ -1426,6 +1439,8 @@ func _process(delta: float) -> void:
 		_separate_enemies()
 	if endless:
 		_endless_tick()
+	elif cmap != null:
+		_cm_tick()
 	elif time_alive >= level["time"]:
 		if boss == null and _boss_i >= level["bosses"].size():
 			if not _final_spawned:
@@ -1635,6 +1650,11 @@ func spawn_enemy(kind: String, at := Vector2.INF) -> void:
 		if dir.y > 0.3:
 			dist = maxf(dist, rng.randf_range(700.0, 820.0))
 	e.position = anchor_pos + dir * dist if at == Vector2.INF else at
+	if cmap != null and at == Vector2.INF:
+		var av: Array = []
+		for pp in players:
+			av.append(pp.position)
+		e.position = cmap.spawn_point(anchor_pos, rng, av)
 	enemies_node.add_child(e)
 
 
@@ -1892,6 +1912,8 @@ func on_enemy_killed(enemy: Node2D) -> void:
 	var kp: Node2D = enemy._atk() if enemy.has_method("_atk") else player
 	if kp.kill_heal > 0.0 and not kp._dead:
 		kp.heal(kp.kill_heal, false)
+	if kp.has_meta("awaken"):
+		Awaken.on_kill(kp, enemy)
 	# Опыт выпадает случайно: иногда меньше, иногда больше, изредка крупный кристалл;
 	# аптечки — редкость
 	var heal_drop := rng.randf() < 0.005
@@ -2232,6 +2254,11 @@ func _handle_quest_pois(delta: float) -> void:
 	var dist := rng.randf_range(900.0, 1300.0) if kind == "cache" else rng.randf_range(700.0, 1000.0)
 	for tries in 10:
 		pos = c + Vector2.RIGHT.rotated(rng.randf() * TAU) * dist
+		if cmap != null:
+			pos = _cm_poi_pos(kind in ["puzzle", "lamps", "simon"])
+			if pos == Vector2.INF:
+				return
+			break
 		if ground_node == null or ground_node.is_free(pos, 300.0 if kind in ["puzzle", "lamps", "simon"] else 110.0):
 			break
 	var q := QuestPoiScript.new()
@@ -2321,6 +2348,8 @@ func _spawn_mob_altar(pos: Vector2) -> void:
 
 
 func _handle_bosses() -> void:
+	if cmap != null:
+		return  # на карте главы стражи ждут в залах, владыка — на арене
 	var list: Array = level["bosses"]
 	if boss != null or _boss_i >= list.size():
 		return
@@ -2331,7 +2360,7 @@ func _handle_bosses() -> void:
 	_spawn_boss(kind)
 
 
-func _spawn_boss(kind: String, is_super := false) -> void:
+func _spawn_boss(kind: String, is_super := false, at := Vector2.INF, vid := "") -> void:
 	var info: Dictionary = Data.BOSS_TYPES[kind]
 	var b := BossScript.new()
 	b.main = self
@@ -2339,7 +2368,7 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	b.kind = kind
 	b.boss_name = Story.BOSS_NAMES[Data.chapter_of(level_index)].get(kind, info["name"])
 	# Свой владыка на каждом уровне: облик, гамма, приёмы и имя не повторяются
-	var vd: Dictionary = {} if endless else Bosses.for_level(level_index)
+	var vd: Dictionary = {} if endless else (Bosses.by_id(vid) if vid != "" else Bosses.for_level(level_index))
 	if not vd.is_empty():
 		kind = vd["base"]
 		info = Data.BOSS_TYPES[kind]
@@ -2364,7 +2393,7 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	if not vd.is_empty():
 		b.size_mult *= float(vd.get("sz", 0.94 + 0.05 * float(level_index % 5)))
 	b.xp_value = 60
-	b.position = center() + Vector2.RIGHT.rotated(rng.randf() * TAU) * 380.0
+	b.position = center() + Vector2.RIGHT.rotated(rng.randf() * TAU) * 380.0 if at == Vector2.INF else at
 	enemies_node.add_child(b)
 	boss = b
 	b.set_meta("spawn_t", time_alive)
@@ -2373,7 +2402,9 @@ func _spawn_boss(kind: String, is_super := false) -> void:
 	shake(10.0)
 	Fx.text_pop(self, center() + Vector2(0, -80), "⚠ " + b.boss_name + " ⚠", Pixel.hdr(b.color, 1.6), 34)
 	hud.show_boss(b.boss_name, b.color)
-	if Scenes.BOSS_TALK.has(kind) and not is_super and Net.mode == "" and not Data.coop and not Scenes.seen("boss_" + kind) and DisplayServer.get_name() != "headless":
+	if cmap != null:
+		pass  # на карте главы разговоры — свои (вход в зал и на арену)
+	elif Scenes.BOSS_TALK.has(kind) and not is_super and Net.mode == "" and not Data.coop and not Scenes.seen("boss_" + kind) and DisplayServer.get_name() != "headless":
 		# Первая встреча с владыкой — короткий разговор
 		Scenes.mark("boss_" + kind)
 		get_tree().create_timer(1.2).timeout.connect(func(): Dialog.open(self, Scenes.BOSS_TALK[kind], {"pause": true}))
@@ -2454,6 +2485,16 @@ func on_boss_killed(b: Node2D) -> void:
 	Fx.text_pop(self, b.position + Vector2(0, -40), "БОСС ПОВЕРЖЕН", Pixel.hdr(Color(1.0, 0.85, 0.3), 1.6), 34)
 	boss_say(b, "death")
 	Sound.set_track("battle")
+	if cmap != null and b == _cm_final and not _level_done:
+		# Владыка главы повержен — уровень пройден
+		_level_done = true
+		Fx.text_pop(self, b.position + Vector2(0, -110), "ГЛАВА: ЦЕЛЬ ДОСТИГНУТА", Pixel.hdr(Color(1.0, 0.9, 0.5), 1.6), 30)
+		get_tree().create_timer(1.6, false).timeout.connect(func():
+			_cm_say("outro", func():
+				if HeroCh.step_of(level_index) == HeroCh.STEPS - 1:
+					_cm_say("epilogue", func(): _end_game(true))
+				else:
+					_end_game(true)))
 
 
 ## Материал для базы на земле (подбирается как кристалл).
@@ -4181,3 +4222,143 @@ func cracks(pos: Vector2, n: int, length: float, color: Color) -> void:
 			p += Vector2.RIGHT.rotated(a) * length / segs * randf_range(0.7, 1.2)
 			pts.append(to3d(p, 0.02))
 		beam3d(pts, color, 0.02, 0.9, 0.0)
+
+
+
+# ================= Собранная карта главы героя =================
+
+var cmap = null                 # chapter_map.gd: путь, залы, арена
+var _cm_guards := {}            # зал -> вид стража
+var _cm_seen := {}              # залы, в которые уже вошли
+var _cm_queue: Array = []       # стражи, ждущие своей очереди (пока жив другой босс)
+var _cm_final: Node2D = null
+var _cm_warn := 0
+var _cm_used_rooms := {}
+
+
+func _cm_goal() -> String:
+	if cmap == null:
+		return str(level["goal"])
+	var t := int(level["time"])
+	var s := "Пройти путь до арены и победить владыку «%s» за %d:%02d" % [str(level.get("boss", {}).get("name", "")), t / 60, t % 60]
+	if not _cm_guards.is_empty():
+		s += ". В залах ждут стражи (%d)" % _cm_guards.size()
+	return s
+
+
+func _cm_story_ok() -> bool:
+	return Net.mode == "" and DisplayServer.get_name() != "headless"
+
+
+func _cm_cast() -> Dictionary:
+	var bd: Dictionary = level.get("boss", {})
+	var al: Dictionary = CStory.ALLY.get(cmap.hero, {})
+	return {"b": {"name": str(bd.get("name", "")), "color": bd.get("glow", Color.WHITE), "sprite": "%s~%s" % [str(bd.get("base", "lich")), str(bd.get("id", ""))], "side": "r"},
+		"x": {"name": str(al.get("name", "")), "color": al.get("color", Color.WHITE), "sprite": "", "side": "r"}}
+
+
+func _cm_say(key: String, then := Callable()) -> void:
+	var st := CStory.get_level(cmap.hero, cmap.step)
+	var arr: Array = st.get(key, [])
+	if arr.is_empty() or not _cm_story_ok() or game_over and key != "outro" and key != "epilogue":
+		if then.is_valid():
+			then.call()
+		return
+	var lines: Array = []
+	for l in arr:
+		lines.append([{"p": "player", "v": "voron"}.get(l[0], l[0]), l[1]])
+	var d := Dialog.open(self, lines, {"pause": true, "cast": _cm_cast()})
+	if then.is_valid():
+		d.finished.connect(then)
+
+
+## Место для тайника/загадки: впереди по пути; загадки — в свободном зале.
+func _cm_poi_pos(big: bool) -> Vector2:
+	var s: float = cmap.progress(view_center())
+	if big:
+		for k in cmap.rooms.size():
+			if _cm_used_rooms.has(k) or _cm_guards.has(k):
+				continue
+			var rc: Vector2 = cmap.room_center(k)
+			if cmap.progress(rc) > s + 300.0:
+				_cm_used_rooms[k] = true
+				return rc
+		return Vector2.INF
+	var ss := minf(s + rng.randf_range(650.0, 1100.0), cmap.total - cmap.arena_r - 200.0)
+	if ss <= s:
+		return Vector2.INF
+	return cmap.point_at(ss) + cmap.dir_at(ss).orthogonal() * rng.randf_range(-0.5, 0.5) * cmap.w
+
+
+func _cm_tick() -> void:
+	var left := float(level["time"]) - time_alive
+	if not _level_done:
+		if left <= 60.0 and _cm_warn == 0:
+			_cm_warn = 1
+			Sound.play("siren", -4.0)
+			Fx.text_pop(self, center() + Vector2(0, -90), "⏳ ОСТАЛАСЬ МИНУТА!", Pixel.hdr(Color(1.0, 0.5, 0.35), 1.5), 28)
+		elif left <= 0.0:
+			# Время вышло — вылазка провалена
+			Fx.text_pop(self, center() + Vector2(0, -90), "ВРЕМЯ ВЫШЛО", Pixel.hdr(Color(1.0, 0.3, 0.3), 1.6), 34)
+			_end_game(false)
+			return
+	# Входы в залы: рассказ и стражи
+	for k in cmap.rooms.size():
+		if _cm_seen.has(k):
+			continue
+		var rc: Vector2 = cmap.room_center(k)
+		for p in players:
+			if p.position.distance_to(rc) < cmap.room_radius(k):
+				_cm_seen[k] = true
+				_cm_enter_room(k)
+				break
+	if boss == null and not _cm_queue.is_empty():
+		var g: Array = _cm_queue.pop_front()
+		_cm_spawn_guard(g[0], g[1])
+	# Арена: запечатать и вызвать владыку
+	if not cmap.locked and boss == null and _cm_queue.is_empty() and _cm_final == null:
+		var ac: Vector2 = cmap.arena_center()
+		for p in players:
+			if p.position.distance_to(ac) < cmap.arena_r - 120.0:
+				_cm_enter_arena()
+				break
+
+
+func _cm_enter_room(k: int) -> void:
+	var st := CStory.get_level(cmap.hero, cmap.step)
+	var rooms: Array = st.get("rooms", [])
+	if k < rooms.size():
+		hud.show_story(str(rooms[k][0]), str(rooms[k][1]))
+		Fx.text_pop(self, center() + Vector2(0, -120), str(rooms[k][0]), Pixel.hdr(Color(1.0, 0.92, 0.75), 1.3), 24)
+	if _cm_guards.has(k):
+		if boss == null:
+			_cm_spawn_guard(k, _cm_guards[k])
+		else:
+			_cm_queue.append([k, _cm_guards[k]])
+
+
+func _cm_spawn_guard(k: int, kind: String) -> void:
+	var bd: Dictionary = level.get("boss", {})
+	var rc: Vector2 = cmap.room_center(k)
+	_spawn_boss(kind, false, rc + Vector2.RIGHT.rotated(rng.randf() * TAU) * 120.0, "g%s-%d" % [str(bd.get("id", "")), k])
+	var line: Array = CStory.get_level(cmap.hero, cmap.step).get("guard", [])
+	if boss != null and line.size() >= 2:
+		get_tree().create_timer(1.0, false).timeout.connect(func():
+			if is_instance_valid(boss):
+				Fx.text_pop(self, boss.position + Vector2(0, -140), "«%s»" % str(line[1]), Pixel.hdr(Color(1.0, 0.85, 0.9), 1.3), 22))
+
+
+func _cm_enter_arena() -> void:
+	cmap.locked = true
+	var ac: Vector2 = cmap.arena_center()
+	Sound.play("siren", 0.0)
+	shake(8.0)
+	Fx.ring(self, ac, cmap.arena_r - 40.0, cmap.arena_r, Pixel.hdr(Color(1.0, 0.3, 0.3), 1.8), 1.2, 10.0)
+	Fx.text_pop(self, center() + Vector2(0, -110), "АРЕНА ЗАПЕЧАТАНА", Pixel.hdr(Color(1.0, 0.4, 0.35), 1.6), 30)
+	# Остальные твари не мешают поединку
+	for e in enemies_node.get_children():
+		if e != boss and is_instance_valid(e) and e.position.distance_to(ac) > cmap.arena_r:
+			e.queue_free()
+	_cm_say("arena", func():
+		_spawn_boss(level.get("final", "lich"), not _cm_guards.is_empty(), ac)
+		_cm_final = boss)
