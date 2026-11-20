@@ -530,7 +530,26 @@ func _add_obst(entry: Array) -> void:
 
 ## Свободна ли точка (для появления врагов и предметов).
 func is_free(pos: Vector2, r: float) -> bool:
+	# Участок ещё не построен — его дома и стены появятся позже и накроют место
+	for cx in range(floori((pos.x - r) / CHUNK), floori((pos.x + r) / CHUNK) + 1):
+		for cy in range(floori((pos.y - r) / CHUNK), floori((pos.y + r) / CHUNK) + 1):
+			if not _chunks.has(Vector2i(cx, cy)) and _building_key != Vector2i(cx, cy):
+				return false
 	return push_out(pos, r).distance_squared_to(pos) < 1.0
+
+
+## Рядом стоит загадка, тайник или алтарь: объекты окружения сюда не ставятся.
+func _poi_block(p: Vector2, ext := 60.0) -> bool:
+	if main == null or main.get("pois") == null:
+		return false
+	for q in main.pois:
+		if not is_instance_valid(q):
+			continue
+		var k := str(q.get("kind")) if q.get("kind") != null else ""
+		var rr := 330.0 if k in ["puzzle", "lamps", "simon"] else 150.0
+		if p.distance_to(q.position) < rr + ext:
+			return true
+	return false
 
 
 func push_out(pos: Vector2, r: float, iterations := 2) -> Vector2:
@@ -703,6 +722,8 @@ func district_at(key: Vector2i) -> String:
 ## Объект района: локальные координаты чанка, поворот модели, свет.
 func _put(nodes: Array, origin: Vector2, kind: String, local: Vector2, rot := 0.0, light := false) -> void:
 	var p := origin + local
+	if not kind.begins_with("puddle") and _poi_block(p):
+		return  # загадки, тайники и алтари не оказываются внутри построек
 	if wrap_pos(p).length() < 230.0:
 		return  # точка появления героя всегда свободна
 	if not kind.begins_with("puddle") and _on_road(local, 10.0):

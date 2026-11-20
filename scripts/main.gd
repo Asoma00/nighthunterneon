@@ -2252,15 +2252,21 @@ func _handle_quest_pois(delta: float) -> void:
 	var c := view_center()
 	var pos := c
 	var dist := rng.randf_range(900.0, 1300.0) if kind == "cache" else rng.randf_range(700.0, 1000.0)
-	for tries in 10:
+	var found := false
+	for tries in 16:
 		pos = c + Vector2.RIGHT.rotated(rng.randf() * TAU) * dist
 		if cmap != null:
 			pos = _cm_poi_pos(kind in ["puzzle", "lamps", "simon"])
 			if pos == Vector2.INF:
 				return
+			found = true
 			break
 		if ground_node == null or ground_node.is_free(pos, 300.0 if kind in ["puzzle", "lamps", "simon"] else 110.0):
+			found = true
 			break
+	if not found:
+		_qpoi_t = 8.0   # свободного места нет — попробуем чуть позже, но не внутри построек
+		return
 	var q := QuestPoiScript.new()
 	q.main = self
 	q.kind = kind
@@ -2321,10 +2327,15 @@ func _handle_pois(delta: float) -> void:
 	# Место: в стороне от героя, но недалеко, и не внутри построек
 	var c := view_center()
 	var pos := c
-	for tries in 8:
+	var found := false
+	for tries in 16:
 		pos = c + Vector2.RIGHT.rotated(rng.randf() * TAU) * rng.randf_range(650.0, 950.0)
-		if ground_node == null or ground_node.is_free(pos, 110.0):
+		if ground_node == null or ground_node.is_free(pos, 130.0):
+			found = true
 			break
+	if not found:
+		_poi_t = 6.0   # вокруг одни постройки — алтарь появится позже, на свободном месте
+		return
 	var roll := rng.randf()
 	if roll < 0.3:
 		_spawn_mob_altar(pos)
@@ -2497,10 +2508,19 @@ func on_boss_killed(b: Node2D) -> void:
 					_end_game(true)))
 
 
+const SCRAP_K := 0.4
+
+
 ## Материал для базы на земле (подбирается как кристалл).
 func drop_material(pos: Vector2, kind: String, value: int) -> void:
 	if net_mode == "client" or value <= 0:
 		return
+	if kind == "scrap":
+		# Лома заметно меньше: дробная часть — шанс на ещё один
+		var fv := float(value) * SCRAP_K
+		value = int(fv) + (1 if rng.randf() < fv - floorf(fv) else 0)
+		if value <= 0:
+			return
 	var gem := GemScript.new()
 	gem.main = self
 	gem.player = player
@@ -2850,6 +2870,22 @@ func _build_choices(player: Node2D) -> Array:
 	if choices.is_empty():
 		choices.append({"type": "heal", "id": "heal", "new": false, "level": 0,
 			"title": "Нано-аптечка", "desc": "Восстанавливает 40 здоровья", "hint": ""})
+	# Качество каждого улучшения выпадает случайно (удача чуть повышает шансы)
+	var luck := clampf(float(player.chest_bonus), 0.0, 0.6)
+	for c in choices:
+		var r := Data.roll_rarity(luck)
+		c["rarity"] = r
+		var k: float = float(Data.RARITY[r]["k"])
+		match c["type"]:
+			"weapon":
+				if r > 0:
+					var b := Data.rarity_weapon_bonus(r)
+					c["qtext"] = "+%d%% урона, −%d%% перезарядки, +%d%% области этому оружию" % [int(round(b["dmg"] * 100.0)), int(round(b["cd"] * 100.0)), int(round(b["area"] * 100.0))]
+			"passive":
+				if r > 0:
+					c["qtext"] = "Модуль сильнее в %.2f раза" % k if c["id"] != "multi" else ""
+			"heal":
+				c["desc"] = "Восстанавливает %d здоровья" % int(40.0 * k)
 	return choices
 
 
@@ -2865,8 +2901,9 @@ func apply_choice(choice: Dictionary) -> void:
 	match choice["type"]:
 		"weapon":
 			player.add_weapon(choice["id"])
+			player.add_weapon_quality(choice["id"], int(choice.get("rarity", 0)))
 		"passive":
-			player.add_passive(choice["id"])
+			player.add_passive(choice["id"], float(Data.RARITY[int(choice.get("rarity", 0))]["k"]))
 		"evo":
 			player.evolve(choice["id"], choice["module"])
 			Fx.text_pop(self, player.position + Vector2(0, -90), (Data.WEAPONS[choice["id"]]["name"] + ": " + choice["title"]).to_upper(), Pixel.hdr(Data.ASPECTS[choice["module"]]["color"], 1.6), 26)
@@ -2879,7 +2916,7 @@ func apply_choice(choice: Dictionary) -> void:
 			_show_next_level_up()
 			return
 		"heal":
-			player.heal(40.0)
+			player.heal(40.0 * float(Data.RARITY[int(choice.get("rarity", 0))]["k"]))
 	if not _choosers.is_empty():
 		_choosers.pop_front()
 	pending_level_ups = _choosers.size()
@@ -3133,15 +3170,16 @@ func _net_apply_offer(p: Node2D, choice: Dictionary) -> void:
 	match choice["type"]:
 		"weapon":
 			p.add_weapon(choice["id"])
+			p.add_weapon_quality(choice["id"], int(choice.get("rarity", 0)))
 		"passive":
-			p.add_passive(choice["id"])
+			p.add_passive(choice["id"], float(Data.RARITY[int(choice.get("rarity", 0))]["k"]))
 		"evo":
 			p.evolve(choice["id"], choice["module"])
 			Fx.text_pop(self, p.position + Vector2(0, -90), (Data.WEAPONS[choice["id"]]["name"] + ": " + choice["title"]).to_upper(), Pixel.hdr(Data.ASPECTS[choice["module"]]["color"], 1.6), 26)
 		"fusion":
 			p.fuse(choice["id"], choice["partner"])
 		"heal":
-			p.heal(40.0)
+			p.heal(40.0 * float(Data.RARITY[int(choice.get("rarity", 0))]["k"]))
 	if choice["type"] != "evo" and choice["type"] != "fusion":
 		p.pending_lv = maxi(0, p.pending_lv - 1)
 	_offers[p.pid] = []

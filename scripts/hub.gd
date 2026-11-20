@@ -3011,7 +3011,7 @@ func _fill_wardrobe() -> void:
 				Skins.equip(_wd_hero, sid)
 				_skin_applied(sid))
 		else:
-			var conds: Array = sk.get("c", [])
+			var conds: Array = Skins.conds(sk)
 			var ok := Skins.cond_ok(_wd_hero, sk)
 			var ct := _label(("✓ " if ok else "⊘ ") + (Meta.cond_short(conds[0], _wd_hero) if not conds.is_empty() else ""), 12, Color(0.6, 1.0, 0.6) if ok else Color(1.0, 0.65, 0.6))
 			ct.tooltip_text = Meta.cond_text(conds[0], _wd_hero) if not conds.is_empty() else ""

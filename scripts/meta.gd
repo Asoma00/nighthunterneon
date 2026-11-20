@@ -38,7 +38,7 @@ const MATERIALS := {
 }
 static var materials := {"scrap": 0, "chips": 0, "cores": 0, "alloy": 0, "matrix": 0, "essence": 0}
 ## Доход осколков после вылазки (было ×1.0): прокачка идёт через покупки у торговцев
-const INCOME_K := 0.65
+const INCOME_K := 0.35   # осколков вдвое меньше: копить приходится дольше
 ## Товара каждого вида на узел дерева по ярусам 1…5
 const GOODS_TIER := [0, 1, 2, 4, 6, 10]
 const TREE_GOOD := {"w:": "alloy", "m:": "matrix", "c:": "essence"}

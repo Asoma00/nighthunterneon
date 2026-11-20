@@ -11,11 +11,11 @@ const Meta := preload("res://scripts/meta.gd")
 
 ## Редкость: имя, цвет рамки, цена.
 const RARITY := [
-	{"id": "common", "name": "Обычный", "color": Color(0.72, 0.74, 0.8), "cost": {"shards": 120}},
-	{"id": "rare", "name": "Редкий", "color": Color(0.35, 0.65, 1.0), "cost": {"shards": 350, "scrap": 6}},
-	{"id": "epic", "name": "Эпический", "color": Color(0.72, 0.4, 1.0), "cost": {"shards": 800, "chips": 6}},
-	{"id": "legend", "name": "Легендарный", "color": Color(1.0, 0.75, 0.25), "cost": {"shards": 1600, "chips": 10, "cores": 2}},
-	{"id": "myth", "name": "Мифический", "color": Color(1.0, 0.3, 0.65), "cost": {"shards": 3000, "cores": 6}},
+	{"id": "common", "name": "Обычный", "color": Color(0.72, 0.74, 0.8), "cost": {"shards": 400, "scrap": 30}},
+	{"id": "rare", "name": "Редкий", "color": Color(0.35, 0.65, 1.0), "cost": {"shards": 1100, "scrap": 60, "chips": 10}},
+	{"id": "epic", "name": "Эпический", "color": Color(0.72, 0.4, 1.0), "cost": {"shards": 2500, "chips": 25, "cores": 4}},
+	{"id": "legend", "name": "Легендарный", "color": Color(1.0, 0.75, 0.25), "cost": {"shards": 5000, "chips": 40, "cores": 10}},
+	{"id": "myth", "name": "Мифический", "color": Color(1.0, 0.3, 0.65), "cost": {"shards": 9000, "cores": 25}},
 ]
 
 ## Облики по героям. look — что меняется в оболочке (цвета #rrggbb, «head»/«back» — тип),
@@ -214,8 +214,22 @@ static func hero_of_sprite(sprite: String) -> String:
 # ---------------- Состояние облика ----------------
 
 ## Условие облика выполнено (облик можно соткать).
+## Условия облика: подвиг из списка, но в несколько раз больше (облики — долгая цель).
+const COND_K := [4.0, 4.0, 3.0, 3.0, 2.5]
+const COND_SOFT := {"level": 1.5, "nodmg_best": 2.0, "best_kills": 2.0, "endless": 2.0, "achievements": 1.6}
+
+
+static func conds(s: Dictionary) -> Array:
+	var out: Array = []
+	var k: float = COND_K[clampi(int(s.get("r", 0)), 0, COND_K.size() - 1)]
+	for c in s.get("c", []):
+		var kk: float = float(COND_SOFT.get(str(c[0]), k))
+		out.append([c[0], int(ceil(float(c[1]) * kk))])
+	return out
+
+
 static func cond_ok(hero: String, s: Dictionary) -> bool:
-	return Meta.conds_met(s.get("c", []), hero)
+	return Meta.conds_met(conds(s), hero)
 
 
 static func owned(hero: String, id: String) -> bool:

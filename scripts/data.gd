@@ -14,6 +14,39 @@ static var menu_return := ""              # куда вернуться со с�
 static var music_volume := 0.6
 static var sfx_volume := 0.8
 
+## Качество улучшения при повышении уровня: выпадает случайно, чем выше — тем сильнее.
+## w — вес выпадения, k — сила улучшения (у оружия ещё и постоянная прибавка урона/скорости/области).
+const RARITY := [
+	{"name": "Обычное", "color": Color(0.72, 0.72, 0.78), "w": 42.0, "k": 1.0},
+	{"name": "Необычное", "color": Color(0.35, 1.0, 0.45), "w": 27.0, "k": 1.2},
+	{"name": "Редкое", "color": Color(0.35, 0.72, 1.0), "w": 16.0, "k": 1.4},
+	{"name": "Эпическое", "color": Color(0.78, 0.42, 1.0), "w": 9.0, "k": 1.65},
+	{"name": "Легендарное", "color": Color(1.0, 0.78, 0.25), "w": 4.5, "k": 2.0},
+	{"name": "Мифическое", "color": Color(1.0, 0.22, 0.22), "w": 1.5, "k": 2.5},
+]
+
+
+static func roll_rarity(luck := 0.0) -> int:
+	var sum := 0.0
+	var ws: Array = []
+	for i in RARITY.size():
+		var w: float = float(RARITY[i]["w"]) * (1.0 + luck * i)
+		ws.append(w)
+		sum += w
+	var r := randf() * sum
+	for i in ws.size():
+		r -= ws[i]
+		if r <= 0.0:
+			return i
+	return 0
+
+
+## Прибавка оружию от качества улучшения: урон, перезарядка, область.
+static func rarity_weapon_bonus(r: int) -> Dictionary:
+	var e: float = float(RARITY[clampi(r, 0, RARITY.size() - 1)]["k"]) - 1.0
+	return {"dmg": 0.5 * e, "cd": 0.12 * e, "area": 0.2 * e}
+
+
 const MAX_WEAPON_LEVEL := 10
 const ASPECT_EVERY := 6      # аспект — один раз, на 6 уровне оружия
 const ASPECT_LEVEL := 6

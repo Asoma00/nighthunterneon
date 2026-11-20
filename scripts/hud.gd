@@ -1140,9 +1140,13 @@ func _card(index: int, ch: Dictionary) -> Button:
 		accent = GOLD
 	elif ch["type"] == "passive":
 		accent = _mod_color(ch["id"])
+	# Качество улучшения: рамка его цвета
+	var rar := int(ch.get("rarity", -1))
+	if rar >= 0:
+		accent = Data.RARITY[rar]["color"]
 	var btn := Button.new()
 	var cw := 222.0 if portrait() else 270.0
-	btn.custom_minimum_size = Vector2(cw, 430 if portrait() else 400)
+	btn.custom_minimum_size = Vector2(cw, 450 if portrait() else 430)
 	btn.clip_contents = true
 	btn.mouse_entered.connect(func(): Sound.play("hover", -10.0))
 	btn.add_theme_stylebox_override("normal", _neon_box(accent.darkened(0.35), PANEL_BG, 2, 8, 6))
@@ -1195,10 +1199,20 @@ func _card(index: int, ch: Dictionary) -> Button:
 		icon_bg.add_child(_icon_rect(Pixel.icon(ch["id"]), 64 if portrait() else 84))
 	v.add_child(icon_bg)
 
+	if rar >= 0:
+		var rl := _label("◆ " + str(Data.RARITY[rar]["name"]).to_upper(), 14, accent, Color(accent, 0.5))
+		rl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(rl)
 	var title := _label(ch["title"], 21, Color.WHITE, Color(accent, 0.6))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(title)
+	if str(ch.get("qtext", "")) != "":
+		var ql := _label(str(ch["qtext"]), 12, accent.lightened(0.2))
+		ql.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		ql.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		ql.custom_minimum_size = Vector2(cw - 40.0, 0)
+		v.add_child(ql)
 	var dtext: String = ch["desc"]
 	var desc := _label(dtext, 15 if dtext.length() < 50 else 13, Color(0.8, 0.8, 0.92))
 	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

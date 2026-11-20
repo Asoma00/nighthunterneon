@@ -744,6 +744,16 @@ func stats(id: String) -> Dictionary:
 		s["duration"] = float(s["duration"]) * float(m.get("duration", 1.0))
 	if s.has("speed") and (s["speed"] is float or s["speed"] is int):
 		s["speed"] = float(s["speed"]) * float(m.get("speed", 1.0))
+	# ---- Качество улучшений этого оружия ----
+	if wq.has(id):
+		var q: Dictionary = wq[id]
+		s["damage"] = float(s["damage"]) * (1.0 + float(q["dmg"]))
+		for key in ["cooldown", "interval"]:
+			if s.has(key):
+				s[key] = float(s[key]) * (1.0 - float(q["cd"]))
+		for key in ["radius", "range", "length"]:
+			if s.has(key):
+				s[key] = float(s[key]) * (1.0 + float(q["area"]))
 	# ---- Модули оружия ----
 	s["damage"] = float(s["damage"]) * weapon_dmg
 	for key in ["cooldown", "interval", "tick"]:
@@ -1821,7 +1831,22 @@ func has_aspect_module(id: String) -> bool:
 	return not aspect_options(id).is_empty()
 
 
-func add_passive(id: String) -> void:
+## Качество улучшений оружия (прибавки накапливаются): id -> {dmg, cd, area}
+var wq := {}
+
+
+func add_weapon_quality(id: String, r: int) -> void:
+	if r <= 0:
+		return
+	var b := Data.rarity_weapon_bonus(r)
+	var q: Dictionary = wq.get(id, {"dmg": 0.0, "cd": 0.0, "area": 0.0})
+	q["dmg"] = float(q["dmg"]) + float(b["dmg"])
+	q["cd"] = minf(0.5, float(q["cd"]) + float(b["cd"]))
+	q["area"] = float(q["area"]) + float(b["area"])
+	wq[id] = q
+
+
+func add_passive(id: String, qk := 1.0) -> void:
 	if passives.get(id, 0) >= Data.MAX_PASSIVE_LEVEL:
 		return
 	if not passives.has(id) and module_count(Data.PASSIVES[id]["kind"]) >= Data.module_cap(Data.PASSIVES[id]["kind"]):
@@ -1832,7 +1857,7 @@ func add_passive(id: String) -> void:
 	passives[id] = passives.get(id, 0) + 1
 	preload("res://scripts/meta.gd").discover("m:" + id)
 	_aspect_cache.clear()
-	var k: float = _m_boost(id)
+	var k: float = _m_boost(id) * qk
 	match id:
 		"hp":
 			max_hp += 20.0 * k
