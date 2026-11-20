@@ -18,6 +18,7 @@ static var last_reward := {}
 static var last_run := {}   # итоги последней вылазки — для доски у портала (сохраняются)
 static var levels_cleared := 0
 static var level_best := {}
+static var hero_ch := {}          # главы героев: герой -> сколько уровней пройдено
 static var nickname := "Охотник"
 static var stats := {}  # статистика профиля: kills, time, bosses, wins, deaths, reactions, max_level, best_endless, heroes{}
 static var seen := {}   # открытое в библиотеке: "w:bolt", "m:crit", "s:burn", "r:burn+chill", "a:damage"
@@ -254,6 +255,7 @@ static func reset() -> void:
 	last_run = {}
 	levels_cleared = 0
 	level_best = {}
+	hero_ch = {}
 	nickname = "Охотник"
 	stats = {}
 	seen = {}
@@ -307,6 +309,7 @@ static func ensure_loaded() -> void:
 	followers = cfg.get_value("meta", "followers", [])
 	levels_cleared = cfg.get_value("meta", "levels_cleared", 0)
 	level_best = cfg.get_value("meta", "level_best", {})
+	hero_ch = cfg.get_value("meta", "hero_ch", {})
 	trees = cfg.get_value("meta", "trees", {})
 	if cfg.has_section_key("meta", "heroes_owned"):
 		heroes_owned = cfg.get_value("meta", "heroes_owned", ["vega"])
@@ -380,6 +383,7 @@ static func save() -> void:
 	cfg.set_value("meta", "followers", followers)
 	cfg.set_value("meta", "levels_cleared", levels_cleared)
 	cfg.set_value("meta", "level_best", level_best)
+	cfg.set_value("meta", "hero_ch", hero_ch)
 	cfg.set_value("meta", "trees", trees)
 	cfg.set_value("meta", "heroes_owned", heroes_owned)
 	cfg.set_value("meta", "seen", seen)
@@ -1025,8 +1029,17 @@ static func finish_run(kills: int, time_alive: float, bosses: int, victory: bool
 	ensure_loaded()
 	var extra := _settle_run(run, victory)
 	var first := 0
-	var first_clear := victory and level >= 0 and level >= levels_cleared
-	if victory and level >= 0:
+	var hero_lv := level >= 100
+	var first_clear := victory and level >= 0 and not hero_lv and level >= levels_cleared
+	if victory and hero_lv:
+		# Глава героя: следующий уровень открывается только после победы в предыдущем
+		var HC := preload("res://scripts/hero_chapters.gd")
+		var hh := HC.hero_of(level)
+		if hh != "" and HC.step_of(level) >= int(hero_ch.get(hh, 0)):
+			hero_ch[hh] = HC.step_of(level) + 1
+			first = first_bonus
+		level_best[level] = maxf(float(level_best.get(level, 0.0)), time_alive)
+	elif victory and level >= 0:
 		if level >= levels_cleared:
 			levels_cleared = level + 1
 			first = first_bonus

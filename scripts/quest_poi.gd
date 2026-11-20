@@ -267,6 +267,7 @@ func _process(delta: float) -> void:
 	if life <= 0.0 or _far_from_all(3200.0):
 		queue_free()
 		return
+	_tick_highlight()
 	match kind:
 		"captive":
 			_tick_captive(delta)
@@ -946,3 +947,92 @@ func _tick_part(_delta: float) -> void:
 		Fx.ring(main, position, 10.0, 160.0, Pixel.hdr(color(), 2.0), 0.4, 5.0)
 		_done()
 		life = 0.5
+
+
+
+# ---------- Подсветка загадки поверх боя и построек ----------
+# Пока герой рядом, точки загадки (столбы, лампады, обелиски, маяки) обведены яркими
+# кольцами, которые рисуются поверх всего: их не закрывают дома, деревья и вспышки боя.
+
+var _hl: Array = []          # MeshInstance3D-кольца
+var _hl_mats: Array = []
+var _hl_on := false
+
+
+func _hl_points() -> Array:
+	var out: Array = []   # [точка, радиус, цвет, «горит»]
+	match kind:
+		"puzzle":
+			out.append([Vector2.ZERO, 70.0, color(), false])
+			for i in _pillars.size():
+				var rc: Color = RUNE_COLORS[_pillar_rune[i]]
+				out.append([_pillars[i], 70.0, rc, _step > 0 and _seq.slice(0, _step).has(_pillar_rune[i])])
+		"lamps":
+			for i in _lamp_pos.size():
+				out.append([_lamp_pos[i], 65.0, Color(1.0, 0.8, 0.4) if _lamp_on[i] else color(), _lamp_on[i]])
+		"simon":
+			out.append([Vector2.ZERO, 70.0, color(), false])
+			for i in _sim_pos.size():
+				out.append([_sim_pos[i], 70.0, SIM_COLORS[i], _sim_lit == i])
+		"beacons":
+			for i in _beacons.size():
+				out.append([_beacons[i], 80.0, color(), _lit[i]])
+	return out
+
+
+func _hl_ring(r_px: float) -> MeshInstance3D:
+	var m := MeshInstance3D.new()
+	var t := TorusMesh.new()
+	var r3: float = r_px * main.PLANE_TEXEL
+	t.inner_radius = r3 * 0.9
+	t.outer_radius = r3
+	t.rings = 40
+	t.ring_segments = 4
+	m.mesh = t
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.no_depth_test = true     # поверх построек, деревьев и эффектов
+	mat.render_priority = 90
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.material_override = mat
+	m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	m.scale = Vector3(1.0, 0.05, 1.0)
+	_hl_mats.append(mat)
+	return m
+
+
+func _tick_highlight() -> void:
+	if not (kind in ["puzzle", "lamps", "simon", "beacons"]):
+		return
+	var on := state != "done" and not _far_from_all(900.0 if kind != "beacons" else 1300.0)
+	if on != _hl_on:
+		_hl_on = on
+		for l in _labels:
+			if is_instance_valid(l):
+				# Подписи загадки ярче, пока герой её решает
+				(l as Label3D).modulate.a = 1.0 if on else 0.7
+				(l as Label3D).render_priority = 95 if on else 0
+				(l as Label3D).outline_render_priority = 94 if on else -1
+	var pts := _hl_points()
+	if not on:
+		for m in _hl:
+			if is_instance_valid(m):
+				m.visible = false
+		return
+	while _hl.size() < pts.size():
+		var m := _hl_ring(float(pts[_hl.size()][1]))
+		main.place3d(m, position + pts[_hl.size()][0])
+		m.position.y += 0.04
+		_hl.append(m)
+		_models.append(m)
+	var pulse := 0.5 + 0.5 * sin(_t * 4.0)
+	for i in pts.size():
+		var m: MeshInstance3D = _hl[i]
+		m.visible = true
+		var lit: bool = pts[i][3]
+		var c: Color = pts[i][2]
+		var a := 0.95 if lit else 0.45 + 0.35 * pulse
+		if _fail_flash > 0.0 and kind in ["puzzle", "simon"]:
+			c = c.lerp(Color(1.0, 0.2, 0.2), _fail_flash)
+		(_hl_mats[i] as StandardMaterial3D).albedo_color = Color(Pixel.hdr(c, 1.5 if lit else 1.1), a)

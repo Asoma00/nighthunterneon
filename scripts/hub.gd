@@ -2092,7 +2092,7 @@ var _portal_ch := -1
 func _fill_portal() -> void:
 	var c: Dictionary = Data.CHARACTERS[Data.selected_character]
 	var cur_ch := Data.chapter_of(mini(Meta.levels_cleared, Data.LEVELS.size() - 1))
-	if _portal_ch < 0 or _portal_ch > cur_ch:
+	if _portal_ch < 0 or (_portal_ch > cur_ch and _portal_ch != HERO_TAB):
 		_portal_ch = cur_ch
 	# Вкладки глав: открываются по мере прохождения
 	var tabs := HFlowContainer.new()
@@ -2111,7 +2111,20 @@ func _fill_portal() -> void:
 			Sound.play("click")
 			_fill_panel())
 		tabs.add_child(tb)
+	# Глава героя: личная история выбранного героя (пройти можно только им)
+	if HeroCh.CHAPTERS.has(Data.selected_character):
+		var hb := _button("★ Глава: %s" % c["name"], GOLD if _portal_ch == HERO_TAB else GOLD.darkened(0.5))
+		hb.custom_minimum_size = Vector2(200, 40)
+		hb.add_theme_font_size_override("font_size", 15)
+		hb.pressed.connect(func():
+			_portal_ch = HERO_TAB
+			Sound.play("click")
+			_fill_panel())
+		tabs.add_child(hb)
 	_panel_box.add_child(_centered(tabs))
+	if _portal_ch == HERO_TAB:
+		_fill_hero_chapter(c)
+		return
 	_panel_box.add_child(_centered(_label(str(Story.CHAPTERS[_portal_ch]["name"]).to_upper(), 28, Color.WHITE, Color(MAGENTA, 0.8))))
 	var intro := _label(Story.CHAPTERS[_portal_ch]["intro"], 14, Color(0.82, 0.8, 0.95))
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -2171,6 +2184,51 @@ func _fill_portal() -> void:
 	var m := Meta.run_mods()
 	var bonus := ("Бонусы убежища:\nурон ×%.2f   шанс сундука +%d%%" if _portrait() else "Бонусы убежища:  урон ×%.2f   шанс сундука +%d%%") % [m["damage"], int(m["chest"] * 100.0)]
 	_panel_box.add_child(_centered(_label(bonus, 14, Color(0.8, 0.8, 0.95))))
+	_add_close()
+
+
+const HERO_TAB := 99
+const HeroCh := preload("res://scripts/hero_chapters.gd")
+
+
+## Глава героя: три уровня по порядку, у каждого своё условие прохождения и свой владыка.
+func _fill_hero_chapter(c: Dictionary) -> void:
+	var hid := Data.selected_character
+	var hc: Dictionary = HeroCh.CHAPTERS[hid]
+	var done := int(Meta.hero_ch.get(hid, 0))
+	_panel_box.add_child(_centered(_label(str(hc["name"]).to_upper(), 28, Color.WHITE, Color(hc["color"], 0.8))))
+	var intro := _label(hc["intro"], 14, Color(0.85, 0.82, 0.95))
+	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	intro.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	intro.custom_minimum_size = Vector2(minf(700, _avail()), 0)
+	_panel_box.add_child(_centered(intro))
+	_panel_box.add_child(_centered(_label("Только за героя: %s  •  пройдено %d / %d" % [c["name"], done, HeroCh.STEPS], 16, c["color"])))
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 10)
+	for k in HeroCh.STEPS:
+		var lv: Dictionary = hc["levels"][k]
+		var unlocked := k <= done
+		var cleared := k < done
+		var accent: Color = GOLD if cleared else (hc["color"] if unlocked else Color(0.35, 0.35, 0.4))
+		var status := "✓ пройден" if cleared else ("%d:%02d" % [int(lv["time"]) / 60, int(lv["time"]) % 60] if unlocked else "🔒 откроется после «%s»" % hc["levels"][k - 1]["name"])
+		var b := _button("%d. %s   •   %s" % [k + 1, lv["name"], status], accent, unlocked and Net.mode != "client")
+		b.custom_minimum_size = Vector2(minf(620, _avail()), 52)
+		b.add_theme_font_size_override("font_size", 16)
+		b.tooltip_text = str(lv["brief"])
+		var idx := HeroCh.index_of(hid, k)
+		b.pressed.connect(func():
+			Data.selected_level = idx
+			if Net.mode == "host":
+				Sound.play("ability", 0.0)
+				Net.start_run(idx)
+			else:
+				_start_run())
+		col.add_child(b)
+		var g := _label(("Условие: " + str(lv["goal"])) if unlocked else "Условие откроется вместе с уровнем", 13, Color(0.75, 0.95, 0.8) if unlocked else Color(0.55, 0.55, 0.65))
+		g.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		g.custom_minimum_size = Vector2(minf(600, _avail()), 0)
+		col.add_child(g)
+	_panel_box.add_child(_centered(col))
 	_add_close()
 
 
@@ -2684,7 +2742,7 @@ func _talk_dialog(i: int) -> void:
 	elif not offer.is_empty():
 		var ask := "У меня просьба. " + Quests.desc(offer) + ". Награжу: " + Quests.reward_text(Quests.reward(offer)) + "."
 		if offer.has("saga"):
-			ask = str(offer["text"]) + " " + Quests.desc(offer) + "."
+			ask = str(offer["text"]) + " " + Quests.desc(offer) + ". Награда: " + Quests.reward_text(Quests.reward(offer)) + "."
 		L.append([who, ask])
 		var can := Meta.npc_quests.size() < 3
 		choices = [{"t": "Помогу" if can else "Помогу (но обещаний уже 3)", "lines": [["player", "Помогу."], [who, "Спасибо! Я буду ждать." if can else "Ты и так всем обещал… Освободись — приходи."]],
@@ -2692,7 +2750,8 @@ func _talk_dialog(i: int) -> void:
 				if can:
 					Meta.npc_quests.append(offer)
 					Meta.save()
-					Sound.play("levelup", -6.0)},
+					Sound.play("levelup", -6.0)
+					_toast_text("Задание принято: %s  •  награда: %s" % [Quests.desc(offer), Quests.reward_text(Quests.reward(offer))])},
 			{"t": "Не сейчас", "lines": [["player", "Не сейчас. Может, потом."]]}]
 	# Торговцы продают товары для улучшений: сплав, матрицы, эссенцию и чертежи
 	_shop_pending = -1
@@ -3362,7 +3421,9 @@ const WELL := Vector3(14, 0, 4)
 const GARDEN := Vector3(0, 0, 17)
 const LIBRARY := Vector3(14, 0, -8)
 const MONUMENT := Vector3(-14, 0, -8)
-const STALLS := [Vector3(-4.6, 0, -8.2), Vector3(4.6, 0, -8.2), Vector3(-12.5, 0, 13.0), Vector3(12.5, 0, 13.0)]
+const STALLS := [Vector3(-4.2, 0, -7.3), Vector3(4.2, 0, -7.3), Vector3(-11.0, 0, 12.0), Vector3(11.0, 0, 12.0)]
+## Места на площади перед порталом, где ждут жители с просьбами
+const QUEST_SLOTS := [Vector3(-1.8, 0, 5.0), Vector3(1.8, 0, 5.0)]
 
 const NPC_PHRASES := {
 	"merchant": ["Свежие кристаллы!", "Склянки со светом — два осколка!", "Подходи, не стесняйся!", "Лучшие руны в посаде!"],
@@ -3687,52 +3748,57 @@ func _update_villagers(delta: float) -> void:
 		var node: Node3D = v["node"]
 		v["t"] += delta
 		var role: String = v["role"]
-		match role:
-			"guard":
-				# Обход вдоль стены
-				v["ang"] = float(v["ang"]) + float(v["dir"]) * delta * 0.07
-				v["target"] = Vector3(cos(v["ang"]), 0, sin(v["ang"])) * 20.0
-			"kid", "walker", "gardener", "elder":
-				# У каждого жителя свои занятия: ходит по делам и работает на месте
-				_job_tick(v, delta)
-			"merchant", "smith", "monk", "musician", "trainee", "barkeep", "blacksmith", "priestess", "engineer", "commander":
-				v["target"] = v["home"]
-				_npc_work(v, delta)
-			"robot":
-				if node.position.distance_to(v["target"]) < 0.4:
-					v["wait"] = float(v["wait"]) - delta
-					if v["wait"] <= 0.0:
-						v["wait"] = randf_range(1.0, 3.0)
-						var a := randf() * TAU
-						v["target"] = Vector3(cos(a), 0, sin(a)) * randf_range(2.0, 12.0)
-			"gardener":
-				if node.position.distance_to(v["target"]) < 0.4:
-					v["wait"] = float(v["wait"]) - delta
-					if v["wait"] <= 0.0:
-						v["wait"] = randf_range(2.0, 4.0)
-						v["target"] = GARDEN + Vector3(randf_range(-2.5, 2.5), 0, randf_range(-1.5, 1.5))
-						_particles(_world, node.position + Vector3(0, 0.3, 0), Color(0.3, 0.6, 1.0), 6, Vector3(0.3, 0.1, 0.3), Vector3(0, -2, 0), 0.6, 0.05, true, 0.8)
-			_:  # житель гуляет между зданиями, лавками и площадью
-				if node.position.distance_to(v["target"]) < 0.4:
-					v["wait"] = float(v["wait"]) - delta
-					if v["wait"] <= 0.0:
-						v["wait"] = randf_range(2.0, 6.0)
-						var r := randf()
-						var haunts: Array = HAUNTS.get(v.get("profile", {}).get("name", ""), [])
-						if not haunts.is_empty() and randf() < 0.65:
-							# У каждого жителя свои дела: лекарка — у алтаря, механик — у лаборатории…
-							v["target"] = _place(haunts[randi() % haunts.size()])
-						elif r < 0.4:
-							var ids := Meta.BUILDINGS.keys()
-							var bp: Vector3 = Meta.BUILDINGS[ids[randi() % ids.size()]]["pos"]
-							v["target"] = bp + Vector3(randf_range(-1.5, 1.5), 0, 2.6)
-						elif r < 0.6:
-							v["target"] = CAMPFIRE + Vector3(randf_range(-3, 3), 0, randf_range(2.5, 3.5))
-						elif r < 0.75:
-							v["target"] = WELL + Vector3(randf_range(-1.5, 1.5), 0, 1.8)
-						else:
+		if int(v.get("qslot", -1)) >= 0 and int(v["qslot"]) < QUEST_SLOTS.size():
+			# Ждёт на площади, пока у него не возьмут просьбу; потом вернётся к своим делам
+			v["target"] = QUEST_SLOTS[int(v["qslot"])]
+			v.erase("steps")
+		else:
+			match role:
+				"guard":
+					# Обход вдоль стены
+					v["ang"] = float(v["ang"]) + float(v["dir"]) * delta * 0.07
+					v["target"] = Vector3(cos(v["ang"]), 0, sin(v["ang"])) * 20.0
+				"kid", "walker", "gardener", "elder":
+					# У каждого жителя свои занятия: ходит по делам и работает на месте
+					_job_tick(v, delta)
+				"merchant", "smith", "monk", "musician", "trainee", "barkeep", "blacksmith", "priestess", "engineer", "commander":
+					v["target"] = v["home"]
+					_npc_work(v, delta)
+				"robot":
+					if node.position.distance_to(v["target"]) < 0.4:
+						v["wait"] = float(v["wait"]) - delta
+						if v["wait"] <= 0.0:
+							v["wait"] = randf_range(1.0, 3.0)
 							var a := randf() * TAU
-							v["target"] = Vector3(cos(a), 0, sin(a)) * randf_range(1.5, 6.0)
+							v["target"] = Vector3(cos(a), 0, sin(a)) * randf_range(2.0, 12.0)
+				"gardener":
+					if node.position.distance_to(v["target"]) < 0.4:
+						v["wait"] = float(v["wait"]) - delta
+						if v["wait"] <= 0.0:
+							v["wait"] = randf_range(2.0, 4.0)
+							v["target"] = GARDEN + Vector3(randf_range(-2.5, 2.5), 0, randf_range(-1.5, 1.5))
+							_particles(_world, node.position + Vector3(0, 0.3, 0), Color(0.3, 0.6, 1.0), 6, Vector3(0.3, 0.1, 0.3), Vector3(0, -2, 0), 0.6, 0.05, true, 0.8)
+				_:  # житель гуляет между зданиями, лавками и площадью
+					if node.position.distance_to(v["target"]) < 0.4:
+						v["wait"] = float(v["wait"]) - delta
+						if v["wait"] <= 0.0:
+							v["wait"] = randf_range(2.0, 6.0)
+							var r := randf()
+							var haunts: Array = HAUNTS.get(v.get("profile", {}).get("name", ""), [])
+							if not haunts.is_empty() and randf() < 0.65:
+								# У каждого жителя свои дела: лекарка — у алтаря, механик — у лаборатории…
+								v["target"] = _place(haunts[randi() % haunts.size()])
+							elif r < 0.4:
+								var ids := Meta.BUILDINGS.keys()
+								var bp: Vector3 = Meta.BUILDINGS[ids[randi() % ids.size()]]["pos"]
+								v["target"] = bp + Vector3(randf_range(-1.5, 1.5), 0, 2.6)
+							elif r < 0.6:
+								v["target"] = CAMPFIRE + Vector3(randf_range(-3, 3), 0, randf_range(2.5, 3.5))
+							elif r < 0.75:
+								v["target"] = WELL + Vector3(randf_range(-1.5, 1.5), 0, 1.8)
+							else:
+								var a := randf() * TAU
+								v["target"] = Vector3(cos(a), 0, sin(a)) * randf_range(1.5, 6.0)
 		# Цель внутри стены или модели — сдвигаем к ближайшему свободному месту
 		if v.get("tchk", Vector3.INF) != v["target"]:
 			v["target"] = _collide(v["target"], 0.45)
@@ -5599,16 +5665,39 @@ func _update_marks() -> void:
 			nearest = v
 	if not nearest.is_empty():
 		(nearest["name"] as Label3D).visible = true
+	# Просьбы жителей — по очереди: не больше двух побочных сразу (и сюжет у Ворона),
+	# пока обещаний меньше трёх. Такие жители выходят на площадь и ждут
+	var side_n := clampi(3 - Meta.npc_quests.size(), 0, 2)
+	var slot := 0
+	for v in _villagers:
+		var was := int(v.get("qslot", -1))
+		v["qslot"] = -1
+		var nm: String = v.get("profile", {}).get("name", "")
+		if slot < side_n and nm != "" and nm != "Ворон" and v["role"] != "robot" and not _npc_offer(v).is_empty():
+			# Торговцы ждут у своих лавок (иначе лавка останется без продавца), остальные — на площади
+			v["qslot"] = slot if v["role"] != "merchant" else 9
+			slot += 1
+		if was != int(v["qslot"]):
+			v.erase("chat")
+			v.erase("path")
+			v.erase("path_for")
+			v["wait"] = 0.0
 	for v in _villagers:
 		if not v.has("mark"):
 			continue
 		var mk: Label3D = v["mark"]
 		var txt := ""
+		var main_q := false
 		if v.get("profile", {}).get("name", "") == "Ворон":
 			txt = "?" if Meta.story_ready() else ("!" if not Meta.story_cur().is_empty() and not Meta.story_taken else "")
-		elif not _npc_offer(v).is_empty() and Meta.npc_quests.size() < 3:
+			main_q = true
+		elif int(v.get("qslot", -1)) >= 0:
 			txt = "!"
 		mk.text = txt
+		# Сюжет — крупный золотой знак, просьбы жителей — голубой поменьше
+		mk.modulate = Pixel.hdr(GOLD, 1.4) if main_q else Pixel.hdr(Color(0.45, 0.85, 1.0), 1.3)
+		mk.font_size = 96 if main_q else 72
+		mk.outline_size = 20
 		mk.visible = txt != "" and not v.has("chat")
 		mk.position.y = 2.35 + sin(float(v["t"]) * 3.0) * 0.06
 
@@ -5636,7 +5725,7 @@ func _update_chats(delta: float) -> void:
 		var walkers: Array = []
 		var free: Array = []
 		for v in _villagers:
-			if v.has("profile") and not v.has("chat") and v["role"] in ["walker", "elder", "trainee", "gardener", "merchant", "musician"]:
+			if v.has("profile") and not v.has("chat") and int(v.get("qslot", -1)) < 0 and v["role"] in ["walker", "elder", "trainee", "gardener", "merchant", "musician"]:
 				free.append(v)
 				if v["role"] == "walker":
 					walkers.append(v)
@@ -5775,7 +5864,7 @@ func _fill_talk(i: int) -> void:
 			Meta.npc_quests.append(offer)
 			Meta.save()
 			Sound.play("levelup", -6.0)
-			_toast_text("%s: «Спасибо! Я буду ждать.»" % prof["name"])
+			_toast_text("Задание принято: %s  •  награда: %s" % [Quests.desc(offer), Quests.reward_text(Quests.reward(offer))])
 			_close_panel())
 		_panel_box.add_child(_centered(take))
 	_add_close()

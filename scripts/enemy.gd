@@ -94,9 +94,13 @@ func _ready() -> void:
 	var info: Dictionary = Data.ENEMIES.get(kind, {})
 	var sk: String = info.get("sprite", kind)   # адские мобы используют облик обычных
 	hell = info.get("hell", false)
+	# Главы героев: враги в гамме своей локации
+	if sprite_key == "" and not is_boss and not hell and main != null and main.level != null and int(main.level.get("hue", 0)) != 0:
+		sk += "~hue%d" % int(main.level["hue"])
 	_frames = Pixel.frames(sprite_key if sprite_key != "" else sk)
+	sk = Pixel.base_key(sk)
 	_k = float(_frames.get("k", 1.0))
-	_beast = _frames["base"].size() >= 12 and sk in Pixel.BEAST_KEYS
+	_beast = _frames["base"].size() >= 12 and Pixel.base_key(sk) in Pixel.BEAST_KEYS
 	var size: Vector2 = _frames["size"] * _k
 	_t = randf() * 10.0
 	_hover = sk in ["imp", "bat", "wraith", "lich", "queen", "bomber", "omega"]

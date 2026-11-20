@@ -11,6 +11,7 @@ const GroundScript := preload("res://scripts/ground.gd")
 const HudScript := preload("res://scripts/hud.gd")
 const BossScript := preload("res://scripts/boss.gd")
 const Bosses := preload("res://scripts/bosses.gd")
+const HeroCh := preload("res://scripts/hero_chapters.gd")
 const ChestScript := preload("res://scripts/chest.gd")
 const PoiScript := preload("res://scripts/poi.gd")
 const Meta := preload("res://scripts/meta.gd")
@@ -169,8 +170,8 @@ func _ready() -> void:
 	run["challenge"] = challenge
 	_vk = Settings.view_k()
 	rng.randomize()
-	level_index = clampi(Data.selected_level, 0, Data.LEVELS.size() - 1)
-	level = Data.LEVELS[level_index]
+	level_index = Data.selected_level if HeroCh.is_hero_level(Data.selected_level) else clampi(Data.selected_level, 0, Data.LEVELS.size() - 1)
+	level = Data.level_data(level_index)
 	_setup_input()
 	RenderingServer.set_default_clear_color(Color(0.03, 0.02, 0.06))
 	_setup_view3d()
@@ -277,6 +278,8 @@ func _ready() -> void:
 	projectiles_node = _make_layer("Projectiles", world, false)
 	projectiles_node.z_index = 5
 	fx_node = _make_layer("Effects", world, false)
+	# Эффекты боя складываются (аддитивно) — в толпе это выжигало экран. Общий приглушитель
+	fx_node.modulate = Color(0.78, 0.78, 0.78)
 	events = EventsScript.new()
 	events.main = self
 	world.add_child(events)
@@ -311,8 +314,16 @@ func _ready() -> void:
 	add_child(hud)
 
 	Sound.set_track("battle", true)
-	Fx.text_pop(self, player.position + Vector2(0, -40), "%d. %s" % [level_index + 1, level["name"]], Color(1.0, 0.9, 1.0), 30)
-	if level_index < Story.LEVEL_STORY.size() and Net.mode == "" and not Data.coop and not Scenes.seen("brief_%d" % level_index) and DisplayServer.get_name() != "headless":
+	if HeroCh.is_hero_level(level_index):
+		# Глава героя: своё название, вступление и условие прохождения
+		var hc: Dictionary = HeroCh.CHAPTERS[HeroCh.hero_of(level_index)]
+		Fx.text_pop(self, player.position + Vector2(0, -40), "%s • %d. %s" % [hc["name"], HeroCh.step_of(level_index) + 1, level["name"]], Color(1.0, 0.9, 1.0), 30)
+		hud.show_story.call_deferred(str(hc["name"]) + "  •  " + str(level["name"]), str(level["brief"]) + "\n\nУсловие: " + str(level["goal"]))
+	else:
+		Fx.text_pop(self, player.position + Vector2(0, -40), "%d. %s" % [level_index + 1, level["name"]], Color(1.0, 0.9, 1.0), 30)
+	if HeroCh.is_hero_level(level_index):
+		pass
+	elif level_index < Story.LEVEL_STORY.size() and Net.mode == "" and not Data.coop and not Scenes.seen("brief_%d" % level_index) and DisplayServer.get_name() != "headless":
 		# Первый раз на уровне — брифинг сценой-диалогом (игра на паузе)
 		Scenes.mark("brief_%d" % level_index)
 		get_tree().create_timer(0.7).timeout.connect(func(): Dialog.open(self, "brief_%d" % level_index, {"pause": true}))
@@ -556,9 +567,10 @@ func _setup_view3d() -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 	# На телефоне при «мало эффектов» свечение выключено — это самый тяжёлый проход
 	env.glow_enabled = Settings.glow_enabled()
-	env.glow_intensity = 0.45
+	# Свечение мягче: светятся только по-настоящему яркие вещи, бой не засвечивает экран
+	env.glow_intensity = 0.3
 	env.glow_bloom = 0.0
-	env.glow_hdr_threshold = 0.85
+	env.glow_hdr_threshold = 1.05
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.5, 0.45, 0.72)
@@ -1179,6 +1191,8 @@ func _pick_weather() -> void:
 		if r <= 0.0:
 			weather = k
 			break
+	if str(level.get("weather", "")) != "":
+		weather = str(level["weather"])   # у краёв глав героев своя погода
 	if force_weather != "":
 		weather = force_weather
 	# Свет и воздух под погоду
@@ -1215,6 +1229,15 @@ func _pick_weather() -> void:
 			_env.ambient_light_color = Color(0.7, 0.45, 0.4)
 			_moon.light_color = Color(1.0, 0.6, 0.4)
 			_moon.light_energy = 0.3
+	# Свет и цвет края главы героя: окружение, луна, небо, плиты пола и их неон
+	var at: Dictionary = level.get("atmo", {})
+	if not at.is_empty():
+		_env.ambient_light_color = (at["amb"] as Color).lerp(_env.ambient_light_color, 0.25)
+		_moon.light_color = at["moon"]
+		_env.background_color = at["bg"]
+		if ground_node != null and ground_node.get("_ground") != null:
+			ground_node._ground.modulate = at["ground"]
+			ground_node._ground_emit.modulate = at["glow"]
 
 
 ## Гроза: время от времени вспышка молнии на всё небо и гром.
@@ -2225,6 +2248,8 @@ func _spawn_qpoi(kind: String, pos: Vector2, hid: String) -> void:
 		return
 	if ground_node != null:
 		pos = ground_node.push_out(pos, 60.0, 4)
+		if kind in ["puzzle", "lamps", "simon"]:
+			pos = _clear_spot(pos, 300.0)
 	var q := QuestPoiScript.new()
 	q.main = self
 	q.kind = kind
@@ -2232,6 +2257,22 @@ func _spawn_qpoi(kind: String, pos: Vector2, hid: String) -> void:
 	q.position = pos
 	enemies_node.get_parent().add_child(q)
 	pois.append(q)
+
+
+## Площадка для загадки: центр и кольцо радиусом r свободны от домов и стен, чтобы
+## столбы и лампады не оказались внутри построек. Ищем рядом по спирали.
+func _clear_spot(pos: Vector2, r: float) -> Vector2:
+	for k in 24:
+		var c := pos + (Vector2.RIGHT.rotated(k * 2.4) * (90.0 * sqrt(float(k))) if k > 0 else Vector2.ZERO)
+		var ok: bool = ground_node.is_free(c, 90.0)
+		if ok:
+			for j in 8:
+				if not ground_node.is_free(c + Vector2.RIGHT.rotated(TAU * j / 8.0) * Vector2(r, r * 0.78), 80.0):
+					ok = false
+					break
+		if ok:
+			return c
+	return pos
 
 
 ## Часть оружия спасённого героя (шанс задаёт вызывающий).

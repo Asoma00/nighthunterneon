@@ -476,6 +476,16 @@ const CHAPTER_NAME := "Глава I. Неоновые пустоши"
 const LEVELS_PER_CHAPTER := 10
 
 
+## Данные уровня: основная кампания (0…29) или глава героя (100+).
+static func level_data(i: int) -> Dictionary:
+	if i >= 100:
+		var hl: Dictionary = preload("res://scripts/hero_chapters.gd").level(i)
+		if not hl.is_empty():
+			return hl
+		i = 0
+	return LEVELS[clampi(i, 0, LEVELS.size() - 1)]
+
+
 static func chapter_of(i: int) -> int:
 	return clampi(i / LEVELS_PER_CHAPTER, 0, 2)
 const LEVELS := [

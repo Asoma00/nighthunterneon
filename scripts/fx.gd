@@ -196,6 +196,12 @@ static func _pmesh(kind: String) -> Mesh:
 
 static func _emit3d(main: Node, pos: Vector2, h: float, mesh_kind: String, colors: Array, amount: int,
 		speed: float, life: float, size: float, gravity: float, up: float, spread: float, spin := false) -> void:
+	# Искры и вспышки 3D приглушены: яркие по-прежнему, но не белые пятна на полэкрана
+	var dim: Array = []
+	for c in colors:
+		var cc: Color = c
+		dim.append(Color(cc.r * 0.78, cc.g * 0.78, cc.b * 0.78, cc.a))
+	colors = dim
 	var key := "3|%s|%s|%d|%.1f|%.2f|%.2f|%.1f|%.1f|%.0f|%s" % [mesh_kind, str(colors), amount, speed, life, size, gravity, up, spread, spin]
 	if _pm3d.has(key):
 		# Такой всплеск уже был: материал частиц готов — без построения CPU-частиц и градиентов
@@ -500,7 +506,7 @@ static func glow_flash(main: Node, pos: Vector2, color: Color, radius: float, du
 	s.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	s.material = Pixel.mat_add()
 	s.position = pos
-	s.modulate = Color(color, 0.3)
+	s.modulate = Color(color, 0.2)
 	s.scale = Vector2.ONE * radius * 0.7 / 64.0
 	s.z_index = 3
 	main.fx_node.add_child(s)
@@ -519,7 +525,7 @@ static func light_flash(main: Node, pos: Vector2, color: Color, energy: float, t
 	var l := PointLight2D.new()
 	l.texture = Pixel.glow()
 	l.color = color
-	l.energy = minf(energy, 1.5)
+	l.energy = minf(energy * 0.7, 1.1)
 	l.texture_scale = tex_scale
 	l.position = pos
 	main.fx_node.add_child(l)

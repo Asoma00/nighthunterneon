@@ -1345,7 +1345,9 @@ func show_story(title: String, text: String) -> void:
 	b.custom_minimum_size = Vector2(w - 24.0, 0)
 	add_child(box)
 	box.z_index = -1   # под окнами (повышение уровня, сундук, пауза), не поверх кнопок
-	box.position = Vector2((vs.x - w) / 2.0, vs.y * (0.62 if portrait() else 0.66))
+	# Нижний край — над полосой здоровья: длинный текст растёт вверх, а не под неё
+	var bh := box.get_combined_minimum_size().y
+	box.position = Vector2((vs.x - w) / 2.0, minf(vs.y * (0.62 if portrait() else 0.66), vs.y - 118.0 - bh))
 	box.modulate.a = 0.0
 	var tw := box.create_tween()
 	tw.tween_property(box, "modulate:a", 1.0, 0.6)
@@ -1356,10 +1358,14 @@ func show_story(title: String, text: String) -> void:
 
 func show_game_over(victory: bool, time_alive: float, kills: int, level: int, reactions := 0) -> void:
 	_over_title.text = ("УРОВЕНЬ %d ПРОЙДЕН" % (main.level_index + 1)) if victory else "СИГНАЛ ПОТЕРЯН"
+	if victory and main.level_index >= 100:
+		_over_title.text = "«%s» ПРОЙДЕНО" % str(main.level["name"]).to_upper()
 	var c := GOLD if victory else MAGENTA
 	_over_title.add_theme_color_override("font_shadow_color", Color(c, 0.8))
 	var after := ""
-	if victory and main.level_index < main.Story.LEVEL_STORY.size():
+	if victory and main.level_index >= 100:
+		after = "«" + str(main.level.get("after", "")) + "»\n\n"
+	elif victory and main.level_index < main.Story.LEVEL_STORY.size():
 		after = "«" + str(main.Story.LEVEL_STORY[main.level_index]["after"]) + "»\n\n"
 	_over_stats.text = after + "%s  •  %s\n\nВремя:  %s\nУничтожено:  %d\nУровень:  %d\nРеакций:  %d" % [
 		_me().char_data["name"], _me().char_data["title"], _fmt_time(time_alive), kills, _me().level, reactions]

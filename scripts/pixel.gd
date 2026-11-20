@@ -589,6 +589,12 @@ static func _paint_mods(b: Image, e: Image, L: Dictionary, f: int) -> void:
 
 
 static func _paint(key: String, b: Image, e: Image, f: int) -> void:
+	# «imp~hue140»: обычный враг в гамме своей локации (главы героев)
+	var hi := key.find("~hue")
+	if hi > 0:
+		_paint(key.substr(0, hi), b, e, f)
+		_hue_shift(b, e, float(key.substr(hi + 4)))
+		return
 	if key.begins_with("tree") or key.begins_with("pine") or key.begins_with("bush"):
 		_paint_tree(key, b, e)
 		return
@@ -4745,3 +4751,17 @@ static func _paint_hold(b: Image, e: Image, key: String, f: int) -> void:
 			spx(e, int(tip.x + cos(a) * r), int(tip.y + sin(a) * r * 0.8), Color(Color.WHITE.lerp(col, 0.6), 0.85))
 		var m := hand.lerp(tip, 0.5)
 		sline(e, int(m.x + sd.x * 1.5), int(m.y + sd.y * 1.5), int(tip.x + sd.x * 1.5), int(tip.y + sd.y * 1.5), Color(col, 0.6))
+
+
+
+## Поворот оттенка: тело — на deg градусов, свечение тоже (яркость и насыщенность те же).
+static func _hue_shift(b: Image, e: Image, deg: float) -> void:
+	var dh := deg / 360.0
+	for x in b.get_width():
+		for y in b.get_height():
+			var c := b.get_pixel(x, y)
+			if c.a > 0.0 and c.s > 0.08:
+				b.set_pixel(x, y, Color.from_hsv(fposmod(c.h + dh, 1.0), c.s, c.v, c.a))
+			var g := e.get_pixel(x, y)
+			if g.a > 0.0 and g.s > 0.08:
+				e.set_pixel(x, y, Color.from_hsv(fposmod(g.h + dh, 1.0), g.s, g.v, g.a))

@@ -95,6 +95,9 @@ const ROSTER := [
 
 
 static func for_level(i: int) -> Dictionary:
+	if i >= 100:
+		var hl: Dictionary = preload("res://scripts/hero_chapters.gd").level(i)
+		return hl.get("boss", {})
 	if i < 0 or i >= ROSTER.size():
 		return {}
 	return ROSTER[i]
@@ -104,4 +107,6 @@ static func by_id(id: String) -> Dictionary:
 	for d in ROSTER:
 		if d["id"] == id:
 			return d
+	if id.begins_with("h"):
+		return preload("res://scripts/hero_chapters.gd").boss_by_id(id)
 	return {}

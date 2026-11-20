@@ -44,6 +44,20 @@ const BIOMES := [
 	{"name": "Свалка дронов", "tint": Color(1.0, 0.4, 0.3),
 		"props": ["wreck0", "wreck1", "barrel0", "barrel1", "crate0", "crate1", "cart0", "fence0", "rock0", "sign1"],
 		"decals": ["decal_cable", "decal_crater", "decal_grate", "decal_road"], "landmarks": ["junk"], "count": [14, 20]},
+	# ---- Главы героев: свои края ----
+	{"name": "Пепел Академии", "tint": Color(0.60, 0.36, 1.00), "props": ["pillar0", "pillar1", "statue0", "obelisk0", "crystal0", "lantern0"], "decals": ["decal_rune", "decal_crater"], "landmarks": [], "count": [14, 20]},
+	{"name": "Клятва клана Тэцу", "tint": Color(1.00, 0.33, 0.47), "props": ["banner0", "banner1", "lantern0", "fence0", "tree1", "rock1"], "decals": ["decal_cobble", "decal_moss"], "landmarks": [], "count": [14, 20]},
+	{"name": "Горн под горой", "tint": Color(1.00, 0.54, 0.20), "props": ["rock0", "rock1", "barrel0", "crate1", "wreck0", "lantern0"], "decals": ["decal_crater", "decal_grate"], "landmarks": [], "count": [14, 20]},
+	{"name": "Хор из-под земли", "tint": Color(0.20, 1.00, 0.80), "props": ["wreck1", "crate0", "sign1", "lamp0", "barrel1", "pillar1"], "decals": ["decal_cable", "decal_grate"], "landmarks": [], "count": [14, 20]},
+	{"name": "Последний караван", "tint": Color(0.74, 0.84, 1.00), "props": ["pine0", "pine1", "cart0", "fence0", "rock0", "bush1"], "decals": ["decal_moss", "decal_road"], "landmarks": [], "count": [14, 20]},
+	{"name": "Стены Медного Солнца", "tint": Color(1.00, 0.73, 0.33), "props": ["tower0", "wall0", "banner0", "barrel0", "well0", "lantern0"], "decals": ["decal_cobble", "decal_grate"], "landmarks": [], "count": [14, 20]},
+	{"name": "Кладбище данных", "tint": Color(0.80, 0.27, 1.00), "props": ["statue0", "obelisk1", "obelisk2", "pillar0", "mushroom1", "tree2"], "decals": ["decal_rune", "decal_moss"], "landmarks": [], "count": [14, 20]},
+	{"name": "Око бури", "tint": Color(0.47, 0.80, 1.00), "props": ["rock0", "rock1", "obelisk0", "bush0", "crystal1", "banner1"], "decals": ["decal_crater", "decal_road"], "landmarks": [], "count": [14, 20]},
+	{"name": "Лекарство от Врат", "tint": Color(0.53, 1.00, 0.27), "props": ["barrel1", "crate0", "mushroom0", "mushroom1", "sign0", "wreck1"], "decals": ["decal_cable", "decal_moss"], "landmarks": [], "count": [14, 20]},
+	{"name": "Последний номер", "tint": Color(1.00, 0.40, 0.80), "props": ["stall0", "stall1", "banner0", "banner1", "lamp1", "cart0"], "decals": ["decal_cobble", "decal_rune"], "landmarks": [], "count": [14, 20]},
+	{"name": "Рассвет над Вратами", "tint": Color(1.00, 0.87, 0.33), "props": ["pillar0", "pillar1", "statue0", "crystal_big0", "lantern0", "obelisk0"], "decals": ["decal_rune", "decal_cobble"], "landmarks": [], "count": [14, 20]},
+	{"name": "Сердце Грозы", "tint": Color(0.27, 0.87, 1.00), "props": ["sign1", "lamp0", "wreck0", "barrel0", "crate1", "fence0"], "decals": ["decal_cable", "decal_grate"], "landmarks": [], "count": [14, 20]},
+	{"name": "Свитки Безлунных", "tint": Color(0.53, 0.53, 1.00), "props": ["tree0", "tree3", "bush0", "lantern0", "statue0", "fence0"], "decals": ["decal_moss", "decal_rune"], "landmarks": [], "count": [14, 20]},
 ]
 
 const LIGHT_PROPS := {
@@ -90,6 +104,11 @@ func _ready() -> void:
 	_ground = _make_ground_sprite(g["base"])
 	_ground_emit = _make_ground_sprite(g["emit"])
 	_ground_emit.material = Pixel.mat_add()
+	# Край главы героя: свой цвет плит и неона на полу
+	var at: Dictionary = main.level.get("atmo", {}) if main != null and main.level != null else {}
+	if not at.is_empty():
+		_ground.modulate = at["ground"]
+		_ground_emit.modulate = at["glow"]
 
 
 func _make_ground_sprite(t: Texture2D) -> Sprite2D:
@@ -564,6 +583,85 @@ const DISTRICTS := {
 	"ruins": {"name": "Древние руины", "biome": 2},
 	"castle": {"name": "Неоновая крепость", "biome": 2},
 	"junk": {"name": "Свалка дронов", "biome": 4},
+	# ---- Главы героев: районы со своим именем и краем, застройка по образцу «build» ----
+	"h_vega_0_0": {"name": "Сгоревшие аудитории", "biome": 5, "build": "ruins"},
+	"h_vega_0_1": {"name": "Обрушенный атриум", "biome": 5, "build": "castle"},
+	"h_vega_1_0": {"name": "Читальные залы", "biome": 5, "build": "castle"},
+	"h_vega_1_1": {"name": "Хранилище свитков", "biome": 5, "build": "crystal"},
+	"h_vega_2_0": {"name": "Звёздный купол", "biome": 5, "build": "crystal"},
+	"h_vega_2_1": {"name": "Лестница расчётов", "biome": 5, "build": "ruins"},
+	"h_rin_0_0": {"name": "Двор додзё", "biome": 6, "build": "castle"},
+	"h_rin_0_1": {"name": "Сад камней", "biome": 6, "build": "park"},
+	"h_rin_1_0": {"name": "Литейный двор", "biome": 6, "build": "junk"},
+	"h_rin_1_1": {"name": "Склад брони", "biome": 6, "build": "castle"},
+	"h_rin_2_0": {"name": "Подножие башни", "biome": 6, "build": "castle"},
+	"h_rin_2_1": {"name": "Крыша тэнсю", "biome": 6, "build": "street"},
+	"h_bram_0_0": {"name": "Рудничный двор", "biome": 7, "build": "junk"},
+	"h_bram_0_1": {"name": "Вагонеточные пути", "biome": 7, "build": "field"},
+	"h_bram_1_0": {"name": "Зал наковален", "biome": 7, "build": "ruins"},
+	"h_bram_1_1": {"name": "Склад рун", "biome": 7, "build": "junk"},
+	"h_bram_2_0": {"name": "Огненная жила", "biome": 7, "build": "crystal"},
+	"h_bram_2_1": {"name": "Кристальные своды", "biome": 7, "build": "ruins"},
+	"h_kira_0_0": {"name": "Серверные ряды", "biome": 8, "build": "ruins"},
+	"h_kira_0_1": {"name": "Кабельные шахты", "biome": 8, "build": "junk"},
+	"h_kira_1_0": {"name": "Ангары дронов", "biome": 8, "build": "junk"},
+	"h_kira_1_1": {"name": "Зарядные гнёзда", "biome": 8, "build": "street"},
+	"h_kira_2_0": {"name": "Антенный зал", "biome": 8, "build": "crystal"},
+	"h_kira_2_1": {"name": "Поющие кристаллы", "biome": 8, "build": "ruins"},
+	"h_skyla_0_0": {"name": "Караванный тракт", "biome": 9, "build": "field"},
+	"h_skyla_0_1": {"name": "Туманные луга", "biome": 9, "build": "forest"},
+	"h_skyla_1_0": {"name": "Вышки ордена", "biome": 9, "build": "forest"},
+	"h_skyla_1_1": {"name": "Чаща у гнёзд", "biome": 9, "build": "park"},
+	"h_skyla_2_0": {"name": "Кольцо телег", "biome": 9, "build": "market"},
+	"h_skyla_2_1": {"name": "Погасший костёр", "biome": 9, "build": "field"},
+	"h_orm_0_0": {"name": "Медный двор", "biome": 10, "build": "castle"},
+	"h_orm_0_1": {"name": "Трубный квартал", "biome": 10, "build": "street"},
+	"h_orm_1_0": {"name": "Котельный зал", "biome": 10, "build": "junk"},
+	"h_orm_1_1": {"name": "Угольные ямы", "biome": 10, "build": "ruins"},
+	"h_orm_2_0": {"name": "Бастион", "biome": 10, "build": "castle"},
+	"h_orm_2_1": {"name": "Снежные зубцы", "biome": 10, "build": "castle"},
+	"h_mora_0_0": {"name": "Ряды надгробий", "biome": 11, "build": "ruins"},
+	"h_mora_0_1": {"name": "Склеп резервных копий", "biome": 11, "build": "park"},
+	"h_mora_1_0": {"name": "Аллея памяти", "biome": 11, "build": "park"},
+	"h_mora_1_1": {"name": "Пруд отражений", "biome": 11, "build": "forest"},
+	"h_mora_2_0": {"name": "Горн душ", "biome": 11, "build": "crystal"},
+	"h_mora_2_1": {"name": "Зеркальный зал", "biome": 11, "build": "ruins"},
+	"h_zephyr_0_0": {"name": "Тотемное поле", "biome": 12, "build": "field"},
+	"h_zephyr_0_1": {"name": "Кочевой стан", "biome": 12, "build": "market"},
+	"h_zephyr_1_0": {"name": "Стеклянные дюны", "biome": 12, "build": "crystal"},
+	"h_zephyr_1_1": {"name": "Оплавленные скалы", "biome": 12, "build": "field"},
+	"h_zephyr_2_0": {"name": "Стена урагана", "biome": 12, "build": "crystal"},
+	"h_zephyr_2_1": {"name": "Тихое сердце", "biome": 12, "build": "ruins"},
+	"h_iris_0_0": {"name": "Заколоченные улицы", "biome": 13, "build": "street"},
+	"h_iris_0_1": {"name": "Пункт дезинфекции", "biome": 13, "build": "market"},
+	"h_iris_1_0": {"name": "Стеклянные лаборатории", "biome": 13, "build": "junk"},
+	"h_iris_1_1": {"name": "Склад реагентов", "biome": 13, "build": "castle"},
+	"h_iris_2_0": {"name": "Гнилая чаща", "biome": 13, "build": "forest"},
+	"h_iris_2_1": {"name": "Споровое сердце", "biome": 13, "build": "crystal"},
+	"h_lyra_0_0": {"name": "Манеж", "biome": 14, "build": "market"},
+	"h_lyra_0_1": {"name": "Ряды фургонов", "biome": 14, "build": "street"},
+	"h_lyra_1_0": {"name": "Зеркальные коридоры", "biome": 14, "build": "crystal"},
+	"h_lyra_1_1": {"name": "Зал отражений", "biome": 14, "build": "castle"},
+	"h_lyra_2_0": {"name": "Арена", "biome": 14, "build": "castle"},
+	"h_lyra_2_1": {"name": "Закулисье", "biome": 14, "build": "market"},
+	"h_sol_0_0": {"name": "Ступени", "biome": 15, "build": "castle"},
+	"h_sol_0_1": {"name": "Арка паломников", "biome": 15, "build": "ruins"},
+	"h_sol_1_0": {"name": "Галерея линз", "biome": 15, "build": "crystal"},
+	"h_sol_1_1": {"name": "Призменный зал", "biome": 15, "build": "castle"},
+	"h_sol_2_0": {"name": "Реакторный зал", "biome": 15, "build": "ruins"},
+	"h_sol_2_1": {"name": "Солнечный колодец", "biome": 15, "build": "crystal"},
+	"h_volt_0_0": {"name": "Мокрые улицы", "biome": 16, "build": "street"},
+	"h_volt_0_1": {"name": "Тёмный рынок", "biome": 16, "build": "market"},
+	"h_volt_1_0": {"name": "Трансформаторный двор", "biome": 16, "build": "junk"},
+	"h_volt_1_1": {"name": "Распределительный щит", "biome": 16, "build": "castle"},
+	"h_volt_2_0": {"name": "Основание шпиля", "biome": 16, "build": "castle"},
+	"h_volt_2_1": {"name": "Громовая площадка", "biome": 16, "build": "crystal"},
+	"h_kai_0_0": {"name": "Бамбуковые аллеи", "biome": 17, "build": "forest"},
+	"h_kai_0_1": {"name": "Тихие дворы", "biome": 17, "build": "street"},
+	"h_kai_1_0": {"name": "Галерея свитков", "biome": 17, "build": "ruins"},
+	"h_kai_1_1": {"name": "Тёмное святилище", "biome": 17, "build": "castle"},
+	"h_kai_2_0": {"name": "Крыши", "biome": 17, "build": "castle"},
+	"h_kai_2_1": {"name": "Двор масок", "biome": 17, "build": "forest"},
 }
 
 var _dnoise := FastNoiseLite.new()
@@ -710,6 +808,7 @@ func _fenced_plot(nodes: Array, origin: Vector2, rng: RandomNumberGenerator, c: 
 
 
 func _build_district(dist: String, origin: Vector2, rng: RandomNumberGenerator, nodes: Array, key: Vector2i) -> void:
+	dist = str(DISTRICTS.get(dist, {}).get("build", dist))
 	var C := CHUNK
 	var H := C / 2.0
 	var anchor := _is_anchor(key)
