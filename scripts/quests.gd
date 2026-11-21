@@ -139,7 +139,6 @@ const HERO_QUESTS := {
 	],
 }
 
-const REWARD_BASE := {"shards": 40, "scrap": 6, "chips": 0, "cores": 0}
 
 
 static func tier() -> int:

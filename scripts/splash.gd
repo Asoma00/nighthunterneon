@@ -16,7 +16,6 @@ var _all_t := 0.0
 var _stage := -1
 var _done := false
 var _logo: Control
-var _icon: TextureRect
 var _flash := 0.0
 var _stars: Array = []
 
@@ -61,11 +60,6 @@ func _process(delta: float) -> void:
 		# Лёгкое «дыхание» логотипа в такт
 		var beat := fmod(_all_t * BPM / 60.0, 1.0)
 		_logo.scale = Vector2.ONE * (1.0 + 0.012 * exp(-beat * 6.0))
-		if is_instance_valid(_icon):
-			_icon.modulate.a = _logo.modulate.a * clampf((dur - _t) / 0.4, 0.0, 1.0)
-			var k := ease(clampf(_t / 0.7, 0.0, 1.0), 0.35)
-			_icon.scale = Vector2(k, k)
-			_icon.rotation = (1.0 - k) * -0.6
 		if _stage == 2 and _t > 1.0 and _t - delta <= 1.0:
 			_flash = 0.6
 		var last := _stage >= STAGES.size() - 1
@@ -87,8 +81,6 @@ func _next() -> void:
 	_t = 0.0
 	if is_instance_valid(_logo):
 		_logo.queue_free()
-	if is_instance_valid(_icon):
-		_icon.queue_free()
 	if _stage >= STAGES.size():
 		_finish()
 		return

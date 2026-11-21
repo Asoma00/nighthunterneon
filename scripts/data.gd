@@ -51,9 +51,7 @@ static func rarity_weapon_bonus(r: int) -> Dictionary:
 
 
 const MAX_WEAPON_LEVEL := 10
-const ASPECT_EVERY := 6      # аспект — один раз, на 6 уровне оружия
 const ASPECT_LEVEL := 6
-const MAX_ASPECTS := 1
 const MAX_FUSIONS := 2       # слияний оружия за бой
 const MAX_PASSIVE_LEVEL := 10
 const MAX_WEAPONS := 3        # в бою не больше 3 оружий
@@ -64,7 +62,6 @@ const MAX_HERO_MODULES := 2   # и 2 модуля героя
 
 static func module_cap(kind: String) -> int:
 	return MAX_WEAPON_MODULES if kind == "weapon" else MAX_HERO_MODULES
-const WIN_TIME := 360.0
 
 # ---------- Герои ----------
 const CHARACTERS := {
@@ -236,15 +233,6 @@ const CATALYSTS := {
 	"mines": ["poison", "ГРЕМУЧАЯ СМЕСЬ", "мина среди отравленных взрывается шире"],
 }
 
-## Физические связки: как снаряды и поля разных оружий влияют друг на друга.
-const FIELD_LINKS := [
-	"Любой снаряд, пролетевший сквозь круг, лужу, туман, смерч или шаровую молнию, перенимает её стихию",
-	"Солнечный луч и молния перезаряжают шаровую молнию",
-	"Катана и сюрикены разрубают шаровую молнию надвое",
-	"Крио-молот расплёскивает лужи и туман шире",
-	"Способность героя: импульс — перезаряжает оружие, подпитывает поля и даёт стихию героя всем ударам на 4 с",
-]
-
 ## Стихия способности каждого героя (её получают все удары во время импульса).
 const ABILITY_ELEMENT := {
 	"vega": "shock", "rin": "bleed", "bram": "chill", "kira": "chill", "skyla": "bleed",
@@ -300,11 +288,6 @@ const EVO_GENDER := {
 }
 
 
-## Имя эволюции двух оружий: «Шторм-протокол + Плазменная искра».
-static func fusion_name(a: String, b: String) -> String:
-	return fused_name(a, b)
-
-
 ## Части имён для слияний: [приставка, существительное].
 const FUSE_PARTS := {
 	"bolt": ["Плазмо", "искры"], "blades": ["Голо", "клинки"], "aura": ["Руно", "круг"],
@@ -336,13 +319,6 @@ static func evo_name(weapon: String, module: String) -> String:
 	if adj.ends_with("-"):
 		return adj + rest
 	return adj + " " + rest
-
-
-static func evo_desc(weapon: String, module: String) -> String:
-	var d: String = EVOLUTIONS[weapon]["desc"]
-	if module == "" or not ASPECTS.has(module):
-		return d
-	return "%s\n%s в полную силу: %s." % [d, ASPECTS[module]["name"], ASPECTS[module]["desc"]]
 
 
 static func catalyst_text(weapon_id: String) -> String:
@@ -508,7 +484,6 @@ const BOSS_TYPES := {
 }
 
 # ---------- Глава I: Неоновые пустоши ----------
-const CHAPTER_NAME := "Глава I. Неоновые пустоши"
 const LEVELS_PER_CHAPTER := 10
 
 

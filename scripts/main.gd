@@ -22,8 +22,6 @@ const ChapterMap := preload("res://scripts/chapter_map.gd")
 const CStory := preload("res://scripts/chapter_story.gd")
 const Awaken := preload("res://scripts/awaken.gd")
 
-const MAX_ENEMIES := 320
-
 const POST_SHADER := """
 shader_type canvas_item;
 uniform sampler2D screen_tex : hint_screen_texture, filter_linear;
@@ -113,7 +111,6 @@ var _elite_i := 0
 var _boss_i := 0
 var _boss_warned := false
 var boss: Node2D = null
-var _boss_index := 0
 var _reaction_text_t := 0.0
 var _combo_t := 0.0
 ## Счётчики забега для заданий, мастерства и итогов (см. quests.gd / meta.gd)
@@ -137,7 +134,6 @@ var challenge := ""      # испытание вылазки
 var _combo_seen := {}
 
 var _spawn_timer := 0.0
-var _next_elite := 60.0
 var _shake := 0.0
 var _post: ShaderMaterial
 var _wvp: SubViewport
@@ -459,9 +455,6 @@ func nearest_player(pos: Vector2) -> Node2D:
 
 
 ## Кооператив: герои не могут разойтись дальше экрана.
-var _leash_prev: Array = []
-
-
 func _leash() -> void:
 	if players.size() < 2:
 		return
@@ -2658,45 +2651,31 @@ func open_chest(opener: Node2D = null) -> void:
 	arsenal_loot("chest", player.position)
 	Sound.play("chest", 0.0)
 	var rewards: Array = []
-	# Аспекты теперь выбираются при повышении уровня оружия, не в сундуке
-	var evo: Array = []
-	if not evo.is_empty():
-		Sound.play("evolve", 0.0)
-		get_tree().paused = true
-		_chooser = player
-		var et: String = _who(player) + "АСПЕКТ ОРУЖИЯ: " + Data.WEAPONS[evo[0]["id"]]["name"].to_upper()
-		if net_mode == "host":
-			get_tree().paused = false
-			_net_show_offer(player, evo, et, "выберите аспект — он усилит это оружие")
-			return
-		hud.show_level_up(evo, et, "выберите аспект — он усилит это оружие")
-		return
-	# 2) иначе — до трёх улучшений того, что уже есть
-	if rewards.is_empty():
-		var pool: Array = []
-		for id in player.weapons:
-			if player.weapons[id] < Data.MAX_WEAPON_LEVEL:
-				pool.append(["weapon", id])
-		for id in player.passives:
-			if player.passives[id] < Data.MAX_PASSIVE_LEVEL:
-				pool.append(["passive", id])
-		pool.shuffle()
-		var n := mini(pool.size(), rng.randi_range(1, 3))
-		for i in n:
-			var t: String = pool[i][0]
-			var id: String = pool[i][1]
-			var rarity := _roll_upgrade_rarity(player)
-			var reward := {"type": t, "id": id, "rarity": rarity}
-			if t == "weapon":
-				player.add_weapon(id)
-				player.add_weapon_quality(id, rarity)
-				reward["title"] = Data.WEAPONS[id]["name"]
-				reward["desc"] = "Уровень %d" % player.weapons[id]
-			else:
-				player.add_passive(id, float(Data.RARITY[rarity]["k"]))
-				reward["title"] = Data.PASSIVES[id]["name"]
-				reward["desc"] = "Уровень %d" % player.passives[id]
-			rewards.append(reward)
+	# До трёх улучшений того, что уже есть.
+	var pool: Array = []
+	for id in player.weapons:
+		if player.weapons[id] < Data.MAX_WEAPON_LEVEL:
+			pool.append(["weapon", id])
+	for id in player.passives:
+		if player.passives[id] < Data.MAX_PASSIVE_LEVEL:
+			pool.append(["passive", id])
+	pool.shuffle()
+	var n := mini(pool.size(), rng.randi_range(1, 3))
+	for i in n:
+		var t: String = pool[i][0]
+		var id: String = pool[i][1]
+		var rarity := _roll_upgrade_rarity(player)
+		var reward := {"type": t, "id": id, "rarity": rarity}
+		if t == "weapon":
+			player.add_weapon(id)
+			player.add_weapon_quality(id, rarity)
+			reward["title"] = Data.WEAPONS[id]["name"]
+			reward["desc"] = "Уровень %d" % player.weapons[id]
+		else:
+			player.add_passive(id, float(Data.RARITY[rarity]["k"]))
+			reward["title"] = Data.PASSIVES[id]["name"]
+			reward["desc"] = "Уровень %d" % player.passives[id]
+		rewards.append(reward)
 	if rewards.is_empty():
 		player.heal(50.0)
 		rewards.append({"type": "heal", "id": "heal", "title": "Нано-аптечка", "desc": "+50 здоровья"})
@@ -2719,10 +2698,7 @@ func close_chest() -> void:
 		return
 	if net_mode != "":
 		return
-	if true:
-		_show_next_level_up()
-	else:
-		get_tree().paused = false
+	_show_next_level_up()
 
 
 # ---------- Уровни ----------
@@ -3218,7 +3194,6 @@ const NET_DT := 1.0 / 30.0
 var _client_input
 var _snap_t := 0.0
 var _inv_t := 0.0
-var _remote_choices: Array = []
 var _client_choices: Array = []
 var _puppets := {"e": {}, "p": {}, "g": {}, "z": {}, "cp": {}, "cz": {}}
 var _cstate_t := 0.0

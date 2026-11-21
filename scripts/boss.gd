@@ -54,7 +54,6 @@ const POSE_OF := {"ring": "cast", "fan": "cast", "skulls": "cast", "meteors": "c
 	"teleport": "vanish"}
 const POSE_COLOR := {"cast": Color(0.75, 0.4, 1.0), "summon": Color(0.4, 1.0, 0.55),
 	"windup": Color(1.0, 0.3, 0.2), "vanish": Color(0.35, 0.9, 1.0)}
-const POSE_WORD := {"cast": "заклинание", "summon": "призыв", "windup": "удар", "vanish": "исчезает"}
 
 const PHASE_NAMES := {
 	"lich": ["", "Пробуждение", "Буря душ", "Последний ритуал"],

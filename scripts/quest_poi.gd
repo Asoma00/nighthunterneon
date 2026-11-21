@@ -48,7 +48,6 @@ const FREE_T := 3.0
 var hid := ""              # чей герой (пленник / часть оружия)
 var _hero_spr: Sprite3D
 const RUNE_COLORS := [Color(1.0, 0.35, 0.35), Color(0.35, 1.0, 0.45), Color(0.4, 0.6, 1.0), Color(1.0, 0.85, 0.3), Color(0.85, 0.7, 1.0)]
-const RUNE_NAMES := ["огонь", "лист", "вода", "солнце", "звезда"]
 ## Имена рун для загадок: [именительный, родительный]
 const RUNE_WORDS := [["Пламя", "пламени"], ["Лист", "листа"], ["Вода", "воды"], ["Солнце", "солнца"], ["Звезда", "звезды"]]
 const ORD := ["первым", "вторым", "третьим", "четвёртым"]
@@ -83,7 +82,6 @@ var _pillars: Array = []     # позиции столбов (локальные
 var _pillar_rune: Array = [] # какой цвет на каком столбе
 var _seq: Array = []         # нужный порядок цветов
 var _step := 0
-var _show_t := 0.0           # сколько ещё показывать порядок над камнем
 var _stand := -1             # на каком столбе стоит герой
 var _fail_flash := 0.0
 
@@ -769,19 +767,6 @@ func quest_text() -> String:
 			n += int(l)
 		return "Маяки: %d / %d  •  осталось %d с" % [n, _beacons.size(), ceili(_timer)]
 	return ""
-
-
-func _glyph(at: Vector2, rune: int, r: float, col: Color, w := 3.0) -> void:
-	match rune:
-		0:   # треугольник — огонь
-			draw_polyline(PackedVector2Array([at + Vector2(0, -r), at + Vector2(r * 0.9, r * 0.7), at + Vector2(-r * 0.9, r * 0.7), at + Vector2(0, -r)]), col, w)
-		1:   # ромб — лист
-			draw_polyline(PackedVector2Array([at + Vector2(0, -r), at + Vector2(r, 0), at + Vector2(0, r), at + Vector2(-r, 0), at + Vector2(0, -r)]), col, w)
-		2:   # круг — вода
-			draw_arc(at, r * 0.85, 0.0, TAU, 20, col, w)
-		3:   # крест — солнце
-			draw_line(at + Vector2(-r, 0), at + Vector2(r, 0), col, w)
-			draw_line(at + Vector2(0, -r), at + Vector2(0, r), col, w)
 
 
 func _draw() -> void:

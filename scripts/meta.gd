@@ -171,16 +171,6 @@ const MODULE_TREE := [
 	{"id": "boost5", "name": "Сингулярность", "desc": "Эффект модуля +50%", "cost": 650, "req": ["boost4"], "tier": 5, "pos": Vector2(1, 4), "conds": [["level", 5], ["mused", 20]]},
 ]
 
-const NAME_A := ["Ар", "Бел", "Вир", "Гло", "Дин", "Зе", "Ки", "Лум", "Ми", "Нок", "Ор", "Пикс", "Ру", "Сай", "Тэк", "Ул", "Фе", "Хо", "Це", "Эн"]
-const NAME_B := ["ка", "ло", "рис", "та", "вен", "ми", "сс", "ни", "ро", "кс", "ла", "ди", "рон", "ви", "эль"]
-
-const PHRASES := [
-	"Неон греет душу.", "Ещё один осколок!", "Видел Лича? Жуть...", "Чиню генератор.",
-	"Ночь будет долгой.", "Слышишь гул портала?", "Здесь безопасно.", "Удачной вылазки!",
-	"Кузня опять дымит.", "Я верю в тебя!", "Где мой паяльник?", "Пахнет озоном.",
-]
-
-
 # ---------- Слоты сохранений ----------
 
 static func slot_path(n: int) -> String:
@@ -985,31 +975,6 @@ static func unlock_hero(id: String) -> bool:
 	heroes_owned.append(id)
 	save()
 	return true
-
-
-static func follower_cap() -> int:
-	return level("beacon") * 2
-
-
-static func recruit_cost() -> int:
-	return 30 + followers.size() * 25
-
-
-static func can_recruit() -> bool:
-	return followers.size() < follower_cap() and shards >= recruit_cost()
-
-
-static func recruit() -> Dictionary:
-	if not can_recruit():
-		return {}
-	shards -= recruit_cost()
-	var rng := RandomNumberGenerator.new()
-	rng.randomize()
-	var f := {"name": NAME_A[rng.randi_range(0, NAME_A.size() - 1)] + NAME_B[rng.randi_range(0, NAME_B.size() - 1)],
-		"seed": rng.randi_range(1, 99999)}
-	followers.append(f)
-	save()
-	return f
 
 
 ## Бонусы убежища, которые действуют в забеге.

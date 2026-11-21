@@ -93,8 +93,6 @@ func ward_cd() -> float:
 func ward_ready() -> bool:
 	return ward_lvl > 0.0 and _ward_t <= 0.0
 var _armor_cd := 0.0
-var _overflow_t := 0.0
-var _spirit_splits := 0
 
 # Аспекты модулей
 var _aspect_cache := {}
@@ -145,11 +143,8 @@ var _body: Sprite2D
 var _outline: Sprite2D
 var _emit: Sprite2D
 var _halo: Sprite2D
-var _gear: Node3D
 var _idle_t := 0.0
-var _gear_key := ""
-var _gear_w: Array = []   # [Sprite3D, слот]
-var _gear_m: Array = []   # [Sprite3D, фаза]
+var _mod_frame_key := ""
 var _light: PointLight2D
 var _aura_glow: Sprite2D
 var _aura_ring: Sprite2D
@@ -709,8 +704,6 @@ func _draw_aim(c: Node2D) -> void:
 	var rp := Vector2(0, 4) + a * 140.0
 	c.draw_arc(rp, 12.0, 0.0, TAU, 20, Color(col, 0.9), 2.5)
 	c.draw_circle(rp, 3.0, Color(col, 0.95))
-var _aim_in: RefCounted
-var _aim_hold := 0.0
 
 
 func _update_aim(_delta: float) -> void:
@@ -1210,10 +1203,6 @@ func hit_mult(target: Node) -> float:
 	return 1.0
 
 
-func plvl(id: String) -> int:
-	return passives.get(id, 0)
-
-
 func infuse_for(status: String) -> String:
 	if infuse_t > 0.0 and infuse_status != status:
 		return infuse_status
@@ -1459,7 +1448,7 @@ func _animate(delta: float) -> void:
 	_sync_outline()
 	var pulse := 0.5 + 0.5 * sin(_anim_t * 3.0)
 	_light.energy = 1.15 + 0.15 * pulse
-	_update_gear(vis)
+	_update_mod_frames()
 	_update_ward3d(vis)
 	_halo.modulate.a = 0.2 + 0.15 * pulse
 
@@ -1609,8 +1598,6 @@ func _sync_swords() -> void:
 
 
 func _exit_tree() -> void:
-	if is_instance_valid(_gear):
-		_gear.queue_free()
 	if is_instance_valid(_down_mark):
 		_down_mark.queue_free()
 	if is_instance_valid(_ward3d):
@@ -2579,20 +2566,6 @@ func net_sunray(dir: Vector2, length: float, width: float, col: Color) -> void:
 	main._bill_root.add_child(ray)
 
 
-## Гравимагнит: искра из подобранного кристалла.
-func magnet_spark() -> void:
-	main.attacker = self
-	var t: Array = main.nearest_enemies_to(position, 1, 600.0, null, aim)
-	if t.is_empty():
-		return
-	var dir: Vector2 = (t[0].position - position).normalized()
-	var p := _make_proj("orb", position + Vector2(0, -40), dir * 600.0, 14.0 * damage_mult, "shock", "")
-	p.color = Color(0.5, 1.0, 0.9)
-	p.homing = true
-	p.life = 1.5
-	main.projectiles_node.add_child(p)
-
-
 func _spawn_spirits(count: int, dmg: float, explode: float) -> void:
 	for i in count:
 		var dir := Vector2.RIGHT.rotated(TAU * i / maxi(count, 1) + randf() * 0.3)
@@ -2653,34 +2626,7 @@ func _shurikens(count: int, dmg: float, speed: float, spiral: bool, radial := fa
 # ---------- Снаряжение на герое ----------
 # Каждое оружие видно на персонаже: дополнительные стволы и клинки закреплены
 # за спиной и на поясе (выглядывают из-за силуэта). Модули встроены в сам
-# спрайт героя (Pixel.hero_frames): сердце в груди, сапоги, прицел на оружии.
-
-const GEAR_SLOTS := [Vector3(-0.24, 0.62, -0.07), Vector3(0.25, 0.66, -0.07), Vector3(-0.27, 0.36, -0.05),
-	Vector3(0.28, 0.4, -0.05), Vector3(0.0, 0.86, -0.09), Vector3(-0.12, 0.2, 0.05)]
-
-
-func _gear_sprite(tex: Texture2D, px: float, unshaded: bool) -> Sprite3D:
-	var s := Sprite3D.new()
-	s.texture = tex
-	s.pixel_size = px
-	s.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
-	s.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	s.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
-	s.shaded = not unshaded
-	s.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_gear.add_child(s)
-	return s
-
-
-func _rebuild_gear() -> void:
-	for c in _gear.get_children():
-		c.queue_free()
-	_gear_w.clear()
-	_gear_m.clear()
-	# Оружие и модули больше не висят значками вокруг героя: они нарисованы прямо
-	# на спрайте (за спиной, на поясе, в руках) — см. _mod_tiers и Pixel._paint_worn
-	_refresh_mod_frames()
-
+# спрайт героя: сердце в груди, сапоги, прицел на оружии.
 
 ## Ступени модулей для внешности: с 5-го уровня модуль выглядит мощнее.
 func _mod_tiers() -> Dictionary:
@@ -2728,13 +2674,20 @@ func _coop_sprite() -> String:
 	return key if Pixel.base_key(key) == base else base
 
 
-func _refresh_mod_frames() -> void:
+func _update_mod_frames() -> void:
+	if main == null or main._mirror_root == null:
+		return
+	var mods := _mod_tiers()
+	var key := str(mods)
+	if key == _mod_frame_key:
+		return
+	_mod_frame_key = key
 	var spr := sprite_key if sprite_key != "" else str(char_data["sprite"])
 	if not (Pixel.base_key(spr) in Pixel.HERO_KEYS):
 		return
 	# Перерисовка героя с модулями идёт порциями по кадрам — без фриза;
 	# пока она не готова, герой виден в прежнем облике.
-	var fr := Pixel.hero_frames_async(spr, _mod_tiers())
+	var fr := Pixel.hero_frames_async(spr, mods)
 	_mod_wait = fr.is_empty()
 	if not _mod_wait:
 		_frames = fr
@@ -2801,31 +2754,6 @@ func _update_ward3d(vis: bool) -> void:
 		_ward3d.scale = Vector3(0.68, 0.78, 0.68) * (1.0 + 0.6 * t)
 		_ward_mat.set_shader_parameter("amt", 1.0 - t)
 		_ward_mat.set_shader_parameter("hit", 1.0 - t)
-
-
-func _update_gear(vis: bool) -> void:
-	if main == null or main._mirror_root == null:
-		return
-	if not is_instance_valid(_gear):
-		_gear = Node3D.new()
-		main._mirror_root.add_child(_gear)
-		_gear_key = ""
-	var key := str(_mod_tiers())
-	if key != _gear_key:
-		_gear_key = key
-		_rebuild_gear()
-	var show := vis and _body.visible and not _dead
-	_gear.visible = show
-	if not show:
-		return
-	_gear.position = main._bl(global_position, 0.0)
-	var flip := -1.0 if _body.flip_h else 1.0
-	var bob := sin(_anim_t * (11.0 if moving else 2.2)) * (0.025 if moving else 0.01)
-	for g in _gear_w:
-		var p: Vector3 = g[1]
-		(g[0] as Sprite3D).position = Vector3(p.x * flip, p.y + bob, p.z)
-		(g[0] as Sprite3D).flip_h = _body.flip_h
-
 
 
 # ---------- Павший в кооперативе: столп света и подпись поверх всего ----------

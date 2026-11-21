@@ -25,7 +25,6 @@ const Skins := preload("res://scripts/skins.gd")
 const Dialog := preload("res://scripts/dialog.gd")
 const Scenes := preload("res://scripts/scenes.gd")
 var _dlg: CanvasLayer = null
-var _bd_sprite := ""
 ## Гардероб в таверне (облики): место в зале и выбранные герой/облик.
 const WARDROBE := Vector3(-7.4, 0, 3.4)
 var _wd_hero := ""
@@ -1050,38 +1049,8 @@ func _pine(p: Vector3, rng: RandomNumberGenerator, scale := 1.0) -> void:
 	_prop(["pine0", "pine0", "pine1", "pine2"][rng.randi_range(0, 3)], p, rng.randf() * TAU, scale * rng.randf_range(0.9, 1.2), scale <= 1.0)
 
 
-func _pine_old(p: Vector3, rng: RandomNumberGenerator, scale := 1.0) -> void:
-	var root := Node3D.new()
-	root.position = p
-	root.scale = Vector3.ONE * scale * rng.randf_range(0.8, 1.25)
-	_world.add_child(root)
-	_add(root, _cyl(0.12, 0.18, 1.0, 6), _mat(Color(0.25, 0.17, 0.14), 0.9, 0.0), Vector3(0, 0.5, 0))
-	var leaf := _mat(Color(0.1, 0.2 + rng.randf() * 0.08, 0.2), 0.9, 0.0)
-	for k in 3:
-		_add(root, _cyl(0.0, 1.1 - k * 0.28, 1.2, 7), leaf, Vector3(0, 1.1 + k * 0.7, 0))
-	if rng.randf() < 0.5:
-		var c := [CYAN, MAGENTA, Color(0.4, 1.0, 0.5)][rng.randi_range(0, 2)] as Color
-		_add(root, _sphere(0.09), _emat(c, 3.0), Vector3(0, 3.0, 0))
-	if scale <= 1.0:
-		_obstacles.append([p, 0.6])
-
-
 func _cyber_tree(p: Vector3, rng: RandomNumberGenerator) -> void:
 	_prop(["tree0", "tree1", "tree2", "tree3"][rng.randi_range(0, 3)], p, rng.randf() * TAU, rng.randf_range(0.9, 1.15))
-
-
-func _cyber_tree_old(p: Vector3, rng: RandomNumberGenerator) -> void:
-	var root := Node3D.new()
-	root.position = p
-	_world.add_child(root)
-	_add(root, _cyl(0.1, 0.2, 2.0, 6), _mat(Color(0.22, 0.2, 0.28), 0.6, 0.5), Vector3(0, 1.0, 0))
-	var c := [CYAN, MAGENTA, Color(0.7, 0.4, 1.0)][rng.randi_range(0, 2)] as Color
-	var crown := _add(root, _sphere(0.9), _emat(c.darkened(0.55), 0.8), Vector3(0, 2.4, 0))
-	crown.scale = Vector3(1.0, 0.75, 1.0)
-	_add(root, _torus(0.85, 0.92), _emat(c, 2.0), Vector3(0, 2.3, 0))
-	_bobbers.append([crown, 2.4, 0.06])
-	_light(root, Vector3(0, 2.2, 0), c, 0.4, 3.5)
-	_obstacles.append([p, 0.6])
 
 
 ## Анимация декора: мерцание неона, флаги, патрульные дроны.
@@ -3129,13 +3098,6 @@ func _fill_achievements() -> void:
 # ================= Сетевая игра: убежище хоста =================
 
 var _net_client := false
-var _buddy: Node3D
-var _bd_base: Sprite3D
-var _bd_emit: Sprite3D
-var _bd_frames: Dictionary
-var _bd_hero := ""
-var _bd_t := 0.0
-var _bd_label: Label3D
 var _net_label: Label
 var _net_send_t := 0.0
 var _was_net := false

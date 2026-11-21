@@ -433,19 +433,6 @@ static var _mods := {}
 static var _anc := {}
 
 
-## Кадры героя с модулями: mods = {id: ступень 1..2}.
-static func hero_frames(key: String, mods: Dictionary) -> Dictionary:
-	if mods.is_empty():
-		return frames(key)
-	var ck := _mods_key(key, mods)
-	if _cache.has(ck):
-		return _cache[ck]
-	_mods = mods
-	var r := frames(key, ck)
-	_mods = {}
-	return r
-
-
 ## Конец оружия в кадре (логические координаты рига).
 static func _weapon_tip(weapon: String, h: Vector2, dir: Vector2, st: String) -> Vector2:
 	var at := st == "attack"
@@ -3566,17 +3553,11 @@ static func _hero_weapon(weapon: String, L: Dictionary, b: Image, e: Image, h: V
 
 const BEAST_KEYS := ["imp", "bat", "ghoul", "wraith", "brute", "goblin", "slime", "slimelet", "spider",
 	"spiderling", "caster", "bomber", "knight"]
-const BEAST_ANIM := {"walk": [0, 6], "attack": [6, 4], "hurt": [10, 2]}
 const FLESH := Color(0.36, 0.22, 0.34)
 const FLESH2 := Color(0.28, 0.32, 0.26)
 const METAL := Color(0.42, 0.45, 0.55)
 const METAL_D := Color(0.24, 0.25, 0.32)
 const RED_EYE := Color(1.0, 0.18, 0.15)
-
-
-static func beast_frame(state: String, t: float, fps: float) -> int:
-	var a: Array = BEAST_ANIM[state]
-	return int(a[0]) + int(t * fps) % int(a[1])
 
 
 static func _beast_pose(f: int) -> Dictionary:
@@ -3865,7 +3846,6 @@ static func sline_tail(b: Image, e: Image, root: Vector2, s: float) -> void:
 # 16–17 урон, 18–19 ярость (смена фазы).
 
 const BOSS_KEYS := ["lich", "colossus", "queen", "omega"]
-const BOSS_ANIM := {"move": [0, 6], "attack": [6, 6], "special": [12, 4], "hurt": [16, 2], "rage": [18, 2]}
 
 
 static func _boss_pose(f: int) -> Dictionary:

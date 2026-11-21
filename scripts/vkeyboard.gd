@@ -18,7 +18,6 @@ var _title := ""
 var _layout := "ru"
 var _lower := false
 var _shown: Label
-var _keys: GridContainer
 var _rows_box: VBoxContainer
 var _first: Button
 

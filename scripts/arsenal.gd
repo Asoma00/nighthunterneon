@@ -307,11 +307,6 @@ const ACHIEVEMENTS := [
 ]
 
 
-static func ach_done(id: String) -> bool:
-	Meta.ensure_loaded()
-	return id in Meta.achieved
-
-
 static func ach_reward(a: Dictionary) -> Dictionary:
 	return TIERS[int(a["t"])]["reward"]
 

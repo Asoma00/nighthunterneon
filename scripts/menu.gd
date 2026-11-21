@@ -20,9 +20,6 @@ var _ground_emit: Sprite2D
 var _title: Label
 var _pages := {}
 var _portraits: Array = []
-var _selected := "vega"
-var _cards := {}
-var _info: Label
 var _t := 0.0
 var _focus := {}
 var _page_name := "main"
@@ -44,11 +41,8 @@ func _ready() -> void:
 		return
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	_selected = Data.selected_character
 	_build_background()
 	_build_main_page()
-	# Страница выбора героя в меню больше не открывается (герой выбирается в убежище):
-	# не строим её — меню грузится быстрее, а широкий ряд карточек не растягивает экран
 	_build_settings_page()
 	_build_saves_page()
 	_build_profile_page()
@@ -507,117 +501,6 @@ func _build_main_page() -> void:
 	v.add_child(hint)
 
 
-# ---------- Выбор героя ----------
-
-func _build_select_page() -> void:
-	var v := _page("select")
-	var title := _label("ВЫБЕРИТЕ ГЕРОЯ", 44, Color.WHITE, Color(CYAN, 0.8))
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(title)
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 16)
-	v.add_child(row)
-	for id in Data.CHARACTERS:
-		var card := _char_card(id)
-		_cards[id] = card
-		row.add_child(card)
-	_info = _label("", 15, Color(0.85, 0.85, 1.0))
-	_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_info.custom_minimum_size = Vector2(1100, 0)
-	v.add_child(_info)
-	var buttons := HBoxContainer.new()
-	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
-	buttons.add_theme_constant_override("separation", 20)
-	var back := _button("НАЗАД", Color(0.6, 0.6, 0.75), 200)
-	back.pressed.connect(func():
-		Sound.play("click")
-		_show("main"))
-	buttons.add_child(back)
-	var start := _button("В БОЙ!", GOLD, 300)
-	start.pressed.connect(_start_game)
-	buttons.add_child(start)
-	v.add_child(buttons)
-	_select(_selected)
-
-
-func _char_card(id: String) -> Button:
-	var c: Dictionary = Data.CHARACTERS[id]
-	var accent: Color = c["color"]
-	var b := Button.new()
-	b.custom_minimum_size = Vector2(268, 430)
-	b.add_theme_stylebox_override("normal", _box(accent.darkened(0.45), PANEL_BG, 2, 4))
-	b.add_theme_stylebox_override("hover", _box(accent.darkened(0.1), Color(0.08, 0.04, 0.15, 0.95), 3, 12))
-	b.add_theme_stylebox_override("pressed", _box(accent, Color(0.1, 0.05, 0.18, 0.95), 3, 20))
-	b.add_theme_stylebox_override("focus", _box(accent.darkened(0.1), Color(0.08, 0.04, 0.15, 0.95), 3, 12))
-	b.mouse_entered.connect(func(): Sound.play("hover", -10.0))
-	b.pressed.connect(func():
-		Sound.play("click")
-		_select(id))
-	var v := VBoxContainer.new()
-	v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	v.offset_left = 12
-	v.offset_right = -12
-	v.offset_top = 10
-	v.offset_bottom = -10
-	v.add_theme_constant_override("separation", 6)
-	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	b.add_child(v)
-	var portrait := _sprite_stack(c["sprite"], 120, false)
-	portrait.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	v.add_child(portrait)
-	var name_l := _label(c["name"], 28, Color.WHITE, Color(accent, 0.8))
-	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(name_l)
-	var title_l := _label(c["title"], 16, accent)
-	title_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(title_l)
-	var stats := _label("❤ %d    ➤ %d" % [int(c["hp"]), int(c["speed"])], 15, Color(0.85, 0.85, 0.95))
-	stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(stats)
-	var wrow := HBoxContainer.new()
-	wrow.alignment = BoxContainer.ALIGNMENT_CENTER
-	wrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var wi := TextureRect.new()
-	wi.texture = Pixel.icon(c["weapon"])
-	wi.custom_minimum_size = Vector2(32, 32)
-	wi.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	wi.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	wrow.add_child(wi)
-	wrow.add_child(_label(Data.WEAPONS[c["weapon"]]["name"], 15, CYAN))
-	v.add_child(wrow)
-	for text in [c["trait"], "★ " + c["active"] + ": " + c["active_desc"]]:
-		var l := _label(text, 13, Color(0.8, 0.8, 0.95) if not text.begins_with("★") else GOLD)
-		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		l.custom_minimum_size = Vector2(240, 0)
-		v.add_child(l)
-	return b
-
-
-func _select(id: String) -> void:
-	_selected = id
-	for k in _cards:
-		var card: Button = _cards[k]
-		var on: bool = k == id
-		card.scale = Vector2(1.04, 1.04) if on else Vector2.ONE
-		card.pivot_offset = card.custom_minimum_size / 2.0
-		card.modulate = Color(1, 1, 1) if on else Color(0.7, 0.7, 0.8)
-	var c: Dictionary = Data.CHARACTERS[id]
-	_info.text = "Выбран: %s, %s.  Стартовое оружие — %s.\nСтатус оружия — %s" % [
-		c["name"], c["title"].to_lower(), Data.WEAPONS[c["weapon"]]["name"],
-		Data.synergy_text(Data.WEAPONS[c["weapon"]]["status"])]
-
-
-func _start_game() -> void:
-	Sound.play("levelup", 0.0)
-	Data.selected_character = _selected
-	var tw := create_tween()
-	tw.tween_interval(0.12)   # без затемнения: кадр растворится неоновой волной
-	tw.tween_callback(func(): Loader.go("res://main.tscn"))
-
-
 # ---------- Настройки ----------
 
 func _build_settings_page() -> void:
@@ -971,13 +854,9 @@ func _fill_profile() -> void:
 # ---------- Кооператив: лобби на одном экране ----------
 
 var _coop_slots: Array = []   # [{dev, hero, ready, panel, ...}]
-var _coop_level := 0
-var _coop_level_l: Label
-var _coop_level_d: Label
 var _coop_hint: Label
 var _coop_start: Button
 var _join_block := true
-var _coop_back_t := 0.0
 
 
 func _unlocked_heroes() -> Array:
@@ -1074,40 +953,6 @@ func _coop_panel(i: int) -> Dictionary:
 		"dev_l": dev_l, "portrait": portrait, "name_l": name_l, "info_l": info_l, "state_l": state_l}
 
 
-func _coop_level_panel() -> Control:
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(330, 430)
-	panel.add_theme_stylebox_override("panel", _box(GOLD.darkened(0.3), PANEL_BG, 2, 8))
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 10)
-	panel.add_child(v)
-	var head := _label("УРОВЕНЬ", 26, GOLD, Color(GOLD, 0.6))
-	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(head)
-	var up := _button("▲", GOLD, 120)
-	up.pressed.connect(func(): _coop_change_level(-1))
-	v.add_child(up)
-	_coop_level_l = _label("", 24, Color.WHITE, Color(GOLD, 0.5))
-	_coop_level_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_coop_level_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_coop_level_l.custom_minimum_size = Vector2(300, 0)
-	v.add_child(_coop_level_l)
-	_coop_level_d = _label("", 14, Color(0.8, 0.8, 0.95))
-	_coop_level_d.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_coop_level_d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_coop_level_d.custom_minimum_size = Vector2(300, 0)
-	v.add_child(_coop_level_d)
-	var down := _button("▼", GOLD, 120)
-	down.pressed.connect(func(): _coop_change_level(1))
-	v.add_child(down)
-	var help := _label("Уровень меняет Игрок 1: вверх / вниз", 13, Color(0.7, 0.7, 0.85))
-	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	help.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	help.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-	v.add_child(help)
-	return panel
-
-
 func _coop_reset() -> void:
 	_join_block = true
 	Data.party = false
@@ -1122,18 +967,6 @@ func _coop_reset() -> void:
 		if sl["hero"] < 0:
 			sl["hero"] = i % heroes.size()
 		_coop_refresh(i)
-
-
-func _coop_change_level(d: int) -> void:
-	if _coop_level_l == null:
-		return
-	var max_l := mini(Meta.levels_cleared, Data.LEVELS.size() - 1)
-	_coop_level = clampi(_coop_level + d, 0, max_l)
-	var lv: Dictionary = Data.LEVELS[_coop_level]
-	_coop_level_l.text = "%d. %s" % [_coop_level + 1, lv["name"]]
-	_coop_level_d.text = "%s\n\nВремя: %d:%02d\nОткрыто уровней: %d / %d" % [lv["desc"], int(lv["time"]) / 60, int(lv["time"]) % 60, max_l + 1, Data.LEVELS.size()]
-	if d != 0:
-		Sound.play("hover", -6.0)
 
 
 func _coop_refresh(i: int) -> void:
@@ -1259,7 +1092,6 @@ var _net_lobby_box: VBoxContainer
 var _net_ready := false
 var _net_hero := 0
 var _net_level := 0
-var _net_input
 var _net_sig := ""
 var _net_leaving := false
 

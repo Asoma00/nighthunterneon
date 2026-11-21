@@ -56,7 +56,6 @@ var _rune := Vector2.INF
 var _last_hp := -1.0
 var _t := 0.0
 var _flash := 0.0
-var _fail_text := ""
 
 
 func _ready() -> void:
