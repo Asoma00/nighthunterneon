@@ -2798,10 +2798,27 @@ func _weapon_stat_line(id: String) -> String:
 	return "\n".join(parts)
 
 
-## Что улучшится при переходе оружия на следующий уровень.
-func _weapon_upgrade_text(id: String, from: int, to: int) -> String:
-	var a := Data.weapon_stats(id, from, false)
-	var b := Data.weapon_stats(id, to, false)
+## Характеристики оружия с учётом уже накопленного качества (и прибавки нового улучшения).
+func _with_quality(s: Dictionary, id: String, extra := {}) -> Dictionary:
+	var q: Dictionary = player.wq.get(id, {"dmg": 0.0, "cd": 0.0, "area": 0.0})
+	var dmg := float(q["dmg"]) + float(extra.get("dmg", 0.0))
+	var cd := minf(0.5, float(q["cd"]) + float(extra.get("cd", 0.0)))
+	var area := float(q["area"]) + float(extra.get("area", 0.0))
+	if s.has("damage"):
+		s["damage"] = float(s["damage"]) * (1.0 + dmg)
+	for key in ["cooldown", "interval"]:
+		if s.has(key):
+			s[key] = float(s[key]) * (1.0 - cd)
+	for key in ["radius", "range", "length"]:
+		if s.has(key):
+			s[key] = float(s[key]) * (1.0 + area)
+	return s
+
+
+## Что улучшится при переходе оружия на следующий уровень (итоговые числа, с качеством r).
+func _weapon_upgrade_text(id: String, from: int, to: int, r := 0) -> String:
+	var a := _with_quality(Data.weapon_stats(id, from, false), id)
+	var b := _with_quality(Data.weapon_stats(id, to, false), id, Data.rarity_weapon_bonus(r) if r > 0 else {})
 	var lines: Array = []
 	for k in STAT_NAMES:
 		if a.has(k) and b.has(k) and (a[k] is float or a[k] is int):
@@ -2857,7 +2874,7 @@ func _build_choices(player: Node2D) -> Array:
 				if Data.WEAPONS[wid]["evo_with"] == id:
 					evo_for = Data.WEAPONS[wid]["name"]
 			pool.append({"type": "passive", "id": id, "new": lvl == 0, "level": lvl + 1,
-				"title": p["name"], "desc": p["desc"],
+				"title": p["name"], "desc": passive_desc(id, player._m_boost(id)),
 				"hint": "Действует только на героя" if p["kind"] == "hero" else ("Только на оружие  •  аспект «%s»" % Data.ASPECTS[id]["name"] if Data.ASPECTS.has(id) else "Только на оружие")})
 	# Взвешенный случайный порядок: модули с узлом «Знакомый сигнал» выпадают вдвое чаще
 	for c in pool:
@@ -2877,14 +2894,13 @@ func _build_choices(player: Node2D) -> Array:
 		var r := 0 if bool(c.get("new", false)) else Data.roll_rarity(luck)
 		c["rarity"] = r
 		var k: float = float(Data.RARITY[r]["k"])
+		# Описание сразу с итоговым улучшением — без отдельных строк о качестве
 		match c["type"]:
 			"weapon":
-				if r > 0:
-					var b := Data.rarity_weapon_bonus(r)
-					c["qtext"] = "+%d%% урона, −%d%% перезарядки, +%d%% области этому оружию" % [int(round(b["dmg"] * 100.0)), int(round(b["cd"] * 100.0)), int(round(b["area"] * 100.0))]
+				if r > 0 and not bool(c.get("new", false)):
+					c["desc"] = _weapon_upgrade_text(c["id"], int(player.weapons.get(c["id"], 0)), int(c["level"]), r)
 			"passive":
-				if r > 0:
-					c["qtext"] = "Модуль сильнее в %.2f раза" % k if c["id"] != "multi" else ""
+				c["desc"] = passive_desc(c["id"], player._m_boost(c["id"]) * k)
 			"heal":
 				c["desc"] = "Восстанавливает %d здоровья" % int(40.0 * k)
 	return choices
@@ -4427,3 +4443,57 @@ func _cm_enter_arena() -> void:
 	_cm_say("arena", func():
 		_spawn_boss(level.get("final", "lich"), not _cm_guards.is_empty(), ac)
 		_cm_final = boss)
+
+
+
+static func _num(v: float) -> String:
+	var r := snappedf(v, 0.1)
+	return str(int(r)) if is_equal_approx(r, roundf(r)) else "%.1f" % r
+
+
+## Описание модуля с итоговой силой k (прокачка модуля × качество улучшения).
+func passive_desc(id: String, k: float) -> String:
+	match id:
+		"hp":
+			return "+%s к максимальному здоровью" % _num(20.0 * k)
+		"speed":
+			return "+%s%% к скорости движения" % _num(10.0 * k)
+		"magnet":
+			return "+%s%% к радиусу сбора кристаллов" % _num(35.0 * k)
+		"regen":
+			return "+%s здоровья в секунду" % _num(0.5 * k)
+		"armor":
+			return "−%s к любому получаемому урону" % _num(1.0 * k)
+		"vamp":
+			return "+%s здоровья за каждое убийство" % _num(0.4 * k)
+		"luck":
+			return "+%s%% опыта и +%s%% шанс сундука" % [_num(8.0 * k), _num(8.0 * k)]
+		"shield":
+			var now := float(player.ward_lvl)
+			var cd_new := maxf(5.0, 16.0 - 2.0 * (now + k))
+			if now <= 0.0:
+				return "Щит поглощает удар; перезарядка %s с" % _num(cd_new)
+			return "Перезарядка щита: %s → %s с" % [_num(player.ward_cd()), _num(cd_new)]
+		"dodge":
+			return "+%s%% шанс уклониться от удара" % _num(6.0 * k)
+		"dash":
+			return "−%s%% к перезарядке способности героя" % _num(12.0 * minf(k, 1.5))
+		"damage":
+			return "+%s%% к урону оружия" % _num(12.0 * k)
+		"cooldown":
+			return "−%s%% к перезарядке оружия" % _num(8.0 * k)
+		"area":
+			return "+%s%% к области и дальности оружия (область — не больше экрана, сверх предела растёт урон)" % _num(12.0 * k)
+		"crit":
+			return "+%s%% шанс крита оружия (двойной урон)" % _num(8.0 * k)
+		"duration":
+			return "+%s%% к длительности статусов и луж от оружия" % _num(20.0 * k)
+		"pierce":
+			return "+1 к пробиванию снарядов и +%s%% урона оружия" % _num(6.0 * k)
+		"execute":
+			return "+%s%% урона по врагам, у которых меньше 30%% здоровья" % _num(25.0 * k)
+		"giant":
+			return "+%s%% урона по элите и боссам" % _num(15.0 * k)
+		"toxin":
+			return "+%s%% к урону горения, кровотечения и яда" % _num(25.0 * k)
+	return str(Data.PASSIVES[id]["desc"])
