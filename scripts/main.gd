@@ -236,6 +236,9 @@ func _ready() -> void:
 		if net_mode == "host" and i > 0:
 			p.profile = Net.profile_of(i)   # каждый играет со своей прокачкой
 		p.setup(str(heroes[i]))
+		var action_perks: Dictionary = p.profile.get("upgrade_actions", {}) if net_mode == "host" and i > 0 else Meta.perks
+		for id in Lore.UPGRADE_ACTIONS:
+			p.upgrade_uses[id] = clampi(int(action_perks.get(id, 0)), 0, int(Lore.PERKS[id]["max"]))
 		if heroes.size() > 1:
 			# Отряд встаёт кругом вокруг точки старта
 			p.position = Vector2.RIGHT.rotated(PI + TAU * i / heroes.size()) * (90.0 if heroes.size() == 2 else 110.0)
@@ -2682,12 +2685,18 @@ func open_chest(opener: Node2D = null) -> void:
 		for i in n:
 			var t: String = pool[i][0]
 			var id: String = pool[i][1]
+			var rarity := _roll_upgrade_rarity(player)
+			var reward := {"type": t, "id": id, "rarity": rarity}
 			if t == "weapon":
 				player.add_weapon(id)
-				rewards.append({"type": "weapon", "id": id, "title": Data.WEAPONS[id]["name"], "desc": "Уровень %d" % player.weapons[id]})
+				player.add_weapon_quality(id, rarity)
+				reward["title"] = Data.WEAPONS[id]["name"]
+				reward["desc"] = "Уровень %d" % player.weapons[id]
 			else:
-				player.add_passive(id)
-				rewards.append({"type": "passive", "id": id, "title": Data.PASSIVES[id]["name"], "desc": "Уровень %d" % player.passives[id]})
+				player.add_passive(id, float(Data.RARITY[rarity]["k"]))
+				reward["title"] = Data.PASSIVES[id]["name"]
+				reward["desc"] = "Уровень %d" % player.passives[id]
+			rewards.append(reward)
 	if rewards.is_empty():
 		player.heal(50.0)
 		rewards.append({"type": "heal", "id": "heal", "title": "Нано-аптечка", "desc": "+50 здоровья"})
@@ -2745,6 +2754,7 @@ func queue_level_up(p: Node2D = null) -> void:
 
 
 func _show_next_level_up() -> void:
+	_level_choices = []
 	# Сначала — положенный аспект оружия (6 уровень) и слияние (два оружия 10 уровня)
 	for p in players:
 		var asp := _evo_choices(p)
@@ -2765,13 +2775,58 @@ func _show_next_level_up() -> void:
 		return
 	get_tree().paused = true
 	_chooser = _choosers[0]
-	var ch := _build_choices(_chooser)
-	var title := _who(_chooser) + "ПОВЫШЕНИЕ УРОВНЯ"
-	var sub := ("выберите улучшение  •  " + Settings.key("pick") if not coop else "выбирает игрок %d" % (_chooser.pid + 1))
+	_show_player_level_choices(_chooser, _build_choices(_chooser))
+
+
+var _level_choices: Array = []
+
+
+func _show_player_level_choices(p: Node2D, choices: Array) -> void:
 	if net_mode == "host":
-		_net_offer(ch, title, sub)
+		_net_show_offer(p, choices, "ПОВЫШЕНИЕ УРОВНЯ %d" % p.level, "выберите улучшение  •  герой неуязвим, пока вы выбираете")
 		return
-	hud.show_level_up(ch, title, sub)
+	_level_choices = choices
+	var sub := ("выберите улучшение  •  " + Settings.key("pick") if not coop else "выбирает игрок %d" % (p.pid + 1))
+	hud.show_level_up(choices, _who(p) + "ПОВЫШЕНИЕ УРОВНЯ", sub, p.upgrade_uses)
+
+
+func apply_level_action(action: String, index := -1) -> void:
+	if net_mode == "client":
+		# Обычный выбор передаётся индексом карточки; отрицательные индексы — действия.
+		var command := -1 if action == "reroll" else (-2 if action == "skip" else -3 - index)
+		Net.choose(command)
+		hud.hide_level_up()
+		return
+	var p: Node2D = players[0] if net_mode == "host" else _chooser
+	if p != null:
+		_use_level_action(p, action, index)
+
+
+func _use_level_action(p: Node2D, action: String, index: int) -> void:
+	var choices: Array = _offers[p.pid] if net_mode == "host" else _level_choices
+	if choices.is_empty() or not choices[0].has("rarity") or int(p.upgrade_uses.get(action, 0)) <= 0:
+		return
+	if action == "banish":
+		if index < 0 or index >= choices.size() or choices[index]["type"] == "heal":
+			return
+		p.banished_upgrades[choices[index]["id"]] = true
+		choices.remove_at(index)
+		var kept: Array = choices.map(func(card): return card["id"])
+		var replacement := _build_choices(p, kept)
+		if not replacement.is_empty() and (replacement[0]["type"] != "heal" or choices.is_empty()):
+			choices.insert(index, replacement[0])
+	p.upgrade_uses[action] -= 1
+	match action:
+		"skip":
+			if net_mode == "host":
+				_net_apply_offer(p, {"type": "skip"})
+			else:
+				apply_choice({"type": "skip"})
+		"reroll":
+			var previous: Array = choices.map(func(card): return card["id"])
+			_show_player_level_choices(p, _build_choices(p, [], previous))
+		"banish":
+			_show_player_level_choices(p, choices)
 
 
 const STAT_NAMES := {"damage": "Урон", "cooldown": "Перезарядка, с", "count": "Количество", "pierce": "Пробивание",
@@ -2810,11 +2865,10 @@ func _weapon_stat_line(id: String) -> String:
 
 
 ## Характеристики оружия с учётом уже накопленного качества (и прибавки нового улучшения).
-func _with_quality(s: Dictionary, id: String, extra := {}) -> Dictionary:
-	var q: Dictionary = player.wq.get(id, {"dmg": 0.0, "cd": 0.0, "area": 0.0})
-	var dmg := float(q["dmg"]) + float(extra.get("dmg", 0.0))
-	var cd := minf(0.5, float(q["cd"]) + float(extra.get("cd", 0.0)))
-	var area := float(q["area"]) + float(extra.get("area", 0.0))
+func _with_quality(s: Dictionary, q: Dictionary, extra := {}) -> Dictionary:
+	var dmg := float(q.get("dmg", 0.0)) + float(extra.get("dmg", 0.0))
+	var cd := minf(0.5, float(q.get("cd", 0.0)) + float(extra.get("cd", 0.0)))
+	var area := float(q.get("area", 0.0)) + float(extra.get("area", 0.0))
 	if s.has("damage"):
 		s["damage"] = float(s["damage"]) * (1.0 + dmg)
 	for key in ["cooldown", "interval"]:
@@ -2827,9 +2881,10 @@ func _with_quality(s: Dictionary, id: String, extra := {}) -> Dictionary:
 
 
 ## Что улучшится при переходе оружия на следующий уровень (итоговые числа, с качеством r).
-func _weapon_upgrade_text(id: String, from: int, to: int, r := 0) -> String:
-	var a := _with_quality(Data.weapon_stats(id, from, false), id)
-	var b := _with_quality(Data.weapon_stats(id, to, false), id, Data.rarity_weapon_bonus(r) if r > 0 else {})
+func _weapon_upgrade_text(p: Node2D, id: String, from: int, to: int, r := 0) -> String:
+	var quality: Dictionary = p.wq.get(id, {})
+	var a := _with_quality(Data.weapon_stats(id, from, false), quality)
+	var b := _with_quality(Data.weapon_stats(id, to, false), quality, Data.rarity_weapon_bonus(r) if r > 0 else {})
 	var lines: Array = []
 	for k in STAT_NAMES:
 		if a.has(k) and b.has(k) and (a[k] is float or a[k] is int):
@@ -2845,10 +2900,16 @@ func _weapon_upgrade_text(id: String, from: int, to: int, r := 0) -> String:
 	return "\n".join(lines)
 
 
-func _build_choices(player: Node2D) -> Array:
+func _roll_upgrade_rarity(p: Node2D) -> int:
+	return Data.roll_rarity(p.level, clampf(float(p.chest_bonus), 0.0, 0.6))
+
+
+func _build_choices(player: Node2D, exclude: Array = [], previous: Array = []) -> Array:
 	var pool: Array = []
 	var full: bool = player.weapon_slots() >= Data.MAX_WEAPONS
 	for id in Data.WEAPONS:
+		if player.banished_upgrades.has(id) or id in exclude:
+			continue
 		var lvl: int = player.weapons.get(id, 0)
 		if lvl == 0 and full:
 			continue
@@ -2864,7 +2925,7 @@ func _build_choices(player: Node2D) -> Array:
 					"hint": Data.catalyst_text(id) + "\nСтихия: " + Data.STATUSES[w["status"]]["name"] + "  •  аспект на ур. 6"})
 			else:
 				# Дальше — только то, что улучшится
-				var up := _weapon_upgrade_text(id, lvl, lvl + 1)
+				var up := _weapon_upgrade_text(player, id, lvl, lvl + 1)
 				var hint := ""
 				if lvl + 1 == Data.ASPECT_LEVEL and player.evolved.get(id, []).is_empty() and player.has_aspect_module(id):
 					hint = "+ выбор аспекта (один на оружие)"
@@ -2873,6 +2934,8 @@ func _build_choices(player: Node2D) -> Array:
 				pool.append({"type": "weapon", "id": id, "new": false, "level": lvl + 1,
 					"title": w["name"], "desc": up, "hint": hint})
 	for id in Data.PASSIVES:
+		if player.banished_upgrades.has(id) or id in exclude:
+			continue
 		var lvl: int = player.passives.get(id, 0)
 		var pk: String = Data.PASSIVES[id]["kind"]
 		if lvl == 0 and player.module_count(pk) >= Data.module_cap(pk):
@@ -2891,7 +2954,8 @@ func _build_choices(player: Node2D) -> Array:
 	# Взвешенный случайный порядок: модули с узлом «Знакомый сигнал» выпадают вдвое чаще
 	for c in pool:
 		var w := 2.0 if (c["type"] == "passive" and Meta.has_node("m:" + str(c["id"]), "favor")) else 1.0
-		c["_k"] = pow(randf(), 1.0 / w)
+		# При обновлении сначала выдаём карточки, которых не было в предыдущем наборе.
+		c["_k"] = pow(randf(), 1.0 / w) + (0.0 if c["id"] in previous else 1.0)
 	pool.sort_custom(func(a, b): return a["_k"] > b["_k"])
 	for c in pool:
 		c.erase("_k")
@@ -2900,17 +2964,16 @@ func _build_choices(player: Node2D) -> Array:
 		choices.append({"type": "heal", "id": "heal", "new": false, "level": 0,
 			"title": "Нано-аптечка", "desc": "Восстанавливает 40 здоровья", "hint": ""})
 	# Качество каждого улучшения выпадает случайно (удача чуть повышает шансы)
-	var luck := clampf(float(player.chest_bonus), 0.0, 0.6)
 	for c in choices:
 		# Первое появление оружия или модуля — всегда обычное качество
-		var r := 0 if bool(c.get("new", false)) else Data.roll_rarity(luck)
+		var r := 0 if bool(c.get("new", false)) else _roll_upgrade_rarity(player)
 		c["rarity"] = r
 		var k: float = float(Data.RARITY[r]["k"])
 		# Описание сразу с итоговым улучшением — без отдельных строк о качестве
 		match c["type"]:
 			"weapon":
 				if r > 0 and not bool(c.get("new", false)):
-					c["desc"] = _weapon_upgrade_text(c["id"], int(player.weapons.get(c["id"], 0)), int(c["level"]), r)
+					c["desc"] = _weapon_upgrade_text(player, c["id"], int(player.weapons.get(c["id"], 0)), int(c["level"]), r)
 			"passive":
 				c["desc"] = passive_desc(c["id"], player._m_boost(c["id"]) * k)
 			"heal":
@@ -3165,10 +3228,6 @@ var _cstate_t := 0.0
 var _offers := [[], [], [], [], []]
 
 
-func _net_offer(ch: Array, title: String, sub: String) -> void:
-	_net_show_offer(_chooser if _chooser != null else player, ch, title, sub)
-
-
 func _net_next_offer(p: Node2D) -> void:
 	if not _offers[p.pid].is_empty():
 		return
@@ -3183,16 +3242,17 @@ func _net_next_offer(p: Node2D) -> void:
 	if p.pending_lv <= 0:
 		p.choosing = false
 		return
-	_net_show_offer(p, _build_choices(p), "ПОВЫШЕНИЕ УРОВНЯ %d" % p.level, "выберите улучшение  •  герой неуязвим, пока вы выбираете")
+	_show_player_level_choices(p, _build_choices(p))
 
 
 func _net_show_offer(p: Node2D, ch: Array, title: String, sub: String) -> void:
 	_offers[p.pid] = ch
 	p.choosing = true
+	var actions: Dictionary = p.upgrade_uses if ch[0].has("rarity") else {}
 	if p.pid == 0:
-		hud.show_level_up(ch, title, sub)
+		hud.show_level_up(ch, title, sub, actions)
 	else:
-		Net.event_to(p.pid, "choices", [ch, title, sub])
+		Net.event_to(p.pid, "choices", [ch, title, sub, actions])
 
 
 func _net_apply_offer(p: Node2D, choice: Dictionary) -> void:
@@ -3221,10 +3281,14 @@ func _net_apply_offer(p: Node2D, choice: Dictionary) -> void:
 func net_remote_choice(index: int, idx := 1) -> void:
 	if idx <= 0 or idx >= players.size():
 		return
-	var off: Array = _offers[idx]
-	if index < 0 or index >= off.size():
+	var p: Node2D = players[idx]
+	if index < 0:
+		var action := "reroll" if index == -1 else ("skip" if index == -2 else "banish")
+		_use_level_action(p, action, -3 - index)
 		return
-	_net_apply_offer(players[idx], off[index])
+	var off: Array = _offers[idx]
+	if index < off.size():
+		_net_apply_offer(p, off[index])
 
 
 ## Хост: попадания героя клиента — урон уже посчитан у него, здесь только применяем.
@@ -3274,7 +3338,7 @@ func net_event(kind: String, data: Variant) -> void:
 		"choices":
 			_client_choices = data[0]
 			hud.hide_wait()
-			hud.show_level_up(data[0], data[1], data[2])
+			hud.show_level_up(data[0], data[1], data[2], data[3] if data.size() > 3 else {})
 		"fx_hurt":
 			hurt_flash()
 		"gone":

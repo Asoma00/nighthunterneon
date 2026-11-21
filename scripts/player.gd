@@ -12,6 +12,8 @@ const ProjectileScript := preload("res://scripts/projectile.gd")
 var main: Node2D
 var pid := 0          # 0 — Игрок 1, 1 — Игрок 2 (кооператив)
 var profile := {}      # прокачка из чужого сохранения (сетевой игрок); пусто — своё
+var upgrade_uses := {}
+var banished_upgrades := {}
 var choosing := false  # сетевая игра: выбирает улучшение — неуязвим и стоит на месте
 var pending_lv := 0
 var input              # DevInput: своё устройство в кооперативе (иначе общие действия)

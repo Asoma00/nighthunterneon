@@ -26,11 +26,14 @@ const RARITY := [
 ]
 
 
-static func roll_rarity(luck := 0.0) -> int:
+static func roll_rarity(level: int, luck := 0.0) -> int:
+	# К 25-му уровню возвращаемся к базовым весам позднего боя.
+	const EARLY_WEIGHTS := [72.0, 23.0, 4.6, 0.3, 0.09, 0.01]
+	var progress := clampf(float(level - 2) / 23.0, 0.0, 1.0)
 	var sum := 0.0
 	var ws: Array = []
 	for i in RARITY.size():
-		var w: float = float(RARITY[i]["w"]) * (1.0 + luck * i)
+		var w := lerpf(EARLY_WEIGHTS[i], float(RARITY[i]["w"]), progress) * (1.0 + luck * i)
 		ws.append(w)
 		sum += w
 	var r := randf() * sum

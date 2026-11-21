@@ -3,6 +3,7 @@ extends CanvasLayer
 ## карточки улучшений и экран итогов.
 
 const Data := preload("res://scripts/data.gd")
+const Lore := preload("res://scripts/lore.gd")
 const UiFocus := preload("res://scripts/ui_focus.gd")
 const DevInput := preload("res://scripts/devinput.gd")
 const Pixel := preload("res://scripts/pixel.gd")
@@ -457,16 +458,24 @@ func _process(delta: float) -> void:
 	if modal == _levelup_root and main.coop and main.get("_pin") == null and main._chooser != null and main._chooser.input != null and _lvl_t > 0.35:
 		var inp = main._chooser.input
 		inp.poll()
-		var cards := _cards.get_children().filter(func(b): return not b.is_queued_for_deletion())
-		if not cards.is_empty():
-			var f := get_viewport().gui_get_focus_owner()
-			var i: int = cards.find(f)
-			if inp.just("left") or inp.just("right") or i < 0:
-				i = clampi((0 if i < 0 else i) + (-1 if inp.just("left") else (1 if inp.just("right") else 0)), 0, cards.size() - 1)
-				cards[i].grab_focus()
-				UiFocus.pad_mode = true
-			if inp.just("ok"):
-				cards[i].pressed.emit()
+		var focus := get_viewport().gui_get_focus_owner() as Button
+		if focus == null or not _levelup_root.is_ancestor_of(focus):
+			focus = _cards.get_child(0) as Button
+		var neighbor: NodePath
+		if inp.just("left"):
+			neighbor = focus.focus_neighbor_left
+		elif inp.just("right"):
+			neighbor = focus.focus_neighbor_right
+		elif inp.just("up"):
+			neighbor = focus.focus_neighbor_top
+		elif inp.just("down"):
+			neighbor = focus.focus_neighbor_bottom
+		if not neighbor.is_empty():
+			focus = focus.get_node(neighbor) as Button
+			focus.grab_focus()
+			UiFocus.pad_mode = true
+		if inp.just("ok") and not focus.disabled:
+			focus.pressed.emit()
 	_highlight_cards(delta, modal == _levelup_root)
 	if main == null or main.player == null:
 		return
@@ -714,6 +723,10 @@ func _build_hud() -> void:
 var _last_choices: Array = []
 var _last_lvl_title := ""
 var _last_lvl_sub := ""
+var _level_actions := {}
+var _action_row: HBoxContainer
+var _action_buttons := {}
+var _banish_mode := false
 
 
 ## Раскладка под положение экрана (телефон можно повернуть прямо в бою).
@@ -736,7 +749,7 @@ func relayout() -> void:
 		_quest.offset_right = 340 if p else 400
 	_stats_t = 0.0
 	if _levelup_root and _levelup_root.visible and not _last_choices.is_empty():
-		show_level_up(_last_choices, _last_lvl_title, _last_lvl_sub)
+		show_level_up(_last_choices, _last_lvl_title, _last_lvl_sub, _level_actions)
 
 
 func _build_p2(root: Control) -> void:
@@ -1121,6 +1134,32 @@ func _build_level_up() -> void:
 	_cards.add_theme_constant_override("separation", 22)
 	_cards.alignment = BoxContainer.ALIGNMENT_CENTER
 	v.add_child(_cards)
+	_action_row = HBoxContainer.new()
+	_action_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_child(_action_row)
+	for id: String in Lore.UPGRADE_ACTIONS:
+		var button := _menu_button("", GOLD)
+		button.custom_minimum_size = Vector2(0, 42)
+		button.add_theme_font_size_override("font_size", 16)
+		button.pressed.connect(_pick_level_action.bind(id))
+		_action_buttons[id] = button
+		_action_row.add_child(button)
+
+
+func _pick_level_action(action: String) -> void:
+	Sound.play("click")
+	if action != "banish":
+		main.apply_level_action(action)
+		return
+	_banish_mode = not _banish_mode
+	_lvl_sub.text = "Выберите карточку, которую хотите убрать из предложений до конца вылазки" if _banish_mode else _last_lvl_sub
+	_action_buttons["banish"].text = "Отмена" if _banish_mode else _level_action_label("banish")
+	if _banish_mode:
+		_cards.get_child(0).grab_focus()
+
+
+func _level_action_label(id: String) -> String:
+	return "%s (%d)" % [Lore.PERKS[id]["name"], int(_level_actions.get(id, 0))]
 
 
 ## Экран выше, чем шире (телефон в вертикальном положении)
@@ -1155,7 +1194,11 @@ func _card(index: int, ch: Dictionary) -> Button:
 	btn.add_theme_stylebox_override("focus", _neon_box(Color(1.2, 1.15, 1.0), Color(0.16, 0.08, 0.26, 0.97), 5, 8, 30))
 	btn.pressed.connect(func():
 		Sound.play("click")
-		main.apply_choice(ch))
+		if _banish_mode:
+			if ch["type"] != "heal":
+				main.apply_level_action("banish", index)
+		else:
+			main.apply_choice(ch))
 
 	var v := VBoxContainer.new()
 	_full_rect(v)
@@ -1243,13 +1286,23 @@ func _card(index: int, ch: Dictionary) -> Button:
 	return btn
 
 
-func show_level_up(choices: Array, title := "ПОВЫШЕНИЕ УРОВНЯ", sub := "") -> void:
+func show_level_up(choices: Array, title := "ПОВЫШЕНИЕ УРОВНЯ", sub := "", actions := {}) -> void:
 	if sub == "":
 		sub = "выберите модуль  •  " + Settings.key("pick")
 	_lvl_t = 0.0
 	_last_choices = choices
 	_last_lvl_title = title
 	_last_lvl_sub = sub
+	_level_actions = actions
+	_banish_mode = false
+	_action_row.visible = not actions.is_empty()
+	var enabled_actions: Array[Button] = []
+	for id: String in Lore.UPGRADE_ACTIONS:
+		var button: Button = _action_buttons[id]
+		button.disabled = int(actions.get(id, 0)) == 0 or (id == "banish" and choices[0]["type"] == "heal")
+		button.text = _level_action_label(id)
+		if not button.disabled:
+			enabled_actions.append(button)
 	_lvl_title.text = title
 	_lvl_sub.text = sub
 	for c in _cards.get_children():
@@ -1275,9 +1328,18 @@ func show_level_up(choices: Array, title := "ПОВЫШЕНИЕ УРОВНЯ", s
 		c.focus_neighbor_left = c.get_path_to(cs[i - 1]) if i > 0 else c.get_path_to(c)
 		c.focus_neighbor_right = c.get_path_to(cs[i + 1]) if i < cs.size() - 1 else c.get_path_to(c)
 		c.focus_neighbor_top = c.get_path_to(c)
-		c.focus_neighbor_bottom = c.get_path_to(c)
-		c.focus_next = c.focus_neighbor_right
+		var below: Control = c if enabled_actions.is_empty() else enabled_actions[mini(i, enabled_actions.size() - 1)]
+		c.focus_neighbor_bottom = c.get_path_to(below)
+		c.focus_next = c.focus_neighbor_right if i < cs.size() - 1 else c.focus_neighbor_bottom
 		c.focus_previous = c.focus_neighbor_left
+	for i in enabled_actions.size():
+		var b := enabled_actions[i]
+		b.focus_neighbor_top = b.get_path_to(cs[mini(i, cs.size() - 1)])
+		b.focus_neighbor_bottom = b.get_path_to(b)
+		b.focus_neighbor_left = b.get_path_to(enabled_actions[maxi(0, i - 1)])
+		b.focus_neighbor_right = b.get_path_to(enabled_actions[mini(i + 1, enabled_actions.size() - 1)])
+		b.focus_previous = b.focus_neighbor_left if i > 0 else b.get_path_to(cs.back())
+		b.focus_next = b.focus_neighbor_right if i < enabled_actions.size() - 1 else b.get_path_to(cs[0])
 	_levelup_root.visible = true
 
 
@@ -1525,13 +1587,17 @@ func show_chest(rewards: Array) -> void:
 		var r: Dictionary = rewards[i]
 		var row := PanelContainer.new()
 		var is_evo: bool = r["type"] == "evo"
-		row.add_theme_stylebox_override("panel", _neon_box(GOLD if is_evo else CYAN, PANEL_BG, 2, 6, 12 if is_evo else 4))
+		var rarity := int(r.get("rarity", -1))
+		var accent: Color = Data.RARITY[rarity]["color"] if rarity >= 0 else (GOLD if is_evo else CYAN)
+		row.add_theme_stylebox_override("panel", _neon_box(accent, PANEL_BG, 2, 6, 12 if is_evo else 4))
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 14)
 		row.add_child(h)
 		h.add_child(_icon_rect(Pixel.icon(r["id"]), 56))
 		var tv := VBoxContainer.new()
 		tv.add_child(_label(("АСПЕКТ!  " if is_evo else "") + r["title"], 22, GOLD if is_evo else Color.WHITE, Color(GOLD, 0.6) if is_evo else Color(0, 0, 0, 0)))
+		if rarity >= 0:
+			tv.add_child(_label(Data.RARITY[rarity]["name"], 15, accent))
 		var d := _label(r["desc"], 15, Color(0.8, 0.8, 0.95))
 		d.custom_minimum_size = Vector2(360, 0)
 		d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

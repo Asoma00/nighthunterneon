@@ -1322,4 +1322,8 @@ static func profile(hero: String) -> Dictionary:
 		boost[id] = module_boost(id)
 		if module_preinstalled(id):
 			pre.append(id)
-	return {"run": run_mods(), "hero": hero_mods(hero), "weapons": w, "boost": boost, "pre": pre, "nick": nickname}
+	var actions := {}
+	for id in preload("res://scripts/lore.gd").UPGRADE_ACTIONS:
+		actions[id] = int(perks.get(id, 0))
+	return {"run": run_mods(), "hero": hero_mods(hero), "weapons": w, "boost": boost, "pre": pre, "nick": nickname,
+		"upgrade_actions": actions}
