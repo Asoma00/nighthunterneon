@@ -2779,6 +2779,17 @@ const STAT_NAMES := {"damage": "Урон", "cooldown": "Перезарядка, 
 	"interval": "Интервал, с", "duration": "Длительность, с", "tick": "Такт, с", "speed": "Скорость снаряда"}
 
 
+## Пара «было → станет» в одном формате: обе целые или с одинаковым числом знаков.
+func _fmt_pair(a, b) -> Array:
+	var fa := float(a)
+	var fb := float(b)
+	if (a is int or is_equal_approx(fa, roundf(fa))) and (b is int or is_equal_approx(fb, roundf(fb))) or maxf(fa, fb) >= 20.0:
+		return [str(int(round(fa))), str(int(round(fb)))]
+	var two := maxf(absf(fa), absf(fb)) < 10.0 and (absf(fa * 10.0 - round(fa * 10.0)) >= 0.01 or absf(fb * 10.0 - round(fb * 10.0)) >= 0.01)
+	var f := "%.2f" if two else "%.1f"
+	return [f % fa, f % fb]
+
+
 func _fmt_stat(v) -> String:
 	if v is int:
 		return str(v)
@@ -2823,7 +2834,8 @@ func _weapon_upgrade_text(id: String, from: int, to: int, r := 0) -> String:
 	for k in STAT_NAMES:
 		if a.has(k) and b.has(k) and (a[k] is float or a[k] is int):
 			if absf(float(b[k]) - float(a[k])) > 0.001:
-				lines.append("%s: %s → %s" % [STAT_NAMES[k], _fmt_stat(a[k]), _fmt_stat(b[k])])
+				var pr := _fmt_pair(a[k], b[k])
+				lines.append("%s: %s → %s" % [STAT_NAMES[k], pr[0], pr[1]])
 	for k in b:
 		if not a.has(k) or (b[k] is bool and b[k] != a.get(k)):
 			if b[k] is bool and b[k]:
