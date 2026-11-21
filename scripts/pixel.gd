@@ -12,6 +12,7 @@ const OUT := Color(0.04, 0.02, 0.08)
 static var _cache := {}
 const Icons := preload("res://scripts/icons.gd")
 const Bosses := preload("res://scripts/bosses.gd")
+const Art := preload("res://scripts/art.gd")
 
 
 # ============ Примитивы ============
@@ -260,7 +261,9 @@ static func frames(key: String, cache_key := "") -> Dictionary:
 	var w: int = spec[0]
 	var h: int = spec[1]
 	var count: int = spec[2]
-	var result := _from_disk(key, cache_key)
+	var result := _from_art(key, cache_key)
+	if result.is_empty():
+		result = _from_disk(key, cache_key)
 	if not result.is_empty():
 		return result
 	result = _empty_result(spec)
@@ -294,23 +297,52 @@ static func _empty_result(spec: Array) -> Dictionary:
 	return {"base": [], "emit": [], "flash": [], "size": Vector2(spec[0], spec[1]), "k": float(spec[4]) if spec.size() > 4 else 1.0}
 
 
+## Нарезать атлас на кадры. Полосы сверху вниз: base, emit, flash (1–3 полосы).
+## 1 полоса — неон и вспышка собираются автоматически; 3 — берутся из файла как есть.
+static func _slice_atlas(atlas: Image, spec: Array) -> Dictionary:
+	if atlas == null:
+		return {}
+	var w: int = spec[0]
+	var h: int = spec[1]
+	var count: int = spec[2]
+	if atlas.get_width() != w * count or atlas.get_height() % h != 0:
+		return {}
+	var rows := int(atlas.get_height() / h)
+	if rows < 1 or rows > 3:
+		return {}
+	var result := _empty_result(spec)
+	for f in count:
+		var b := atlas.get_region(Rect2i(f * w, 0, w, h))
+		result["base"].append(tex(b))
+		if rows >= 2:
+			result["emit"].append(tex(atlas.get_region(Rect2i(f * w, h, w, h))))
+		else:
+			result["emit"].append(tex(blank(w, h)))
+		if rows >= 3:
+			result["flash"].append(tex(atlas.get_region(Rect2i(f * w, h * 2, w, h))))
+		else:
+			result["flash"].append(tex(silhouette(b)))
+	return result
+
+
+## Готовая графика из res://art/sprites/. Важнее и кэша, и процедурной отрисовки.
+static func _from_art(key: String, cache_key: String) -> Dictionary:
+	var atlas := Art.sprite(cache_key)
+	if atlas == null:
+		return {}
+	var result := _slice_atlas(atlas, _spec(key))
+	if not result.is_empty():
+		_cache[cache_key] = result
+	return result
+
+
 static func _from_disk(key: String, cache_key: String) -> Dictionary:
 	var disk := _disk_path(cache_key)
 	if disk == "" or not FileAccess.file_exists(disk):
 		return {}
-	var spec := _spec(key)
-	var w: int = spec[0]
-	var h: int = spec[1]
-	var count: int = spec[2]
-	var atlas := Image.load_from_file(disk)
-	if atlas == null or atlas.get_width() != w * count or atlas.get_height() != h * 3:
-		return {}
-	var result := _empty_result(spec)
-	for f in count:
-		for row in 3:
-			var fr_img := atlas.get_region(Rect2i(f * w, row * h, w, h))
-			result[["base", "emit", "flash"][row]].append(ImageTexture.create_from_image(fr_img))
-	_cache[cache_key] = result
+	var result := _slice_atlas(Image.load_from_file(disk), _spec(key))
+	if not result.is_empty():
+		_cache[cache_key] = result
 	return result
 
 
@@ -355,7 +387,9 @@ static func hero_frames_async(key: String, mods: Dictionary) -> Dictionary:
 	var ck := _mods_key(key, mods)
 	if _cache.has(ck):
 		return _cache[ck]
-	var ready := _from_disk(key, ck)
+	var ready := _from_art(key, ck)
+	if ready.is_empty():
+		ready = _from_disk(key, ck)
 	if not ready.is_empty():
 		return ready
 	if not _jobs.has(ck):
@@ -1309,6 +1343,14 @@ static func _paint_crate(b: Image, e: Image, v: int) -> void:
 static func ground() -> Dictionary:
 	if _cache.has("ground"):
 		return _cache["ground"]
+	var ab := Art.ground("base")
+	if ab != null:
+		var ae := Art.ground("emit")
+		if ae == null or ae.get_size() != ab.get_size():
+			ae = blank(ab.get_width(), ab.get_height())
+		var gres := {"base": tex(ab), "emit": tex(ae), "size": ab.get_width()}
+		_cache["ground"] = gres
+		return gres
 	var n := 128
 	var b := blank(n, n)
 	var e := blank(n, n)
@@ -1437,6 +1479,12 @@ static func icon(id: String) -> ImageTexture:
 	var key := "icon_" + id
 	if _cache.has(key):
 		return _cache[key]
+	var from_art := Art.icon(id)
+	if from_art != null:
+		var at := tex(from_art)
+		at.set_meta("icon2x", true)
+		_cache[key] = at
+		return at
 	if Icons.has(id):
 		var ti := tex(Icons.draw(id))
 		ti.set_meta("icon2x", true)
@@ -2018,6 +2066,11 @@ static func surface(kind: String) -> ImageTexture:
 	var key := "surf_" + kind
 	if _cache.has(key):
 		return _cache[key]
+	var from_art := Art.surface(kind)
+	if from_art != null:
+		var at := tex(from_art)
+		_cache[key] = at
+		return at
 	var n := 16
 	var im := blank(n, n)
 	var rng := RandomNumberGenerator.new()
