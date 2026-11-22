@@ -76,6 +76,7 @@ var props_parent: Node2D
 
 var _ground: Sprite2D
 var _ground_emit: Sprite2D
+var _floor_glow := Color.WHITE
 var _period := 0.0
 var _extra: Array = []   # пол вокруг дополнительных видов (свои камеры на одном экране)
 var _chunks := {}
@@ -104,11 +105,12 @@ func _ready() -> void:
 	_ground = _make_ground_sprite(g["base"])
 	_ground_emit = _make_ground_sprite(g["emit"])
 	_ground_emit.material = Pixel.mat_add()
+	_ground_emit.z_index = -18
 	# Край главы героя: свой цвет плит и неона на полу
 	var at: Dictionary = main.level.get("atmo", {}) if main != null and main.level != null else {}
 	if not at.is_empty():
 		_ground.modulate = at["ground"]
-		_ground_emit.modulate = at["glow"]
+		_floor_glow = at["glow"]
 
 
 ## Пол: на собранной карте главы — свой рисунок края.
@@ -131,8 +133,8 @@ func _make_ground_sprite(t: Texture2D) -> Sprite2D:
 	s.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	s.region_enabled = true
 	s.region_rect = Rect2(0, 0, t.get_width() * 8, t.get_height() * 8)
-	s.scale = Vector2.ONE * Pixel.PX
-	s.z_index = -20
+	s.scale = Vector2.ONE * (_period / t.get_width())
+	s.z_index = -21
 	add_child(s)
 	return s
 
@@ -149,7 +151,7 @@ func _process(delta: float) -> void:
 	var origin := (c / _period).floor() * _period - Vector2(_period, _period) * 4.0
 	_ground.position = origin
 	_ground_emit.position = origin
-	_ground_emit.modulate = Color(1, 1, 1, 0.4 + 0.2 * sin(_t * 1.7))
+	_ground_emit.modulate = Color(_floor_glow, 0.4 + 0.2 * sin(_t * 1.7))
 	# Свои камеры на одном экране: базовый пол есть и вокруг каждого отдельного вида
 	var ex: Array = main.extra_view_centers() if main.has_method("extra_view_centers") else []
 	while _extra.size() < ex.size():
@@ -157,6 +159,8 @@ func _process(delta: float) -> void:
 		var eb := _make_ground_sprite(g["base"])
 		var ee := _make_ground_sprite(g["emit"])
 		ee.material = Pixel.mat_add()
+		ee.z_index = -18
+		eb.modulate = _ground.modulate
 		_extra.append([eb, ee])
 	for k in _extra.size():
 		var on := k < ex.size()
@@ -207,7 +211,8 @@ func _build_chunk(key: Vector2i) -> Array:
 	var nodes: Array = []
 	_building_key = key
 	_chunk_obst[key] = []
-	var biome: Dictionary = BIOMES[biome_at(key)]
+	var biome_index := biome_at(key)
+	var biome: Dictionary = BIOMES[biome_index]
 	var origin := Vector2(key) * CHUNK
 	if main != null and main.get("cmap") != null:
 		# Собранная карта главы: только свои стены и убранство, без случайной застройки
@@ -215,6 +220,8 @@ func _build_chunk(key: Vector2i) -> Array:
 		for it in main.cmap.placements(key):
 			nodes.append(_make_prop(it[1], it[0], it[3], false, it[2]))
 		return nodes
+
+	nodes.append(_terrain_tile(key, origin, biome_index))
 
 	# Цветовой оттенок области — мягкое пятно цвета биома на земле
 	var tint := Sprite2D.new()
@@ -244,6 +251,42 @@ func _build_chunk(key: Vector2i) -> Array:
 	_build_roads(key, origin, rng, nodes)
 	_build_district(district_at(key), origin, rng, nodes, key)
 	return nodes
+
+
+const TERRAIN_SHADER := """
+shader_type canvas_item;
+uniform vec4 boundaries;
+void fragment() {
+	vec4 edges = vec4(UV.x, 1.0 - UV.x, UV.y, 1.0 - UV.y);
+	vec4 blend = mix(vec4(1.0), smoothstep(vec4(0.0), vec4(0.12), edges), boundaries);
+	vec4 tile = texture(TEXTURE, UV * 2.0);
+	COLOR = vec4(tile.rgb, tile.a * min(min(blend.x, blend.y), min(blend.z, blend.w)));
+}
+"""
+static var _terrain_shader: Shader
+
+
+func _terrain_tile(key: Vector2i, origin: Vector2, biome: int) -> Sprite2D:
+	if _terrain_shader == null:
+		_terrain_shader = Shader.new()
+		_terrain_shader.code = TERRAIN_SHADER
+	var surface: String = Pixel.EnvironmentArt.BIOME_FLOOR[biome]
+	var tile := Sprite2D.new()
+	tile.texture = Pixel.EnvironmentArt.surface(surface)
+	tile.centered = false
+	tile.position = origin
+	tile.scale = Vector2.ONE * (CHUNK / tile.texture.get_width())
+	tile.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+	tile.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	tile.z_index = -20
+	var material := ShaderMaterial.new()
+	material.shader = _terrain_shader
+	material.set_shader_parameter("boundaries", Vector4(
+		float(biome_at(key + Vector2i.LEFT) != biome), float(biome_at(key + Vector2i.RIGHT) != biome),
+		float(biome_at(key + Vector2i.UP) != biome), float(biome_at(key + Vector2i.DOWN) != biome)))
+	tile.material = material
+	add_child(tile)
+	return tile
 
 
 # ================= Сквозные дороги =================

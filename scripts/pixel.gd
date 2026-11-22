@@ -17,6 +17,8 @@ const Icons := preload("res://scripts/icons.gd")
 const Bosses := preload("res://scripts/bosses.gd")
 const Data := preload("res://scripts/data.gd")
 const ActorAtlases := preload("res://scripts/actor_atlases.gd")
+const EnvironmentArt := preload("res://scripts/environment_art.gd")
+const MOTION_RATE := 0.8
 
 
 # ============ Примитивы ============
@@ -405,6 +407,8 @@ static func _render_frame(key: String, spec: Array, f: int, result: Dictionary, 
 	var base := blank(w, h)
 	var emit := blank(w, h)
 	_paint(key, base, emit, f)
+	if key.begins_with("decal_"):
+		EnvironmentArt.dress_decal(key, base)
 	# Неоновые пиксели тоже часть силуэта
 	for x in w:
 		for y in h:
@@ -1448,64 +1452,7 @@ static func _paint_crate(b: Image, e: Image, v: int) -> void:
 # ============ Земля ============
 
 static func ground() -> Dictionary:
-	if _cache.has("ground"):
-		return _cache["ground"]
-	var n := 128
-	var b := blank(n, n)
-	var e := blank(n, n)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 1337
-	var slab_tone := {}
-	for x in n:
-		for y in n:
-			var key := Vector2i(x / 16, y / 16)
-			if not slab_tone.has(key):
-				slab_tone[key] = rng.randf_range(-0.02, 0.025)
-			var t: float = slab_tone[key] + rng.randf_range(-0.012, 0.012)
-			var c := Color(0.115 + t, 0.105 + t, 0.155 + t)
-			if x % 16 == 0 or y % 16 == 0:
-				c = Color(0.06, 0.05, 0.09)
-			elif x % 16 == 1 or y % 16 == 1:
-				c = c.lightened(0.06)
-			b.set_pixel(x, y, c)
-	# Трещины
-	for i in 28:
-		var p := Vector2i(rng.randi_range(0, n - 1), rng.randi_range(0, n - 1))
-		for s in rng.randi_range(5, 13):
-			pxw(b, p.x, p.y, Color(0.05, 0.045, 0.08))
-			p += Vector2i(rng.randi_range(-1, 1), rng.randi_range(0, 1))
-	# Мох и мелкий мусор
-	for i in 40:
-		var p := Vector2i(rng.randi_range(0, n - 1), rng.randi_range(0, n - 1))
-		for s in 4:
-			pxw(b, p.x + rng.randi_range(-1, 1), p.y + rng.randi_range(-1, 1), Color(0.1, 0.17, 0.13))
-	for i in 90:
-		pxw(b, rng.randi_range(0, n - 1), rng.randi_range(0, n - 1), Color(0.2, 0.19, 0.25))
-	# Неоновые дорожки-схемы
-	for i in 9:
-		var col := Color(0.2, 0.9, 1.0, 0.55) if rng.randf() < 0.6 else Color(1.0, 0.25, 0.75, 0.5)
-		var p := Vector2i(rng.randi_range(0, 7) * 16 + 8, rng.randi_range(0, 7) * 16 + 8)
-		var dir := [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP][rng.randi_range(0, 3)] as Vector2i
-		for s in rng.randi_range(20, 42):
-			pxw(e, p.x, p.y, col)
-			if rng.randf() < 0.12:
-				dir = Vector2i(dir.y, dir.x) * (1 if rng.randf() < 0.5 else -1)
-			p += dir
-		pxw(e, p.x, p.y, Color(col, 1.0))
-		pxw(e, p.x + 1, p.y, Color(col, 1.0))
-		pxw(e, p.x, p.y + 1, Color(col, 1.0))
-		pxw(e, p.x + 1, p.y + 1, Color(col, 1.0))
-	# Руны на плитах
-	for i in 7:
-		var cx := rng.randi_range(0, 7) * 16 + 6
-		var cy := rng.randi_range(0, 7) * 16 + 5
-		for gx in 3:
-			for gy in 5:
-				if rng.randf() < 0.5:
-					pxw(e, cx + gx, cy + gy, Color(0.7, 0.35, 1.0, 0.65))
-	var result := {"base": tex(b), "emit": tex(e), "size": n}
-	_cache["ground"] = result
-	return result
+	return EnvironmentArt.floor_art()
 
 
 # ============ Иконки для интерфейса ============
@@ -2172,49 +2119,8 @@ static func _paint_env(key: String, b: Image, e: Image) -> void:
 # ============ Пиксельные текстуры поверхностей (для 3D-убежища) ============
 
 ## kind: panel — металлические панели, brick — кирпич, tile — плитка, wood — доски
-static func surface(kind: String) -> ImageTexture:
-	var key := "surf_" + kind
-	if _cache.has(key):
-		return _cache[key]
-	var n := 16
-	var im := blank(n, n)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(kind)
-	for x in n:
-		for y in n:
-			var v := 0.78 + rng.randf_range(-0.04, 0.04)
-			match kind:
-				"panel":
-					if x == 0 or y == 0:
-						v = 0.45
-					elif x == 1 or y == 1:
-						v = 0.92
-					elif (x == 3 or x == n - 3) and (y == 3 or y == n - 3):
-						v = 1.0
-					elif y == 8 and x > 4 and x < 12:
-						v = 0.55
-				"brick":
-					var row := y / 4
-					var off := 4 if row % 2 == 1 else 0
-					if y % 4 == 0 or (x + off) % 8 == 0:
-						v = 0.4
-					else:
-						v += (hash(Vector2i((x + off) / 8, row)) % 7) * 0.02 - 0.06
-				"tile":
-					if x % 8 == 0 or y % 8 == 0:
-						v = 0.5
-					elif ((x / 8) + (y / 8)) % 2 == 0:
-						v -= 0.06
-				"wood":
-					if y % 5 == 0:
-						v = 0.45
-					else:
-						v += sin(x * 0.9 + y * 3.0) * 0.04
-			im.set_pixel(x, y, Color(v, v, v))
-	var t := tex(im)
-	_cache[key] = t
-	return t
-
+static func surface(kind: String) -> Texture2D:
+	return EnvironmentArt.surface(kind)
 
 
 # ---------- Дрон-фамильяр: корпус, два винта, глаз-камера, подсветка ----------
@@ -3051,6 +2957,7 @@ static func timed_frame(fr: Dictionary, start: int, count: int, progress: float)
 
 
 static func hero_frame(fr: Dictionary, state: String, t: float) -> int:
+	t *= MOTION_RATE
 	var n: int = fr["base"].size()
 	if n < HERO_FRAMES:
 		# старые 8-кадровые спрайты: 0–3 покой, 4–7 ходьба

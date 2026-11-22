@@ -372,7 +372,7 @@ func net_state(d: Array, own_progress := false) -> void:
 	facing = d[1]
 	if d[2] < hp - 0.5:
 		_flash = 0.15
-		_hurt_t = 0.3
+		_hurt_t = HURT_T
 	hp = d[2]
 	max_hp = d[3]
 	moving = d[5]
@@ -1403,7 +1403,7 @@ func _animate(delta: float) -> void:
 	_hurt_t = maxf(0.0, _hurt_t - delta)
 	var rich: bool = _frames["base"].size() >= Pixel.HERO_FRAMES
 	if rich and _hurt_t > 0.0:
-		f = Pixel.hero_frame_k(_frames, "hurt", 1.0 - _hurt_t / 0.3)
+		f = Pixel.hero_frame_k(_frames, "hurt", 1.0 - _hurt_t / HURT_T)
 	elif rich and _cast_t > 0.0:
 		f = Pixel.hero_frame_k(_frames, "cast", 1.0 - _cast_t / CAST_T)
 	elif rich and _attack_t > 0.0:
@@ -1436,7 +1436,7 @@ func _animate(delta: float) -> void:
 	# Живость: дыхание в покое, пружинящий шаг на бегу, рывок при ударе и касте
 	var sq := 0.0
 	if _hurt_t > 0.0:
-		sq = -0.1 * (_hurt_t / 0.3)
+		sq = -0.1 * (_hurt_t / HURT_T)
 	elif _attack_t > 0.0 or _cast_t > 0.0:
 		sq = 0.06 * sin(PI * (1.0 - maxf(_attack_t / ATTACK_T, _cast_t / CAST_T)))
 	elif moving:
@@ -1657,7 +1657,7 @@ func take_damage(amount: float) -> void:
 	hp -= amount
 	_invuln = 0.6
 	_flash = 0.15
-	_hurt_t = 0.3
+	_hurt_t = HURT_T
 	main.shake(7.0)
 	main.hurt_flash_for(self)
 	Sound.play("hurt", -2.0, 1.0, 0.1)
@@ -1928,8 +1928,9 @@ func _update_weapons(delta: float) -> void:
 
 
 ## Анимация атаки: замах — удар — доводка — возврат.
-const ATTACK_T := 0.28
-const CAST_T := 0.36
+const ATTACK_T := 0.35
+const CAST_T := 0.45
+const HURT_T := 0.37
 var _attack_t := 0.0
 var _cast_t := 0.0
 var _hurt_t := 0.0
@@ -2261,8 +2262,8 @@ func _tick_vortices(delta: float) -> void:
 		if mi != null and is_instance_valid(mi):
 			var m: ShaderMaterial = mi.material_override
 			var el := float(v["dur"]) - float(v["left"])
-			m.set_shader_parameter("t", el)
-			mi.rotation.y = -el * 1.35
+			m.set_shader_parameter("t", el * Pixel.MOTION_RATE)
+			mi.rotation.y = -el * 1.35 * Pixel.MOTION_RATE
 			mi.position = main._bl(v["c"], 0.03)
 		if _dead:
 			_end_vortex(v, false)

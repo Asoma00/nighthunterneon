@@ -366,7 +366,7 @@ func _mat(color: Color, rough := 0.8, metal := 0.2, surface := "panel", tile := 
 		m.albedo_texture = Pixel.surface(surface)
 		m.uv1_triplanar = true
 		m.uv1_scale = Vector3(tile, tile, tile)
-		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	return m
 
 
@@ -3884,7 +3884,7 @@ func _update_villagers(delta: float) -> void:
 			v["st_d"] = 999.0
 		var walking := delta > 0.0 and moved / delta >= 0.08
 		v["mv"] = walking
-		var stride := 0.65 if role == "kid" else (1.05 if role == "robot" else 0.85)
+		var stride := 0.85 if role == "kid" else (1.36 if role == "robot" else 1.12)
 		if walking:
 			v["walk_phase"] = fposmod(float(v.get("walk_phase", 0.0)) + moved * 8.0 / stride, 8.0)
 		var fr: Dictionary = v["frames"]
@@ -3896,9 +3896,9 @@ func _update_villagers(delta: float) -> void:
 			if walking:
 				f = Pixel.loop_frame(fr, 6, 8, v["walk_phase"])
 			elif pose == "work" or (role in ["smith", "blacksmith", "engineer", "trainee"] and v.has("home")):
-				f = Pixel.loop_frame(fr, 14, 5, v["t"] * 7.0)
+				f = Pixel.loop_frame(fr, 14, 5, v["t"] * 7.0 * Pixel.MOTION_RATE)
 			else:
-				f = Pixel.loop_frame(fr, 0, 6, v["t"] * 5.0)
+				f = Pixel.loop_frame(fr, 0, 6, v["t"] * 5.0 * Pixel.MOTION_RATE)
 		elif role == "robot":
 			f = int(v["t"] * 8.0) % 4
 		else:

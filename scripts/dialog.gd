@@ -418,7 +418,7 @@ func _process(delta: float) -> void:
 		if (s["holder"] as Control).visible and not (s["frames"] as Dictionary).is_empty():
 			var fr: Dictionary = s["frames"]
 			var n := mini(6, fr["base"].size() / Pixel.subframes(fr))
-			var f := Pixel.loop_frame(fr, 0, n, _anim * 5.0)
+			var f := Pixel.loop_frame(fr, 0, n, _anim * 5.0 * Pixel.MOTION_RATE)
 			(s["base"] as TextureRect).texture = fr["base"][f]
 			(s["emit"] as TextureRect).texture = fr["emit"][f]
 

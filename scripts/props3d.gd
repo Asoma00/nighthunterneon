@@ -42,7 +42,7 @@ static func mat(color: Color, surface := "panel", tile := 1.6, rough := 0.85) ->
 		m.albedo_texture = Pixel.surface(surface)
 		m.uv1_triplanar = true
 		m.uv1_scale = Vector3(tile, tile, tile)
-		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	_mats[key] = m
 	return m
 
@@ -507,7 +507,7 @@ static func Props3D_dark_wood() -> StandardMaterial3D:
 const VOXEL_KINDS := ["pine0", "pine1", "pine2", "tree0", "tree1", "tree2", "tree3", "bush0", "bush1", "mushroom0", "mushroom1"]
 const VOX := 0.09
 static var _vox_cache := {}
-static var _vox_mat: StandardMaterial3D
+static var _vox_materials := {}
 static var _vox_glow: StandardMaterial3D
 
 
@@ -630,15 +630,21 @@ static func _vox_mesh(kind: String, rng: RandomNumberGenerator) -> ArrayMesh:
 		g.erase(p)
 	var mesh := ArrayMesh.new()
 	_vox_surface(mesh, g, glow)
-	if _vox_mat == null:
-		_vox_mat = StandardMaterial3D.new()
-		_vox_mat.vertex_color_use_as_albedo = true
-		_vox_mat.roughness = 0.9
+	var surface := "forest"
+	if kind.begins_with("rock") or kind.begins_with("crystal"):
+		surface = "crystal"
+	elif kind.begins_with("wreck"):
+		surface = "salvage"
+	if not _vox_materials.has(surface):
+		var textured := mat(Color(1.25, 1.25, 1.25), surface, 1.45, 0.9).duplicate() as StandardMaterial3D
+		textured.vertex_color_use_as_albedo = true
+		_vox_materials[surface] = textured
+	if _vox_glow == null:
 		_vox_glow = StandardMaterial3D.new()
 		_vox_glow.vertex_color_use_as_albedo = true
 		_vox_glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		_vox_glow.albedo_color = Color(2.2, 2.2, 2.2)
-	mesh.surface_set_material(0, _vox_mat)
+	mesh.surface_set_material(0, _vox_materials[surface])
 	if mesh.get_surface_count() > 1:
 		mesh.surface_set_material(1, _vox_glow)
 	return mesh

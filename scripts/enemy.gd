@@ -495,7 +495,8 @@ const EMIT_HELL := Color(2.2, 0.99, 0.44, 1.0)
 
 func _animate(dir: Vector2) -> void:
 	var count: int = _frames["base"].size() / Pixel.subframes(_frames)
-	var f := Pixel.loop_frame(_frames, 0, count, _t * _fps * speed_mult())
+	var animation_time := _t * Pixel.MOTION_RATE
+	var f := Pixel.loop_frame(_frames, 0, count, animation_time * _fps * speed_mult())
 	if is_boss and count >= 20:
 		# Босс: ярость при смене фазы, урон, особый приём, удар, движение
 		var dt := get_process_delta_time()
@@ -505,28 +506,28 @@ func _animate(dir: Vector2) -> void:
 			set("spc_anim", maxf(0.0, sa - dt))
 		var pt: float = get("_phase_t") if get("_phase_t") != null else 0.0
 		if pt > 0.0:
-			f = Pixel.loop_frame(_frames, 18, 2, _t * 8.0)
+			f = Pixel.loop_frame(_frames, 18, 2, animation_time * 8.0)
 		elif _flash > 0.0:
-			f = Pixel.loop_frame(_frames, 16, 2, _t * 12.0)
+			f = Pixel.loop_frame(_frames, 16, 2, animation_time * 12.0)
 		elif count >= 36 and str(get("pose")) in POSE_BASE:
 			# Читаемые позы босса: замах, рывок, заклинание, призыв
 			var ps := str(get("pose"))
-			f = Pixel.loop_frame(_frames, POSE_BASE[ps], 4, _t * float(POSE_FPS[ps]))
+			f = Pixel.loop_frame(_frames, POSE_BASE[ps], 4, animation_time * float(POSE_FPS[ps]))
 		elif sa > 0.0:
 			f = Pixel.timed_frame(_frames, 12, 4, 1.0 - sa / 0.7)
 		elif atk_anim > 0.0 or _dash_t > 0.0 or (get("_charge_t") != null and float(get("_charge_t")) > 0.0):
 			f = Pixel.timed_frame(_frames, 6, 6, 1.0 - atk_anim / 0.55)
 		else:
-			f = Pixel.loop_frame(_frames, 0, 6, _t * _fps * speed_mult())
+			f = Pixel.loop_frame(_frames, 0, 6, animation_time * _fps * speed_mult())
 	elif _beast:
 		atk_anim = maxf(0.0, atk_anim - get_process_delta_time())
 		var close: bool = player != null and is_instance_valid(player) and position.distance_squared_to(player.position) < pow(radius + 50.0, 2)
 		if _flash > 0.0:
-			f = Pixel.loop_frame(_frames, 10, 2, _t * 12.0)
+			f = Pixel.loop_frame(_frames, 10, 2, animation_time * 12.0)
 		elif atk_anim > 0.0 or close or _dash_t > 0.0:
-			f = Pixel.loop_frame(_frames, 6, 4, _t * 10.0)
+			f = Pixel.loop_frame(_frames, 6, 4, animation_time * 10.0)
 		else:
-			f = Pixel.loop_frame(_frames, 0, 6, _t * _fps * speed_mult())
+			f = Pixel.loop_frame(_frames, 0, 6, animation_time * _fps * speed_mult())
 	# Свойства спрайта меняем только при изменении: каждое присваивание — перерисовка
 	var bt: Texture2D = _frames["base"][f]
 	if _body.texture != bt:
