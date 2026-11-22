@@ -3857,7 +3857,7 @@ func _update_villagers(delta: float) -> void:
 		var to: Vector3 = _nav_next(v, node.position) - node.position
 		to.y = 0
 		var moving := to_goal.length() > 0.2
-		v["mv"] = moving
+		var moved := 0.0
 		if moving and to.length() < 0.05:
 			to = to_goal
 		if moving:
@@ -3865,6 +3865,7 @@ func _update_villagers(delta: float) -> void:
 			var before := node.position
 			node.position = _steer(node.position, to.normalized(), step, v)
 			var mv := node.position - before
+			moved = Vector2(mv.x, mv.z).length()
 			if absf(mv.x) > 0.002 and (v["base"] as Sprite3D).flip_h != (mv.x < 0.0):
 				(v["base"] as Sprite3D).flip_h = mv.x < 0.0
 				(v["emit"] as Sprite3D).flip_h = mv.x < 0.0
@@ -3881,14 +3882,19 @@ func _update_villagers(delta: float) -> void:
 		else:
 			v["st"] = 0.0
 			v["st_d"] = 999.0
+		var walking := delta > 0.0 and moved / delta >= 0.08
+		v["mv"] = walking
+		var stride := 0.65 if role == "kid" else (1.05 if role == "robot" else 0.85)
+		if walking:
+			v["walk_phase"] = fposmod(float(v.get("walk_phase", 0.0)) + moved * 8.0 / stride, 8.0)
 		var fr: Dictionary = v["frames"]
 		var f: int
 		if role == "robot":
 			node.position.y = 0.25 + sin(float(v["t"]) * 4.0) * 0.06
 		var pose: String = v.get("pose", "")
 		if fr["base"].size() >= Pixel.CITIZEN_FRAMES:
-			if moving:
-				f = Pixel.loop_frame(fr, 6, 8, v["t"] * (16.0 if role == "kid" else 12.0))
+			if walking:
+				f = Pixel.loop_frame(fr, 6, 8, v["walk_phase"])
 			elif pose == "work" or (role in ["smith", "blacksmith", "engineer", "trainee"] and v.has("home")):
 				f = Pixel.loop_frame(fr, 14, 5, v["t"] * 7.0)
 			else:
@@ -3896,7 +3902,7 @@ func _update_villagers(delta: float) -> void:
 		elif role == "robot":
 			f = int(v["t"] * 8.0) % 4
 		else:
-			f = (4 + int(v["t"] * (12.0 if role == "kid" else 9.0)) % 4) if moving else int(v["t"] * 3.0) % 4
+			f = (4 + int(v["t"] * (12.0 if role == "kid" else 9.0)) % 4) if walking else int(v["t"] * 3.0) % 4
 		# Свойства спрайта меняем только при изменении: каждое присваивание перестраивает его меш
 		var bs: Sprite3D = v["base"]
 		var es: Sprite3D = v["emit"]
@@ -3905,7 +3911,7 @@ func _update_villagers(delta: float) -> void:
 			bs.texture = bt
 			es.texture = fr["emit"][f % fr["emit"].size()]
 		# Сидит / стоит на коленях — спрайт ниже
-		var low := 0.0 if moving else {"sit": 0.22, "kneel": 0.14}.get(v.get("pose", ""), 0.0) as float
+		var low := 0.0 if walking else {"sit": 0.22, "kneel": 0.14}.get(v.get("pose", ""), 0.0) as float
 		var by: float = v.get("by", bs.position.y)
 		v["by"] = by
 		if not is_equal_approx(bs.position.y, by - low):

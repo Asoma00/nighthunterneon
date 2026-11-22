@@ -318,13 +318,23 @@ static func _empty_result(spec: Array) -> Dictionary:
 	return {"base": [], "emit": [], "flash": [], "size": Vector2(spec[0], spec[1]), "k": float(spec[4]) if spec.size() > 4 else 1.0}
 
 
-static func _hd_result(spec: Array, size: Vector2i) -> Dictionary:
+static func _hd_result(spec: Array, size: Vector2i, path: String, atlas: Image) -> Dictionary:
 	var result := _empty_result(spec)
 	result["size"] = Vector2(size)
 	result["k"] /= ActorAtlases.RESOLUTION
 	result["resolution"] = ActorAtlases.RESOLUTION
 	if int(spec[2]) > 1:
 		result["subframes"] = 2
+	# Пятьдесят видимых пикселей взрослого жителя в 0.15.50 при масштабе 0.5.
+	var stature := 0.0
+	var key := base_key(path.get_file().trim_suffix(".webp.bytes"))
+	match int(spec[2]):
+		19: stature = 25.0
+		35: stature = {"bram": 23.5, "orm": 30.0}.get(key, 27.5)
+	if stature > 0.0:
+		var standing := ActorAtlases.frame_image(atlas, size, 0, 0).get_used_rect()
+		if standing.size.y > 0:
+			result["k"] = stature / standing.size.y
 	return result
 
 
@@ -351,7 +361,7 @@ static func _from_actor_atlas(path: String, spec: Array) -> Dictionary:
 	var atlas := ActorAtlases.read_atlas(path, size, spec[2])
 	if atlas == null:
 		return {}
-	var result := _hd_result(spec, size)
+	var result := _hd_result(spec, size, path, atlas)
 	var textures := {}
 	for column in ActorAtlases.FRAME_COLUMNS[spec[2]]:
 		if not textures.has(column):
@@ -439,7 +449,14 @@ static func _render_equipped_frame(key: String, spec: Array, f: int, result: Dic
 static func _equipped_anchors(key: String, bounds: Rect2i, width: int, f: int) -> Dictionary:
 	var appearance := look(key)
 	var weapon: String = appearance["weapon"]
-	var pose := _rig_pose(f, weapon in ["katana", "hammer", "scythe", "blade", "mace"])
+	var melee := weapon in ["katana", "hammer", "scythe", "blade", "mace"]
+	var pose := _rig_pose(f, melee)
+	if f >= HERO_FRAMES:
+		var step := f - HERO_FRAMES
+		pose = _rig_pose(6 + step * 8 / 5, melee)
+		var attack := _rig_pose(14 + step, melee)
+		pose["af"] = attack["af"]
+		pose["state"] = "attack"
 	var height := float(bounds.size.y) / _attachment_scale
 	var ground := float(bounds.end.y - 1) / _attachment_scale
 	var cx := (float(width) - 1.0) / (2.0 * _attachment_scale) + float(pose["lean"]) * 0.6
@@ -487,8 +504,8 @@ static func hero_frames_async(key: String, mods: Dictionary) -> Dictionary:
 			if not ready.is_empty():
 				return ready
 			disk = _disk_path(ck)
-		var result := _hd_result(spec, size) if source != null else _empty_result(spec)
-		var count := int(spec[2]) * subframes(result)
+		var result := _hd_result(spec, size, path, source) if source != null else _empty_result(spec)
+		var count: int = ActorAtlases.FRAME_COLUMNS[spec[2]].size() if source != null else spec[2]
 		_jobs[ck] = {"key": key, "mods": mods.duplicate(), "f": 0, "spec": spec, "res": result, "count": count,
 			"atlas": Image.create(int(spec[0]) * int(spec[2]), int(spec[1]) * 3, false, Image.FORMAT_RGBA8) if disk != "" else null,
 			"disk": disk, "source": source}
@@ -3047,6 +3064,10 @@ static func hero_frame(fr: Dictionary, state: String, t: float) -> int:
 
 ## Кадр анимации по доле (0..1) — для удара/способности/смерти, привязанных ко времени.
 static func hero_frame_k(fr: Dictionary, state: String, k: float) -> int:
+	if state == "running_attack":
+		if fr["base"].size() >= (HERO_FRAMES + 5) * subframes(fr):
+			return timed_frame(fr, HERO_FRAMES, 5, k)
+		state = "attack"
 	var a: Array = HERO_ANIM[state]
 	return timed_frame(fr, a[0], a[1], k)
 

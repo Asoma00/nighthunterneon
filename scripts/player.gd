@@ -376,6 +376,8 @@ func net_state(d: Array, own_progress := false) -> void:
 	hp = d[2]
 	max_hp = d[3]
 	moving = d[5]
+	if not own_progress and d.size() > 18:
+		_attack_t = clampf(float(d[18]), 0.0, ATTACK_T)
 	ability_left = d[6]
 	ability_cd = d[7]
 	cooldown_mult = 1.0
@@ -410,7 +412,7 @@ func net_state(d: Array, own_progress := false) -> void:
 func net_row() -> Array:
 	return [position, facing, hp, max_hp, _dead, moving, ability_left, ability_cd * cooldown_mult,
 		_revive, _orbit_angle, _blades_charged, area_mult, level, xp, xp_to_next, choosing,
-		_ward_t if ward_lvl > 0.0 else -1.0, ward_cd()]
+		_ward_t if ward_lvl > 0.0 else -1.0, ward_cd(), _attack_t]
 
 
 ## Клиент: прогресс своего героя ведёт хост (опыт, уровень, выбор улучшений).
@@ -1405,7 +1407,7 @@ func _animate(delta: float) -> void:
 	elif rich and _cast_t > 0.0:
 		f = Pixel.hero_frame_k(_frames, "cast", 1.0 - _cast_t / CAST_T)
 	elif rich and _attack_t > 0.0:
-		f = Pixel.hero_frame_k(_frames, "attack", 1.0 - _attack_t / ATTACK_T)
+		f = Pixel.hero_frame_k(_frames, "running_attack" if moving else "attack", 1.0 - _attack_t / ATTACK_T)
 	elif rich and _dash_t > 0.0:
 		f = Pixel.hero_frame(_frames, "dash", _anim_t)
 	elif moving:
@@ -2259,8 +2261,8 @@ func _tick_vortices(delta: float) -> void:
 		if mi != null and is_instance_valid(mi):
 			var m: ShaderMaterial = mi.material_override
 			var el := float(v["dur"]) - float(v["left"])
-			m.set_shader_parameter("t", el * 1.6)
-			mi.rotation.y = -TAU * 1.5 * el / maxf(float(v["dur"]), 0.1)
+			m.set_shader_parameter("t", el)
+			mi.rotation.y = -el * 1.35
 			mi.position = main._bl(v["c"], 0.03)
 		if _dead:
 			_end_vortex(v, false)
@@ -2336,19 +2338,29 @@ uniform vec4 col : source_color = vec4(0.7, 0.35, 1.0, 1.0);
 uniform sampler2D artwork : source_color, filter_linear, repeat_disable;
 uniform float t = 0.0;
 uniform float fade = 1.0;
+vec2 whirl(vec2 p, float angle) {
+	float s = sin(angle);
+	float c = cos(angle);
+	return vec2(c * p.x - s * p.y, s * p.x + c * p.y);
+}
+
 void fragment() {
 	vec2 d = UV - 0.5;
 	float r = length(d) * 2.0;
 	if (r > 1.0) discard;
 	float a = atan(d.y, d.x);
-	// спиральные рукава, закручиваются к центру
-	float arms = sin(a * 3.0 + r * 9.0 - t * 7.0) * 0.5 + 0.5;
-	float rim = smoothstep(1.0, 0.85, r) * smoothstep(0.55, 0.95, r);
-	float core = smoothstep(0.3, 0.0, r);
-	vec4 sprite = texture(artwork, UV);
-	ALBEDO = sprite.rgb * mix(col.rgb, vec3(1.0), 0.68) * (0.92 + arms * 0.3);
-	EMISSION = col.rgb * rim * arms * sprite.a * 0.32;
-	ALPHA = max(sprite.a, core * 0.65) * fade;
+	float inner = 1.0 - smoothstep(0.38, 0.88, r);
+	float twist = inner * (t * 3.2 + r * 4.0);
+	vec4 sprite = texture(artwork, 0.5 + whirl(d, twist));
+	float arm = pow(0.5 + 0.5 * cos(a * 3.0 + r * 15.0 - t * 7.0), 6.0);
+	float inflow = pow(0.5 + 0.5 * cos(r * 33.0 + t * 10.0), 9.0);
+	float field = smoothstep(0.19, 0.34, r) * (1.0 - smoothstep(0.81, 1.0, r));
+	float energy = arm * field * (0.23 + 0.77 * inflow);
+	float core = 1.0 - smoothstep(0.1, 0.33, r);
+	vec3 tint = mix(col.rgb, vec3(1.0), 0.56);
+	ALBEDO = sprite.rgb * tint * (0.88 + 0.22 * cos(t * 5.0));
+	EMISSION = mix(col.rgb, vec3(0.64, 0.92, 1.0), inflow * 0.64) * energy * 1.55;
+	ALPHA = clamp(max(sprite.a, core * 0.66) + energy * 0.46, 0.0, 1.0) * fade;
 }
 """
 static var _vortex_sh: Shader

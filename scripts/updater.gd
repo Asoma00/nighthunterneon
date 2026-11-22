@@ -1,7 +1,8 @@
 extends Node
+const REV := 15052
 ## Автообновление.
 ## Как только устройство в сети, игра проверяет на GitHub Pages, не вышла ли новая сборка.
-## Если вышла — в фоне скачивает пакет игры (один .pck для всех платформ, ~1 МБ),
+## Если вышла — в фоне скачивает пакет игры,
 ## проверяет контрольную сумму и, как только вы в меню или убежище (не посреди боя),
 ## сразу перезапускается уже обновлённой — выходить из игры не нужно.
 ## В браузере (iPhone) просто перезагружается страница с новой версией.
@@ -13,6 +14,8 @@ const BASE_URL := "https://asoma00.github.io/nighthunterneon/update/"
 const DIR := "user://update/"
 const STATE := "user://update/current.cfg"
 const CHECK_EVERY := 180.0   # раз в 3 минуты, пока игра открыта
+const DOWNLOAD_IDLE_LIMIT := 90.0
+const RETRY_DELAYS := [15.0, 30.0, 60.0]
 ## Отменённые сборки (0.16.0–0.18.x с кат-сценами): их скачанные пакеты не подключаются.
 const REVOKED_FROM := 16000
 const REVOKED_TO := 18999
@@ -29,9 +32,16 @@ var _http: HTTPRequest
 var _t := 5.0
 var _busy := false
 var _restarting := false
+var _progress_poll := 0.0
+var _last_bytes := 0
+var _last_progress_ms := 0
+var _retry := 0
+var _partial_path := ""
 
 
 func _init() -> void:
+	if is_inside_tree():
+		return
 	# Подключаем скачанное обновление до загрузки остальных скриптов игры
 	var cfg := ConfigFile.new()
 	if cfg.load(STATE) == OK:
@@ -85,10 +95,18 @@ func _ready() -> void:
 	print("[Обновление] работает сборка %s (%d)" % [version, build])
 	_safe_render_override()
 	_http = HTTPRequest.new()
-	_http.timeout = 30.0
+	_http.timeout = 20.0
 	_http.use_threads = not OS.has_feature("web")
 	add_child(_http)
 	_http.request_completed.connect(_on_done)
+
+
+func _hotswapped() -> void:
+	for child in get_children():
+		if child is HTTPRequest:
+			child.cancel_request()
+			child.queue_free()
+	_ready()
 
 
 func _process(delta: float) -> void:
@@ -96,6 +114,12 @@ func _process(delta: float) -> void:
 		return
 	if _ready_build > 0:
 		_try_apply()
+		return
+	if _busy and _stage == "download":
+		_progress_poll -= delta
+		if _progress_poll <= 0.0:
+			_progress_poll = 0.5
+			_update_download()
 		return
 	_t -= delta
 	if _t <= 0.0 and not _busy:
@@ -126,14 +150,42 @@ func check() -> void:
 		return
 	_busy = true
 	_stage = "check"
+	_http.timeout = 20.0
 	var err := _http.request(_base() + "version.json?t=%d" % Time.get_unix_time_from_system())
 	if err != OK:
-		_busy = false
+		_retry_later("Не удалось проверить обновление")
 
 
 func _set_status(t: String) -> void:
+	if t == status:
+		return
 	status = t
 	status_changed.emit(t)
+
+
+func _update_download() -> void:
+	var size := int(_remote["pack"]["size"])
+	var received := _http.get_downloaded_bytes()
+	var now := Time.get_ticks_msec()
+	if received > _last_bytes:
+		_last_bytes = received
+		_last_progress_ms = now
+	_set_status("Обновление %s: %d%% (%.1f / %.1f МБ)" % [
+		_remote_version, mini(99, int(100.0 * received / size)), received / 1000000.0, size / 1000000.0])
+	if now - _last_progress_ms >= int(DOWNLOAD_IDLE_LIMIT * 1000.0):
+		_http.cancel_request()
+		_retry_later("Загрузка остановилась")
+
+
+func _retry_later(message: String) -> void:
+	_busy = false
+	_http.download_file = ""
+	if _partial_path != "" and FileAccess.file_exists(_partial_path):
+		DirAccess.remove_absolute(_partial_path)
+	_partial_path = ""
+	_t = RETRY_DELAYS[mini(_retry, RETRY_DELAYS.size() - 1)]
+	_retry += 1
+	_set_status("%s. Повтор через %d с." % [message, int(_t)])
 
 
 func _on_done(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
@@ -141,11 +193,18 @@ func _on_done(result: int, code: int, _headers: PackedStringArray, body: PackedB
 	print("[Обновление] %s: результат %d, код %d" % [_stage, result, code])
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
 		if _stage == "download":
-			_set_status("")
-		return   # нет сети — попробуем позже
+			_retry_later("Не удалось скачать обновление")
+		elif _retry > 0:
+			_retry_later("Сервер обновлений недоступен")
+		return
 	if _stage == "check":
 		var data = JSON.parse_string(body.get_string_from_utf8())
-		if not (data is Dictionary) or int(data.get("build", 0)) <= build:
+		if not data is Dictionary:
+			_retry_later("Сервер прислал неверные данные обновления")
+			return
+		if int(data.get("build", 0)) <= build:
+			_retry = 0
+			_set_status("")
 			return
 		_remote = data
 		_remote_version = str(data.get("version", "?"))
@@ -154,30 +213,43 @@ func _on_done(result: int, code: int, _headers: PackedStringArray, body: PackedB
 			_set_status("Обновление %s — перезагрузка…" % _remote_version)
 			return
 		var pack: Dictionary = data.get("pack", {})
-		if pack.is_empty():
+		if int(pack.get("size", 0)) <= 0 or str(pack.get("sha256", "")).length() != 64:
+			_retry_later("Пакет обновления недоступен")
 			return
-		DirAccess.make_dir_recursive_absolute(DIR)
+		if DirAccess.make_dir_recursive_absolute(DIR) != OK:
+			_retry_later("Не удалось открыть папку обновлений")
+			return
 		_ready_path = DIR + "game_%d.pck" % int(data["build"])
+		_partial_path = _ready_path + ".part"
 		_stage = "download"
 		_busy = true
 		_set_status("Загрузка обновления %s…" % _remote_version)
-		_http.download_file = _ready_path
+		_progress_poll = 0.0
+		_last_bytes = 0
+		_last_progress_ms = Time.get_ticks_msec()
+		_http.timeout = 0.0
+		_http.download_file = _partial_path
 		if _http.request(_base() + str(pack["file"]) + "?t=%d" % Time.get_unix_time_from_system()) != OK:
-			_busy = false
-			_http.download_file = ""
+			_retry_later("Не удалось начать загрузку")
 	elif _stage == "download":
 		_http.download_file = ""
 		var pack: Dictionary = _remote.get("pack", {})
-		var sum := FileAccess.get_sha256(_ready_path)
-		if sum != str(pack.get("sha256", "")):
-			DirAccess.remove_absolute(ProjectSettings.globalize_path(_ready_path))
-			_set_status("")
-			return   # файл повреждён — скачаем заново при следующей проверке
+		if FileAccess.get_size(_partial_path) != int(pack["size"]) or FileAccess.get_sha256(_partial_path) != str(pack["sha256"]):
+			_retry_later("Пакет не прошёл проверку")
+			return
+		if DirAccess.rename_absolute(_partial_path, _ready_path) != OK:
+			_retry_later("Не удалось сохранить пакет обновления")
+			return
+		_partial_path = ""
 		var cfg := ConfigFile.new()
 		cfg.set_value("update", "build", int(_remote["build"]))
 		cfg.set_value("update", "version", _remote_version)
 		cfg.set_value("update", "path", _ready_path)
-		cfg.save(STATE)
+		var pending_state := STATE + ".tmp"
+		if cfg.save(pending_state) != OK or DirAccess.rename_absolute(pending_state, STATE) != OK:
+			_retry_later("Не удалось записать состояние обновления")
+			return
+		_retry = 0
 		_ready_build = int(_remote["build"])
 		_set_status("Обновление %s скачано" % _remote_version)
 

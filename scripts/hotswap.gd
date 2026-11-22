@@ -6,13 +6,13 @@ extends RefCounted
 ## клавиши «Поговорить», вкладка «Управление» роняла игру).
 ## Здесь первая сцена подменяет скрипты автозагрузок свежими из пакета.
 
-const LIST := [["Settings", "res://scripts/settings.gd"], ["Loader", "res://scripts/loader.gd"],
+const LIST := [["Updater", "res://scripts/updater.gd"], ["Settings", "res://scripts/settings.gd"], ["Loader", "res://scripts/loader.gd"],
 	["Touch", "res://scripts/touch_controls.gd"], ["Net", "res://scripts/net.gd"]]
 
 ## Версии скриптов автозагрузок в этой сборке (их const REV). Меняя такой скрипт,
 ## поднимите REV в нём и здесь. Свежий скрипт грузится, только если работает старее —
 ## повторная загрузка «на месте» ломает живой экземпляр.
-const REVS := {"Settings": 15051, "Loader": 15025, "Touch": 15036, "Net": 15025}
+const REVS := {"Updater": 15052, "Settings": 15051, "Loader": 15025, "Touch": 15036, "Net": 15025}
 
 static var done := false
 static var report := ""
