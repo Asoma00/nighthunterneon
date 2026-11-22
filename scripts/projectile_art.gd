@@ -27,6 +27,14 @@ const WORLD_SPAN := {
 }
 const DIRECTIONAL := ["bolt", "shard", "arrow", "spirit", "fire", "ice", "wave", "pellet"]
 const SPIN := {"shuriken": 19.0, "flask": 8.0, "acid": 3.0}
+const SPIRIT_ATLAS := preload("res://assets/projectiles/spirit_motion.png")
+const SPIRIT_FRAME_SIZE := Vector2i(128, 80)
+const SPIRIT_BIRTH := [8, 9, 0]
+const SPIRIT_GLIDE := [0, 1, 4, 5, 2, 3, 2, 1]
+const SPIRIT_LUNGE := [6, 10, 7, 10]
+const SPIRIT_FLASH := 7
+const SPIRIT_BREAKUP := 11
+static var _spirit_frames: Array[ImageTexture] = []
 
 
 static func select(style: String, source: String, status: String) -> String:
@@ -50,3 +58,20 @@ static func texture(key: String) -> Texture2D:
 static func world_size(key: String) -> Vector2:
 	var size := texture(key).get_size()
 	return size * (float(WORLD_SPAN.get(key, 0.6)) / maxf(size.x, size.y))
+
+
+static func spirit_pose(age: float, phase: float, lunging: bool) -> int:
+	if age < 0.24:
+		return SPIRIT_BIRTH[mini(2, floori(age / 0.08))]
+	var sequence := SPIRIT_LUNGE if lunging else SPIRIT_GLIDE
+	var fps := 14.0 if lunging else 9.0
+	return sequence[posmod(floori((age - 0.24) * fps + phase), sequence.size())]
+
+
+static func spirit_frame(frame: int) -> Texture2D:
+	if _spirit_frames.is_empty():
+		var atlas := SPIRIT_ATLAS.get_image()
+		for index in 12:
+			var start := Vector2i(index % 4, index / 4) * SPIRIT_FRAME_SIZE
+			_spirit_frames.append(ImageTexture.create_from_image(atlas.get_region(Rect2i(start, SPIRIT_FRAME_SIZE))))
+	return _spirit_frames[frame]

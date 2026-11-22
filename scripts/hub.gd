@@ -365,8 +365,8 @@ func _mat(color: Color, rough := 0.8, metal := 0.2, surface := "panel", tile := 
 		# Пиксельная текстура, наложенная по мировым координатам на все грани
 		m.albedo_texture = Pixel.surface(surface)
 		m.uv1_triplanar = true
-		m.uv1_scale = Vector3(tile, tile, tile)
-		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		m.uv1_scale = Vector3.ONE * (tile * Pixel.EnvironmentArt.MATERIAL_REPEAT)
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 	return m
 
 
@@ -496,7 +496,7 @@ func _build_ground() -> void:
 	var m := StandardMaterial3D.new()
 	m.albedo_texture = g["base"]
 	m.albedo_color = Color(0.85, 0.82, 0.95)
-	m.uv1_scale = Vector3(22, 22, 1)
+	m.uv1_scale = Vector3(38, 38, 1)
 	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 	m.roughness = 0.9
 	_add(_world, plane, m, Vector3.ZERO)
@@ -504,7 +504,7 @@ func _build_ground() -> void:
 	var em := StandardMaterial3D.new()
 	em.albedo_texture = g["emit"]
 	em.albedo_color = Color(1.4, 1.4, 1.4, 0.8)
-	em.uv1_scale = Vector3(22, 22, 1)
+	em.uv1_scale = m.uv1_scale
 	em.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 	em.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	em.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA

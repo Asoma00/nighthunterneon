@@ -41,8 +41,8 @@ static func mat(color: Color, surface := "panel", tile := 1.6, rough := 0.85) ->
 	if surface != "":
 		m.albedo_texture = Pixel.surface(surface)
 		m.uv1_triplanar = true
-		m.uv1_scale = Vector3(tile, tile, tile)
-		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		m.uv1_scale = Vector3.ONE * (tile * Pixel.EnvironmentArt.MATERIAL_REPEAT)
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 	_mats[key] = m
 	return m
 

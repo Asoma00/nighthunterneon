@@ -1,7 +1,8 @@
 extends RefCounted
 ## Repeatable ground and material textures. Ground size is measured in game texels.
 
-const TILE_SIZE := 128
+const TILE_SIZE := 64
+const MATERIAL_REPEAT := 1.6
 const BASE := {
 	"slate": preload("res://assets/environment/slate.png"),
 	"panel": preload("res://assets/environment/panel.png"),

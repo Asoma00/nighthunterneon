@@ -9,6 +9,7 @@ const Fx := preload("res://scripts/fx.gd")
 const Props3D := preload("res://scripts/props3d.gd")
 
 const CHUNK := 768.0
+const FLOOR_RADIUS := 1536.0
 ## Мир замкнут: через WORLD_CHUNKS чанков (≈123 м) в любую сторону местность повторяется,
 ## как на торе. Уйдя достаточно далеко, герой снова выходит к знакомым местам.
 const WORLD_CHUNKS := 40   # ≈ 300 м до повтора — за забег одно и то же место не встречается
@@ -132,8 +133,10 @@ func _make_ground_sprite(t: Texture2D) -> Sprite2D:
 	s.centered = false
 	s.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	s.region_enabled = true
-	s.region_rect = Rect2(0, 0, t.get_width() * 8, t.get_height() * 8)
+	var tiles := ceili(FLOOR_RADIUS / _period) * 2
+	s.region_rect = Rect2(0, 0, t.get_width() * tiles, t.get_height() * tiles)
 	s.scale = Vector2.ONE * (_period / t.get_width())
+	s.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 	s.z_index = -21
 	add_child(s)
 	return s
@@ -148,7 +151,7 @@ func _process(delta: float) -> void:
 		return
 	_t += delta
 	var c: Vector2 = main.view_center()
-	var origin := (c / _period).floor() * _period - Vector2(_period, _period) * 4.0
+	var origin := _floor_origin(c)
 	_ground.position = origin
 	_ground_emit.position = origin
 	_ground_emit.modulate = Color(_floor_glow, 0.4 + 0.2 * sin(_t * 1.7))
@@ -167,7 +170,7 @@ func _process(delta: float) -> void:
 		_extra[k][0].visible = on
 		_extra[k][1].visible = on
 		if on:
-			var o: Vector2 = (ex[k] / _period).floor() * _period - Vector2(_period, _period) * 4.0
+			var o := _floor_origin(ex[k])
 			_extra[k][0].position = o
 			_extra[k][1].position = o
 			_extra[k][1].modulate = _ground_emit.modulate
@@ -180,6 +183,11 @@ func _process(delta: float) -> void:
 			if main.hud and main.hud.has_method("show_area"):
 				main.hud.show_area(DISTRICTS[dk]["name"], info["tint"])
 		_current_district = dk
+
+
+func _floor_origin(center: Vector2) -> Vector2:
+	var reach := ceili(FLOOR_RADIUS / _period) * _period
+	return (center / _period).floor() * _period - Vector2.ONE * reach
 
 
 func _update_chunks(centers: Array) -> void:
@@ -256,10 +264,11 @@ func _build_chunk(key: Vector2i) -> Array:
 const TERRAIN_SHADER := """
 shader_type canvas_item;
 uniform vec4 boundaries;
+uniform float repeats;
 void fragment() {
 	vec4 edges = vec4(UV.x, 1.0 - UV.x, UV.y, 1.0 - UV.y);
 	vec4 blend = mix(vec4(1.0), smoothstep(vec4(0.0), vec4(0.12), edges), boundaries);
-	vec4 tile = texture(TEXTURE, UV * 2.0);
+	vec4 tile = texture(TEXTURE, UV * repeats);
 	COLOR = vec4(tile.rgb, tile.a * min(min(blend.x, blend.y), min(blend.z, blend.w)));
 }
 """
@@ -277,10 +286,11 @@ func _terrain_tile(key: Vector2i, origin: Vector2, biome: int) -> Sprite2D:
 	tile.position = origin
 	tile.scale = Vector2.ONE * (CHUNK / tile.texture.get_width())
 	tile.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
-	tile.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	tile.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 	tile.z_index = -20
 	var material := ShaderMaterial.new()
 	material.shader = _terrain_shader
+	material.set_shader_parameter("repeats", CHUNK / _period)
 	material.set_shader_parameter("boundaries", Vector4(
 		float(biome_at(key + Vector2i.LEFT) != biome), float(biome_at(key + Vector2i.RIGHT) != biome),
 		float(biome_at(key + Vector2i.UP) != biome), float(biome_at(key + Vector2i.DOWN) != biome)))

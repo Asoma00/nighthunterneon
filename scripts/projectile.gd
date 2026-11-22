@@ -63,6 +63,8 @@ var _trail3: MeshInstance3D
 var _trail_im := ImmediateMesh.new()
 var _trail_pts: Array[Vector3] = []
 var _height := 0.6
+var _spirit_phase := 0.0
+var _spirit_near_target := false
 
 
 func _ready() -> void:
@@ -90,7 +92,11 @@ func _ready() -> void:
 	_core = Sprite2D.new()
 	if not Art.TEXTURES.has(art_key):
 		art_key = Art.select(style, source, status)
-	_core.texture = Art.texture(art_key)
+	if style == "spirit":
+		_spirit_phase = float(get_instance_id() % 13) * 0.31
+		_core.texture = Art.spirit_frame(Art.SPIRIT_BIRTH[0])
+	else:
+		_core.texture = Art.texture(art_key)
 	_core.material = Pixel.mat_unshaded()
 	_core.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND) * 0.9
 	add_child(_core)
@@ -135,7 +141,7 @@ func _build_3d() -> void:
 	if style != "ball":
 		_core3 = MeshInstance3D.new()
 		var cq := QuadMesh.new()
-		cq.size = Art.world_size(art_key)
+		cq.size = Vector2(Art.SPIRIT_FRAME_SIZE) * (float(Art.WORLD_SPAN["spirit"]) / Art.SPIRIT_FRAME_SIZE.x) if style == "spirit" else Art.world_size(art_key)
 		_core3.mesh = cq
 		var material_3d := _billboard_mat(_core.texture, false, false)
 		material_3d.billboard_mode = BaseMaterial3D.BILLBOARD_DISABLED
@@ -161,9 +167,19 @@ func _build_3d() -> void:
 
 func _update_3d() -> void:
 	var h := _height
+	var art_pos := position
 	if style == "flask":
 		h = _height + sin(clampf(1.0 - life / maxf(_life0, 0.01), 0.0, 1.0) * PI) * 1.4
-	var p: Vector3 = main.to3d(position, h)
+	elif style == "spirit":
+		var phase := _t * 7.0 + _spirit_phase
+		h += sin(phase) * 0.13 + sin(phase * 0.57) * 0.05
+		art_pos += velocity.normalized().orthogonal() * sin(phase * 0.76) * 4.0
+		var frame := Art.spirit_frame(Art.spirit_pose(_t, _spirit_phase, _spirit_near_target))
+		if _core.texture != frame:
+			_core.texture = frame
+			(_core3.material_override as StandardMaterial3D).albedo_texture = frame
+		_glow3.scale = Vector3.ONE * (0.88 + 0.15 * sin(phase))
+	var p: Vector3 = main.to3d(art_pos, h)
 	_v3.position = p
 	if _core3:
 		if art_key in Art.DIRECTIONAL and velocity.length_squared() > 0.01:
@@ -194,6 +210,25 @@ func _update_3d() -> void:
 		_trail_im.surface_add_vertex(_trail_pts[i] + Vector3(0, hw * k, 0))
 		_trail_im.surface_add_vertex(_trail_pts[i] - Vector3(0, hw * k, 0))
 	_trail_im.surface_end()
+
+
+func _spirit_dissolve(impact: bool) -> void:
+	var trace := Sprite3D.new()
+	trace.texture = Art.spirit_frame(Art.SPIRIT_FLASH if impact else Art.SPIRIT_BREAKUP)
+	trace.shaded = false
+	trace.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	trace.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	trace.pixel_size = float(Art.WORLD_SPAN["spirit"]) / Art.SPIRIT_FRAME_SIZE.x
+	trace.modulate = color.lerp(Color.WHITE, 0.72)
+	main._bill_root.add_child(trace)
+	trace.global_transform = _core3.global_transform
+	var tween := trace.create_tween()
+	if impact:
+		tween.tween_interval(0.06)
+		tween.tween_callback(func(): trace.texture = Art.spirit_frame(Art.SPIRIT_BREAKUP))
+	tween.tween_property(trace, "modulate:a", 0.0, 0.17)
+	tween.parallel().tween_property(trace, "scale", trace.scale * 1.12, 0.17)
+	tween.tween_callback(trace.queue_free)
 
 
 func _build_ball() -> void:
@@ -506,6 +541,8 @@ func _process_body(delta: float) -> void:
 	var prev := position
 	if homing:
 		var targets: Array = main.nearest_enemies_to(position, 1, 400.0, null)
+		if style == "spirit":
+			_spirit_near_target = not targets.is_empty() and position.distance_squared_to(targets[0].position) < 165.0 * 165.0
 		if not targets.is_empty():
 			var want: Vector2 = (targets[0].position + Vector2(0, -15) - position).normalized() * velocity.length()
 			velocity = velocity.lerp(want, minf(1.0, delta * 5.0))
@@ -557,6 +594,8 @@ func _process_body(delta: float) -> void:
 		Fx.burst(main, position, [Pixel.hdr(Color(1.0, 0.6, 0.2), 2.0), Color(1.0, 0.2, 0.1, 0.0)], 6, 120.0, 0.35, 3.0)
 
 	if life <= 0.0:
+		if style == "spirit":
+			_spirit_dissolve(false)
 		Fx.burst(main, position, [Pixel.hdr(color, 1.6), Color(color, 0.0)], 4, 60.0, 0.25, 2.5)
 		queue_free()
 		return
@@ -582,6 +621,8 @@ func _process_body(delta: float) -> void:
 				main.damage_area(position, explode, damage * 0.5, e, status)
 			pierce -= 1
 			if pierce <= 0:
+				if style == "spirit":
+					_spirit_dissolve(true)
 				queue_free()
 				return
 
