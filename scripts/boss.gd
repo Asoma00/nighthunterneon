@@ -80,7 +80,7 @@ func _ready() -> void:
 	is_boss = true
 	if variant != "":
 		vd = Bosses.by_id(variant)
-		if not vd.is_empty():
+		if not vd.is_empty() and not vd.get("keep", false):
 			sprite_key = kind + "~" + variant
 	size_mult *= BOSS_SCALE
 	radius *= 1.25

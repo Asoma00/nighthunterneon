@@ -3539,9 +3539,7 @@ func _make_npc(role: String, pos: Vector3, seed: int, nm: String) -> Dictionary:
 	node.position = pos
 	_world.add_child(node)
 	var frames: Dictionary
-	if role == "robot":
-		frames = Pixel.frames("drone")
-	elif Scenes.BY_NAME.has(nm):
+	if Scenes.BY_NAME.has(nm) and role != "robot":
 		frames = Pixel.frames(str(Scenes.CAST[Scenes.BY_NAME[nm]]["sprite"]))
 	else:
 		frames = Pixel.frames("citizen_%s_%d" % [role, seed])
@@ -3549,7 +3547,7 @@ func _make_npc(role: String, pos: Vector3, seed: int, nm: String) -> Dictionary:
 		# показываем простой (и пишем в журнал, чтобы найти причину)
 		if not _sprite_ok(frames):
 			push_warning("Житель %s/%d: детальный спрайт пуст, беру простой" % [role, seed])
-			frames = Pixel.frames("villager_%d" % seed)
+			frames = Pixel.frames("drone" if role == "robot" else "villager_%d" % seed)
 	var pair := _sprite_pair(node, frames)
 	if role != "robot":
 		# Жители — чуть крупнее и светлее: не теряются на тёмной площади ночью
@@ -3885,19 +3883,19 @@ func _update_villagers(delta: float) -> void:
 		var fr: Dictionary = v["frames"]
 		var f: int
 		if role == "robot":
-			f = int(v["t"] * 8.0) % 4
 			node.position.y = 0.25 + sin(float(v["t"]) * 4.0) * 0.06
-		else:
-			var pose: String = v.get("pose", "")
-			if fr["base"].size() >= Pixel.CITIZEN_FRAMES:
-				if moving:
-					f = 6 + int(v["t"] * (16.0 if role == "kid" else 12.0)) % 8
-				elif pose == "work" or (role in ["smith", "blacksmith", "engineer", "trainee"] and v.has("home")):
-					f = 14 + int(v["t"] * 7.0) % 5
-				else:
-					f = int(v["t"] * 5.0) % 6
+		var pose: String = v.get("pose", "")
+		if fr["base"].size() >= Pixel.CITIZEN_FRAMES:
+			if moving:
+				f = 6 + int(v["t"] * (16.0 if role == "kid" else 12.0)) % 8
+			elif pose == "work" or (role in ["smith", "blacksmith", "engineer", "trainee"] and v.has("home")):
+				f = 14 + int(v["t"] * 7.0) % 5
 			else:
-				f = (4 + int(v["t"] * (12.0 if role == "kid" else 9.0)) % 4) if moving else int(v["t"] * 3.0) % 4
+				f = int(v["t"] * 5.0) % 6
+		elif role == "robot":
+			f = int(v["t"] * 8.0) % 4
+		else:
+			f = (4 + int(v["t"] * (12.0 if role == "kid" else 9.0)) % 4) if moving else int(v["t"] * 3.0) % 4
 		# Свойства спрайта меняем только при изменении: каждое присваивание перестраивает его меш
 		var bs: Sprite3D = v["base"]
 		var es: Sprite3D = v["emit"]
@@ -4354,7 +4352,7 @@ func _lib_entries(tab: String) -> Array:
 				out.append(["ch%d" % c, Story.CHAPTERS[c]["short"], Pixel.icon("book"), Meta.levels_cleared >= c * Data.LEVELS_PER_CHAPTER])
 		"bestiary":
 			for e in Story.ENEMY_INFO:
-				var spr: String = Data.ENEMIES.get(e, {}).get("sprite", e)
+				var spr := Pixel.enemy_sprite(e)
 				out.append([e, Story.ENEMY_INFO[e]["name"], Pixel.frames(spr)["base"][0], Meta.discovered("e:" + e)])
 		"heroes":
 			for h in Data.CHARACTERS:
@@ -4570,7 +4568,7 @@ func _lib_article(art: VBoxContainer, tab: String, key: String) -> void:
 			var info: Dictionary = Story.ENEMY_INFO[key]
 			var ed: Dictionary = Data.ENEMIES.get(key, {})
 			var col: Color = ed.get("color", Color.WHITE)
-			_lib_head(art, Pixel.frames(ed.get("sprite", key))["base"][0], 3.0, info["name"], "тварь из орды Врат", col)
+			_lib_head(art, Pixel.frames(Pixel.enemy_sprite(key))["base"][0], 3.0, info["name"], "тварь из орды Врат", col)
 			art.add_child(_para(info["lore"], Color(0.9, 0.88, 1.0), 15))
 			if not ed.is_empty():
 				_section(art, "Повадки")

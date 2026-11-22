@@ -12,6 +12,8 @@ const OUT := Color(0.04, 0.02, 0.08)
 static var _cache := {}
 const Icons := preload("res://scripts/icons.gd")
 const Bosses := preload("res://scripts/bosses.gd")
+const Data := preload("res://scripts/data.gd")
+const ActorAtlases := preload("res://scripts/actor_atlases.gd")
 
 
 # ============ Примитивы ============
@@ -257,6 +259,15 @@ static func frames(key: String, cache_key := "") -> Dictionary:
 	if _cache.has(cache_key):
 		return _cache[cache_key]
 	var spec := _spec(key)
+	var path := ActorAtlases.path_for(key)
+	if not path.is_empty():
+		if not _cache.has(path):
+			var bundled := _from_actor_atlas(path, spec)
+			if not bundled.is_empty():
+				_cache[path] = bundled
+		if _cache.has(path):
+			_cache[cache_key] = _cache[path]
+			return _cache[cache_key]
 	var w: int = spec[0]
 	var h: int = spec[1]
 	var count: int = spec[2]
@@ -279,9 +290,15 @@ static func _spec(key: String) -> Array:
 	if key.begins_with("cmob~"):
 		return SPECS.get(key.get_slice("~", 2), [18, 24, 8, true])
 	var base := base_key(key)
+	if base == "mob_altar" or base.begins_with("hell_"):
+		base = str(Data.ENEMIES.get(base, {}).get("sprite", base))
 	if SPECS.has(base):
 		return SPECS[base]
-	return [48, 60, CITIZEN_FRAMES, true, 0.5] if key.begins_with("citizen_") else [18, 24, 8, true]
+	if key.begins_with("citizen_") or key.begins_with("npc_"):
+		return [48, 60, CITIZEN_FRAMES, true, 0.5]
+	if key.begins_with("villager_") and not ActorAtlases.path_for(key).is_empty():
+		return [48, 60, CITIZEN_FRAMES, true, 0.5]
+	return [18, 24, 8, true]
 
 
 ## «rin~oni» → «rin».
@@ -290,8 +307,31 @@ static func base_key(key: String) -> String:
 	return key if i < 0 else key.substr(0, i)
 
 
+static func enemy_sprite(kind: String) -> String:
+	var info: Dictionary = Data.ENEMIES.get(kind, {})
+	return kind if kind == "mob_altar" or info.get("hell", false) else str(info.get("sprite", kind))
+
+
 static func _empty_result(spec: Array) -> Dictionary:
 	return {"base": [], "emit": [], "flash": [], "size": Vector2(spec[0], spec[1]), "k": float(spec[4]) if spec.size() > 4 else 1.0}
+
+
+static func _from_actor_atlas(path: String, spec: Array) -> Dictionary:
+	var size := Vector2i(spec[0], spec[1])
+	var atlas := ActorAtlases.read_atlas(path, size, spec[2])
+	if atlas == null:
+		return {}
+	var result := _empty_result(spec)
+	var textures := {}
+	for column in ActorAtlases.FRAME_COLUMNS[spec[2]]:
+		if not textures.has(column):
+			var layers: Array[ImageTexture] = []
+			for row in ActorAtlases.LAYERS.size():
+				layers.append(tex(ActorAtlases.frame_image(atlas, size, column, row)))
+			textures[column] = layers
+		for row in ActorAtlases.LAYERS.size():
+			result[ActorAtlases.LAYERS[row]].append(textures[column][row])
+	return result
 
 
 static func _from_disk(key: String, cache_key: String) -> Dictionary:
@@ -333,14 +373,55 @@ static func _render_frame(key: String, spec: Array, f: int, result: Dictionary, 
 		shade(base)
 	if not key.begins_with("puddle") and not key.begins_with("decal_"):
 		outline(base, Color(0.08, 0.2, 0.3) if key == "wraith" else OUT)
-	var sil := silhouette(base)
-	result["base"].append(tex(base))
-	result["emit"].append(tex(emit))
-	result["flash"].append(tex(sil))
-	if save_atlas != null:
-		save_atlas.blit_rect(base, Rect2i(0, 0, w, h), Vector2i(f * w, 0))
-		save_atlas.blit_rect(emit, Rect2i(0, 0, w, h), Vector2i(f * w, h))
-		save_atlas.blit_rect(sil, Rect2i(0, 0, w, h), Vector2i(f * w, h * 2))
+	_store_frame(f, result, save_atlas, [base, emit, silhouette(base)])
+
+
+static func _store_frame(f: int, result: Dictionary, save_atlas: Image, layers: Array[Image]) -> void:
+	var size := layers[0].get_size()
+	for row in ActorAtlases.LAYERS.size():
+		result[ActorAtlases.LAYERS[row]].append(tex(layers[row]))
+		if save_atlas != null:
+			save_atlas.blit_rect(layers[row], Rect2i(Vector2i.ZERO, size), Vector2i(f * size.x, row * size.y))
+
+
+## Снаряжение рисуется поверх PNG; тело, оружие и поза берутся из атласа.
+static func _render_equipped_frame(key: String, spec: Array, f: int, result: Dictionary, save_atlas: Image, source: Image) -> void:
+	var size := Vector2i(spec[0], spec[1])
+	var column: int = ActorAtlases.FRAME_COLUMNS[spec[2]][f]
+	var body := ActorAtlases.frame_image(source, size, column, 0)
+	var emit := ActorAtlases.frame_image(source, size, column, 1)
+	if f >= HERO_ANIM["death"][0] and f < HERO_ANIM["dash"][0]:
+		_store_frame(f, result, save_atlas, [body, emit, ActorAtlases.frame_image(source, size, column, 2)])
+		return
+	_anc = _equipped_anchors(key, body.get_used_rect(), size.x, f)
+	_paint_mods(body, emit, f)
+	_anc = {}
+	_store_frame(f, result, save_atlas, [body, emit, silhouette(body)])
+
+
+## Точки крепления из позы и границ спрайта, в координатах старого рига (до HS).
+static func _equipped_anchors(key: String, bounds: Rect2i, width: int, f: int) -> Dictionary:
+	var appearance := look(key)
+	var weapon: String = appearance["weapon"]
+	var pose := _rig_pose(f, weapon in ["katana", "hammer", "scythe", "blade", "mace"])
+	var height := float(bounds.size.y) / HS
+	var ground := float(bounds.end.y - 1) / HS
+	var cx := (float(width) - 1.0) / (2.0 * HS) + float(pose["lean"]) * 0.6
+	var shoulder := ground - height * 0.58
+	var hip := ground - height * 0.32
+	var build: int = appearance["build"]
+	var tw := 4.0 + (1.5 if build == 2 else (-0.5 if build == 1 else 0.0))
+	var angle: float = pose["af"]
+	var direction := Vector2(sin(angle), cos(angle))
+	var hand := Vector2(cx + tw - 1.0, shoulder + 1.0) + direction * height * 0.23
+	var state: String = pose["state"]
+	return {
+		"cx": cx, "sh": shoulder, "hip": hip, "tw": tw, "hand": hand,
+		"tip": _weapon_tip(weapon, hand, direction, state), "st": state, "sway": pose["sway"],
+		"hx": cx + 1.0, "hy": shoulder - height * 0.16,
+		"ff": Vector2(cx + 2.0 + float(pose["fx"]), ground - float(pose["fl"])),
+		"fb": Vector2(cx - 2.0 + float(pose["bx"]), ground - float(pose["bl"])),
+	}
 
 
 # ---------- Порционная отрисовка (без фризов) ----------
@@ -352,7 +433,10 @@ static var _jobs := {}
 
 ## Кадры героя с модулями без фриза: {} — ещё рисуются (вызывайте pump() каждый кадр).
 static func hero_frames_async(key: String, mods: Dictionary) -> Dictionary:
-	var ck := _mods_key(key, mods)
+	var path := ActorAtlases.path_for(key)
+	if mods.is_empty() and not path.is_empty():
+		return frames(key)
+	var ck := _mods_key(key, mods) + ("|actor-png" if not path.is_empty() else "")
 	if _cache.has(ck):
 		return _cache[ck]
 	var ready := _from_disk(key, ck)
@@ -361,9 +445,10 @@ static func hero_frames_async(key: String, mods: Dictionary) -> Dictionary:
 	if not _jobs.has(ck):
 		var spec := _spec(key)
 		var disk := _disk_path(ck)
+		var source := ActorAtlases.read_atlas(path, Vector2i(spec[0], spec[1]), spec[2])
 		_jobs[ck] = {"key": key, "mods": mods.duplicate(), "f": 0, "spec": spec, "res": _empty_result(spec),
 			"atlas": Image.create(int(spec[0]) * int(spec[2]), int(spec[1]) * 3, false, Image.FORMAT_RGBA8) if disk != "" else null,
-			"disk": disk}
+			"disk": disk, "source": source}
 	return {}
 
 
@@ -376,7 +461,10 @@ static func pump(budget_usec := 3000) -> void:
 		var j: Dictionary = _jobs[ck]
 		_mods = j["mods"]
 		while Time.get_ticks_usec() - t0 < budget_usec and int(j["f"]) < int(j["spec"][2]):
-			_render_frame(j["key"], j["spec"], int(j["f"]), j["res"], j["atlas"])
+			if j["source"] != null:
+				_render_equipped_frame(j["key"], j["spec"], int(j["f"]), j["res"], j["atlas"], j["source"])
+			else:
+				_render_frame(j["key"], j["spec"], int(j["f"]), j["res"], j["atlas"])
 			j["f"] = int(j["f"]) + 1
 		_mods = {}
 		if int(j["f"]) >= int(j["spec"][2]):
@@ -458,7 +546,7 @@ static func _weapon_tip(weapon: String, h: Vector2, dir: Vector2, st: String) ->
 	return h + dir * 6.0
 
 
-static func _paint_mods(b: Image, e: Image, L: Dictionary, f: int) -> void:
+static func _paint_mods(b: Image, e: Image, f: int) -> void:
 	if _anc.is_empty():
 		return
 	var cx: float = _anc["cx"]
@@ -588,6 +676,8 @@ static func _paint(key: String, b: Image, e: Image, f: int) -> void:
 		_paint(key.substr(0, hi), b, e, f)
 		_hue_shift(b, e, float(key.substr(hi + 4)))
 		return
+	if key == "mob_altar" or key.begins_with("hell_"):
+		key = str(Data.ENEMIES.get(key, {}).get("sprite", key))
 	if key.begins_with("tree") or key.begins_with("pine") or key.begins_with("bush"):
 		_paint_tree(key, b, e)
 		return
@@ -2917,7 +3007,7 @@ static func _paint_hero48(key: String, b: Image, e: Image, f: int) -> void:
 		_paint_hero_rig(key, tb, te, 100 + mini(k, 2))   # 100+ — позы оседания
 		_hero_detail(tb, te, L)
 		if not _mods.is_empty():
-			_paint_mods(tb, te, L, f)
+			_paint_mods(tb, te, f)
 		var ang: float = [0.0, 0.0, -0.25, -0.65, -0.95, -1.05][k]
 		var fade: float = [1.0, 1.0, 1.0, 0.95, 0.7, 0.35][k]
 		_rot_into(tb, b, ang, Vector2(30, 58), fade)
@@ -2926,7 +3016,7 @@ static func _paint_hero48(key: String, b: Image, e: Image, f: int) -> void:
 	_paint_hero_rig(key, b, e, f)
 	_hero_detail(b, e, L)
 	if not _mods.is_empty():
-		_paint_mods(b, e, L, f)
+		_paint_mods(b, e, f)
 	var st := _rig_state(f)
 	if st[0] == "dash":
 		# Полосы скорости за спиной

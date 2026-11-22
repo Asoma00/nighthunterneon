@@ -187,8 +187,9 @@ func _ready() -> void:
 			_spirit_label = _add_label("", _spirit_pos, 2.6, Color(0.6, 0.95, 1.0), 40)
 			_spirit_label.visible = false
 			var sp := Sprite3D.new()
-			sp.texture = Pixel.frames("villager_%d" % (randi() % 4))["base"][0]
-			sp.pixel_size = 0.03
+			var spirit := Pixel.frames("villager_%d" % (randi() % 4))
+			sp.texture = spirit["base"][0]
+			sp.pixel_size = 0.03 * float(spirit.get("k", 1.0))
 			sp.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 			sp.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 			sp.modulate = Color(0.5, 0.95, 1.0, 0.55)
