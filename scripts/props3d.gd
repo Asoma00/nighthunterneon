@@ -3,6 +3,7 @@ extends RefCounted
 ## Размеры в единицах 3D-сцены боя: 1 единица = 100 пикселей мира.
 
 const Pixel := preload("res://scripts/pixel.gd")
+const BuildingMesh := preload("res://scripts/building_mesh.gd")
 
 const CYAN := Color(0.3, 0.95, 1.0)
 const MAGENTA := Color(1.0, 0.3, 0.75)
@@ -60,13 +61,8 @@ static func emat(color: Color, energy := 2.2) -> StandardMaterial3D:
 	return m
 
 
-static func _box(x: float, y: float, z: float) -> BoxMesh:
-	var key := "b%.3f_%.3f_%.3f" % [x, y, z]
-	if not _meshes.has(key):
-		var b := BoxMesh.new()
-		b.size = Vector3(x, y, z)
-		_meshes[key] = b
-	return _meshes[key]
+static func _box(x: float, y: float, z: float) -> Mesh:
+	return BuildingMesh.box(Vector3(x, y, z))
 
 
 static func _cyl(top: float, bottom: float, h: float, seg := 10) -> CylinderMesh:
@@ -429,8 +425,10 @@ static func _house3d(root: Node3D, kind: String, rng: RandomNumberGenerator) -> 
 	var rh := 0.75 if not big else 0.95
 	var rd := d + 0.14 * floors_up + 0.42
 	_add(root, _prism(rd, rh, w + 0.45), mat(roof_c, "wood", 2.4), Vector3(0, top + rh / 2.0, 0), Vector3(0, 90, 0))
-	_add(root, _box(w + 0.5, 0.07, 0.08), beam, Vector3(0, top + rh, 0))
-	_add(root, _box(w + 0.5, 0.05, 0.05), beam, Vector3(0, top + 0.02, rd / 2.0))
+	_add(root, _box(w + 0.52, 0.13, 0.14), beam, Vector3(0, top + rh, 0))
+	for s in [-1.0, 1.0]:
+		_add(root, _box(w + 0.52, 0.12, 0.13), beam, Vector3(0, top + 0.015, s * rd / 2.0))
+		_add(root, _box(w + 0.34, 0.06, 0.11), plinth, Vector3(0, top - 0.065, s * rd * 0.44))
 	if big or rng.randf() < 0.6:
 		var dz := rd * 0.22
 		_add(root, _box(0.36, 0.34, 0.3), plaster, Vector3(0, top + rh * 0.42, dz))

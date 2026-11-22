@@ -18,7 +18,7 @@ const Bosses := preload("res://scripts/bosses.gd")
 const Data := preload("res://scripts/data.gd")
 const ActorAtlases := preload("res://scripts/actor_atlases.gd")
 const EnvironmentArt := preload("res://scripts/environment_art.gd")
-const MOTION_RATE := 0.8
+const MOTION_RATE := 1.0
 
 
 # ============ Примитивы ============

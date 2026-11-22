@@ -31,6 +31,8 @@ var last_src := ""
 var stun_t := 0.0       # оглушение: не двигается и не бьёт
 var frozen := false     # оглушение льдом (ледяная глыба) — другой цвет
 var size_mult := 1.0    # супер-босс крупнее
+const ENEMY_SCALE := 1.30
+const ALTAR_SCALE := 1.85
 var puppet := false
 var net_pos := Vector2.ZERO
 var ai := "chase"
@@ -91,6 +93,8 @@ func _apply_affixes() -> void:
 func _ready() -> void:
 	if not affixes.is_empty() and not puppet:
 		_apply_affixes()
+	if not is_boss:
+		size_mult *= ALTAR_SCALE if kind == "mob_altar" else ENEMY_SCALE
 	var info: Dictionary = Data.ENEMIES.get(kind, {})
 	var sk := Pixel.base_key(str(info.get("sprite", kind)))
 	hell = info.get("hell", false)
@@ -115,7 +119,7 @@ func _ready() -> void:
 	_shadow.texture = Pixel.shadow()
 	var sw := size.x * Pixel.PX / 14.0 * (0.7 if sk in ["bat", "queen"] else 0.9)
 	size = _frames["size"]   # дальше — размер текстуры (смещение спрайта в её пикселях)
-	_shadow.scale = Vector2(sw, Pixel.PX * (0.8 if _hover else 1.0) * (1.6 if is_boss else 1.0))
+	_shadow.scale = Vector2(sw, Pixel.PX * (0.8 if _hover else 1.0)) * size_mult
 	_shadow.position = Vector2(0, 1)
 	_shadow.z_index = -5
 	add_child(_shadow)
@@ -192,7 +196,7 @@ func _ready() -> void:
 		main.mirror_light(light, self, 1.5 if is_boss else 1.0)
 	if is_elite:
 		# Полоса здоровья — объёмная, висит над головой (раньше рисовалась на полу)
-		var hh: float = _frames["size"].y * _k * Pixel.PX * Pixel.STAND * 0.01 + 0.25
+		var hh: float = _frames["size"].y * _k * size_mult * Pixel.PX * Pixel.STAND * 0.01 + 0.25
 		_hp_bar3 = preload("res://scripts/hp_bar3d.gd").attach(main, self, hh, 0.85 if not is_boss else 1.3, Color(1.0, 0.5, 0.1))
 		if _hp_bar3 == null:
 			_hp_bar = preload("res://scripts/drawer.gd").new()
@@ -777,7 +781,7 @@ func _cloud(center: Vector2, r: float, dmg: float, st: String, col: Color, dur: 
 
 func _draw_hp(canvas: Node2D) -> void:
 	var w := 70.0
-	var y := -Pixel.logical_size(_frames).y * Pixel.PX * Pixel.STAND - 10.0
+	var y := -Pixel.logical_size(_frames).y * Pixel.PX * Pixel.STAND * size_mult - 10.0
 	canvas.draw_rect(Rect2(-w / 2 - 1, y - 1, w + 2, 7), Color(0.05, 0.02, 0.08))
 	canvas.draw_rect(Rect2(-w / 2, y, w * hp / max_hp, 5), Pixel.hdr(Color(1.0, 0.5, 0.1), 1.5))
 

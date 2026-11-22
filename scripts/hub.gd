@@ -9,6 +9,7 @@ const Pixel := preload("res://scripts/pixel.gd")
 const Meta := preload("res://scripts/meta.gd")
 const Fx := preload("res://scripts/fx.gd")
 const UiFocus := preload("res://scripts/ui_focus.gd")
+const BuildingMesh := preload("res://scripts/building_mesh.gd")
 
 const CYAN := Color(0.3, 0.95, 1.0)
 const MAGENTA := Color(1.0, 0.3, 0.75)
@@ -331,8 +332,8 @@ func _build_environment() -> void:
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0.04, 0.02, 0.08)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.32, 0.26, 0.5)
-	env.ambient_light_energy = 0.55
+	env.ambient_light_color = Color(0.37, 0.31, 0.52)
+	env.ambient_light_energy = 0.61
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.glow_enabled = true
 	env.glow_intensity = 0.6
@@ -393,10 +394,8 @@ func _add(parent: Node3D, mesh: Mesh, mat: Material, pos: Vector3, rot := Vector
 	return mi
 
 
-func _box(w: float, h: float, d: float) -> BoxMesh:
-	var b := BoxMesh.new()
-	b.size = Vector3(w, h, d)
-	return b
+func _box(w: float, h: float, d: float) -> Mesh:
+	return BuildingMesh.box(Vector3(w, h, d))
 
 
 func _cyl(top: float, bottom: float, h: float, seg := 16) -> CylinderMesh:
@@ -601,14 +600,20 @@ func _rebuild_building(id: String) -> void:
 		return
 
 	var floors := mini(lvl, 3)
+	var facade := _mat(Color(0.26, 0.24, 0.32), 0.75, 0.35, "panel", 1.6)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(id)
 	var top := 0.3
 	for i in floors:
 		var w := 2.7 - 0.3 * i
 		var h := 1.15
-		_add(root, _box(w, h, w), metal, Vector3(0, top + h / 2.0, 0))
-		_add(root, _box(w + 0.06, 0.07, w + 0.06), _emat(col, 1.6), Vector3(0, top + h - 0.09, 0))
+		_add(root, _box(w, h, w), facade, Vector3(0, top + h / 2.0, 0))
+		_add(root, _box(w + 0.22, 0.16, w + 0.22), metal, Vector3(0, top + h - 0.05, 0))
+		_add(root, _box(w + 0.26, 0.033, w + 0.26), _emat(col, 1.25), Vector3(0, top + h - 0.10, 0))
+		var corner := w * 0.5 - 0.09
+		for x in [-corner, corner]:
+			for z in [-corner, corner]:
+				_add(root, _box(0.25, h - 0.17, 0.25), metal, Vector3(x, top + (h - 0.17) * 0.5, z))
 		for j in 3:
 			var lit := rng.randf() < 0.7
 			var wc := Color(1.0, 0.8, 0.5) if rng.randf() < 0.5 else col
@@ -616,8 +621,10 @@ func _rebuild_building(id: String) -> void:
 				continue  # здесь дверь
 			if i == 0 and id == "hall":
 				continue  # у таверны внизу — окна с героями (ниже); иначе они накладывались и мерцали
-			_add(root, _box(0.32, 0.38, 0.05), _emat(wc, 1.3) if lit else _mat(Color(0.05, 0.05, 0.08)),
-				Vector3(-0.7 + j * 0.7, top + h * 0.5, w / 2.0 + 0.02))
+			var window := Vector3(-0.7 + j * 0.7, top + h * 0.5, w / 2.0)
+			_add(root, _box(0.43, 0.49, 0.12), metal, window + Vector3(0, 0, 0.035))
+			_add(root, _box(0.32, 0.38, 0.04), _emat(wc, 1.3) if lit else _mat(Color(0.05, 0.05, 0.08)),
+				window + Vector3(0, 0, 0.095))
 		if i == 0:
 			_door(root, w / 2.0, col)
 			# Двери со всех сторон: войти можно откуда угодно
@@ -665,12 +672,13 @@ func _rebuild_building(id: String) -> void:
 					Vector3([-1.05, -0.62, 0.62, 1.05][k], 0.9, 1.35 + 0.04))
 		"shrine":
 			var crystal := Node3D.new()
-			crystal.position = Vector3(0, top + 1.0, 0)
+			crystal.position = Vector3(0, top + 1.32, 0)
 			root.add_child(crystal)
-			_add(crystal, _cyl(0.0, 0.45, 0.7, 6), _emat(MAGENTA, 3.0), Vector3(0, 0.35, 0))
-			_add(crystal, _cyl(0.45, 0.0, 0.7, 6), _emat(MAGENTA, 3.0), Vector3(0, -0.35, 0))
+			_add(crystal, _cyl(0.0, 0.65, 1.0, 6), _emat(MAGENTA, 3.0), Vector3(0, 0.5, 0))
+			_add(crystal, _cyl(0.65, 0.0, 1.0, 6), _emat(MAGENTA, 3.0), Vector3(0, -0.5, 0))
+			_add(root, _cyl(0.66, 0.93, 0.23, 8), metal, Vector3(0, top + 0.11, 0))
 			_spinners.append([crystal, Vector3.UP, 1.0])
-			_bobbers.append([crystal, top + 1.0, 0.2])
+			_bobbers.append([crystal, top + 1.32, 0.2])
 		"academy":
 			var roof2 := _add(root, _cyl(0.0, 1.9, 1.1, 4), _mat(Color(0.3, 0.6, 0.55), 0.5, 0.5, "brick", 2.0), Vector3(0, top + 0.55, 0))
 			roof2.rotation_degrees = Vector3(0, 45, 0)
@@ -997,6 +1005,10 @@ func _house(p: Vector3, rng: RandomNumberGenerator) -> void:
 	var d := rng.randf_range(2.2, 2.8)
 	var h1 := rng.randf_range(1.4, 1.8)
 	var h2 := rng.randf_range(1.0, 1.4)
+	var trim := _mat(Color(0.28, 0.21, 0.22), 0.8, 0.1, "wood", 1.5)
+	var stone := _mat(Color(0.20, 0.18, 0.26), 0.84, 0.15, "brick", 1.4)
+	_add(root, _box(w + 0.24, 0.22, d + 0.24), stone, Vector3(0, 0.1, 0))
+	_add(root, _box(w + 0.23, 0.15, d + 0.23), trim, Vector3(0, h1, 0))
 	_add(root, _box(w, h1, d), _mat(Color(0.26, 0.24, 0.3), 0.85, 0.1, "brick", 1.3), Vector3(0, h1 / 2.0, 0))
 	_add(root, _box(w + 0.15, h2, d + 0.15), _mat(Color(0.42, 0.34, 0.3), 0.9, 0.0, "wood", 1.2), Vector3(0, h1 + h2 / 2.0, 0))
 	# Двускатная крыша из двух наклонных плит
@@ -1004,15 +1016,25 @@ func _house(p: Vector3, rng: RandomNumberGenerator) -> void:
 	var prism := PrismMesh.new()
 	prism.size = Vector3(d + 0.5, 1.2, w + 0.5)
 	_add(root, prism, roof, Vector3(0, h1 + h2 + 0.6, 0), Vector3(0, 90, 0))
+	_add(root, _box(w + 0.58, 0.14, 0.19), trim, Vector3(0, h1 + h2 + 1.15, 0))
+	for z in [-1.0, 1.0]:
+		_add(root, _box(w + 0.58, 0.17, 0.19), trim, Vector3(0, h1 + h2 + 0.02, z * (d + 0.43) * 0.5))
+		for x in [-1.0, 1.0]:
+			_add(root, _box(0.16, h2, 0.16), trim,
+				Vector3(x * (w + 0.035) * 0.5, h1 + h2 * 0.5, z * (d + 0.035) * 0.5))
 	# Труба с дымом
 	var cx := rng.randf_range(-w * 0.3, w * 0.3)
 	_add(root, _box(0.35, 1.0, 0.35), _mat(Color(0.24, 0.22, 0.28), 0.9, 0.1, "brick", 1.0), Vector3(cx, h1 + h2 + 0.9, -d * 0.2))
+	_add(root, _box(0.47, 0.15, 0.47), stone, Vector3(cx, h1 + h2 + 1.4, -d * 0.2))
 	_particles(root, Vector3(cx, h1 + h2 + 1.5, -d * 0.2), Color(0.28, 0.25, 0.36), 10, Vector3(0.08, 0.05, 0.08), Vector3(0.15, 0.5, 0), 2.6, 0.12)
 	# Окна и дверь светятся
 	var wc := [GOLD, CYAN, MAGENTA][rng.randi_range(0, 2)] as Color
 	for k in 2:
 		var x := (k - 0.5) * w * 0.5
-		var win := _add(root, _box(0.45, 0.4, 0.05), _emat(wc, 1.8), Vector3(x, h1 + h2 * 0.5, d / 2.0 + 0.09))
+		var window := Vector3(x, h1 + h2 * 0.5, d / 2.0 + 0.1)
+		_add(root, _box(0.58, 0.53, 0.15), trim, window)
+		var win := _add(root, _box(0.45, 0.4, 0.05), _emat(wc, 1.8), window + Vector3(0, 0, 0.08))
+		_add(root, _box(0.62, 0.08, 0.23), stone, window + Vector3(0, -0.27, 0.04))
 		_flicker.append([win.material_override, 1.8, rng.randf() * 10.0])
 	_add(root, _box(0.6, 1.1, 0.05), _mat(Color(0.2, 0.14, 0.12), 0.9, 0.0, "wood", 1.0), Vector3(0, 0.55, d / 2.0 + 0.03))
 	_light(root, Vector3(0, h1 + h2 * 0.5, d / 2.0 + 0.6), wc, 0.45, 3.5)
@@ -3884,7 +3906,7 @@ func _update_villagers(delta: float) -> void:
 			v["st_d"] = 999.0
 		var walking := delta > 0.0 and moved / delta >= 0.08
 		v["mv"] = walking
-		var stride := 0.85 if role == "kid" else (1.36 if role == "robot" else 1.12)
+		var stride := 0.72 if role == "kid" else (1.36 if role == "robot" else 0.93)
 		if walking:
 			v["walk_phase"] = fposmod(float(v.get("walk_phase", 0.0)) + moved * 8.0 / stride, 8.0)
 		var fr: Dictionary = v["frames"]
@@ -4939,13 +4961,14 @@ func _furnish_shrine(root: Node3D, o: Vector3, w: float, d: float, dark: Materia
 	var stone := _mat(Color(0.35, 0.32, 0.42), 0.8, 0.1, "brick", 1.0)
 	var col: Color = Meta.BUILDINGS["shrine"]["color"]
 	# Алтарь со светящейся сферой
-	_add(root, _box(3.2, 0.3, 1.6), stone, Vector3(0, 0.15, -d / 2.0 + 1.4))
-	_add(root, _box(1.8, 0.9, 1.0), stone, Vector3(0, 0.75, -d / 2.0 + 1.3))
-	var orb := _add(root, _sphere(0.35), _emat(col, 2.5), Vector3(0, 1.75, -d / 2.0 + 1.3))
-	_bobbers.append([orb, 1.75, 0.12])
-	_add(root, _torus(0.5, 0.58), _emat(col, 1.8), Vector3(0, 1.75, -d / 2.0 + 1.3), Vector3(90, 0, 0))
+	_add(root, _box(3.9, 0.36, 1.9), stone, Vector3(0, 0.18, -d / 2.0 + 1.4))
+	_add(root, _box(2.4, 1.1, 1.15), stone, Vector3(0, 0.91, -d / 2.0 + 1.3))
+	_add(root, _box(2.55, 0.12, 1.28), dark, Vector3(0, 1.46, -d / 2.0 + 1.3))
+	var orb := _add(root, _sphere(0.49), _emat(col, 2.5), Vector3(0, 2.12, -d / 2.0 + 1.3))
+	_bobbers.append([orb, 2.12, 0.12])
+	_add(root, _torus(0.69, 0.80), _emat(col, 1.8), Vector3(0, 2.12, -d / 2.0 + 1.3), Vector3(90, 0, 0))
 	_light(root, Vector3(0, 2.0, -d / 2.0 + 2.0), col, 2.0, 7.0)
-	_rob(o, Vector3(0, 0, -d / 2.0 + 1.35), 1.6, 0.85)
+	_rob(o, Vector3(0, 0, -d / 2.0 + 1.4), 1.95, 0.95)
 	# Статуи героев по бокам, свечи, скамьи
 	for s in [-1.0, 1.0]:
 		_add(root, _box(0.8, 0.5, 0.8), stone, Vector3(s * 4.2, 0.25, -d / 2.0 + 1.0))

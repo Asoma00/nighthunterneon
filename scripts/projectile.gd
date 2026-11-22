@@ -139,15 +139,7 @@ func _build_3d() -> void:
 	_glow3.material_override = _billboard_mat(Pixel.glow(), true, false)
 	_v3.add_child(_glow3)
 	if style != "ball":
-		_core3 = MeshInstance3D.new()
-		var cq := QuadMesh.new()
-		cq.size = Vector2(Art.SPIRIT_FRAME_SIZE) * (float(Art.WORLD_SPAN["spirit"]) / Art.SPIRIT_FRAME_SIZE.x) if style == "spirit" else Art.world_size(art_key)
-		_core3.mesh = cq
-		var material_3d := _billboard_mat(_core.texture, false, false)
-		material_3d.billboard_mode = BaseMaterial3D.BILLBOARD_DISABLED
-		material_3d.cull_mode = BaseMaterial3D.CULL_DISABLED
-		_core3.material_override = material_3d
-		_core3.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_core3 = Art.volume_instance(art_key, _core.texture)
 		_v3.add_child(_core3)
 	# При толпе снарядов хвосты не рисуем (полёт и урон не меняются)
 	if art_key == "mine" or main.projectiles_node.get_child_count() > 140:
@@ -177,7 +169,10 @@ func _update_3d() -> void:
 		var frame := Art.spirit_frame(Art.spirit_pose(_t, _spirit_phase, _spirit_near_target))
 		if _core.texture != frame:
 			_core.texture = frame
-			(_core3.material_override as StandardMaterial3D).albedo_texture = frame
+			_core3.mesh = Art.volume("spirit", frame)
+			var mat := _core3.material_override as StandardMaterial3D
+			mat.albedo_texture = frame
+			mat.emission_texture = frame
 		_glow3.scale = Vector3.ONE * (0.88 + 0.15 * sin(phase))
 	var p: Vector3 = main.to3d(art_pos, h)
 	_v3.position = p
@@ -187,11 +182,16 @@ func _update_3d() -> void:
 			var side := Vector3.UP.cross(dir)
 			var up := (Vector3.UP * 0.63 + side * 0.78).normalized()
 			_core3.basis = Basis(dir, up, dir.cross(up))
+			if style == "spirit":
+				_core3.rotate(dir, sin(_t * 8.0 + _spirit_phase) * 0.19)
+		elif art_key == "mine":
+			_core3.basis = Basis(Vector3.RIGHT, Vector3.FORWARD, Vector3.UP)
 		else:
 			var camera := main._cam3d as Camera3D
 			var facing := camera.global_basis.orthonormalized()
 			var pulse := 1.0 + 0.07 * sin(_t * 19.0)
-			_core3.basis = facing.rotated(facing.z, _t * float(Art.SPIN.get(art_key, 0.0))).scaled(Vector3.ONE * pulse)
+			var spinning := facing.rotated(facing.z, _t * float(Art.SPIN.get(art_key, 0.0)))
+			_core3.basis = spinning.rotated(facing.y, sin(_t * 9.0) * 0.48).scaled(Vector3.ONE * pulse)
 	if _trail3 == null:
 		return
 	_trail_pts.append(p)
@@ -213,32 +213,28 @@ func _update_3d() -> void:
 
 
 func _spirit_dissolve(impact: bool) -> void:
-	var trace := Sprite3D.new()
-	trace.texture = Art.spirit_frame(Art.SPIRIT_FLASH if impact else Art.SPIRIT_BREAKUP)
-	trace.shaded = false
-	trace.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	trace.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	trace.pixel_size = float(Art.WORLD_SPAN["spirit"]) / Art.SPIRIT_FRAME_SIZE.x
-	trace.modulate = color.lerp(Color.WHITE, 0.72)
+	var trace := Art.volume_instance("spirit", Art.spirit_frame(Art.SPIRIT_FLASH if impact else Art.SPIRIT_BREAKUP))
+	var mat := trace.material_override as StandardMaterial3D
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = color.lerp(Color.WHITE, 0.72)
 	main._bill_root.add_child(trace)
 	trace.global_transform = _core3.global_transform
 	var tween := trace.create_tween()
 	if impact:
 		tween.tween_interval(0.06)
-		tween.tween_callback(func(): trace.texture = Art.spirit_frame(Art.SPIRIT_BREAKUP))
-	tween.tween_property(trace, "modulate:a", 0.0, 0.17)
+		tween.tween_callback(func():
+			var frame := Art.spirit_frame(Art.SPIRIT_BREAKUP)
+			trace.mesh = Art.volume("spirit", frame)
+			mat.albedo_texture = frame
+			mat.emission_texture = frame
+		)
+	tween.tween_property(mat, "albedo_color:a", 0.0, 0.17)
 	tween.parallel().tween_property(trace, "scale", trace.scale * 1.12, 0.17)
 	tween.tween_callback(trace.queue_free)
 
 
 func _build_ball() -> void:
-	# Конденсатор с нарисованным ядром; поверх него живые дуги и орбиты.
-	_ball_core = MeshInstance3D.new()
-	var cq := QuadMesh.new()
-	cq.size = Art.world_size("ball")
-	_ball_core.mesh = cq
-	_ball_core.material_override = _billboard_mat(Art.texture("ball"), false, false)
-	_ball_core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_ball_core = Art.volume_instance("ball")
 	_v3.add_child(_ball_core)
 	# Кольца и дуги рисуются одной лентой каждый кадр
 	_ball_fx = MeshInstance3D.new()
@@ -315,6 +311,7 @@ func _update_ball(delta: float) -> void:
 	var col := color.lerp(Color(1.0, 0.65, 0.3), heat)
 	var hot := 1.0 + _hot * 2.0
 	_ball_core.scale = Vector3.ONE * (0.9 + 0.25 * sin(_t * 31.0)) * grow * (1.0 + _hot)
+	_ball_core.rotation = Vector3(0.35 + sin(_t * 3.0) * 0.22, _t * 1.7, _t * 0.62)
 	(_ball_core.material_override as StandardMaterial3D).albedo_color = col.lerp(Color.WHITE, 0.68)
 	(_glow3.material_override as StandardMaterial3D).albedo_color = Color(col, 0.55 * flick)
 	_glow3.scale = Vector3.ONE * grow * (1.0 + 0.1 * sin(_t * 9.0) + _hot * 0.5)

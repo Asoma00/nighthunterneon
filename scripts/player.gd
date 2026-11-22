@@ -153,7 +153,7 @@ var _aura_embers: Node2D
 var _blades: Node2D
 var _overlay: Node2D
 var _drones: Array[Sprite2D] = []
-var _swords: Array[Sprite3D] = []
+var _swords: Array[MeshInstance3D] = []
 var _drone_t: Array[float] = []
 var _drone_shadows: Array[Sprite2D] = []
 
@@ -1481,11 +1481,14 @@ func _animate(delta: float) -> void:
 		# Дрон летает по кругу вокруг героя на высоте головы, покачиваясь
 		var ground := Vector2(cos(a) * 75.0, sin(a) * 50.0)
 		var hover := (95.0 + sin(_anim_t * 4.0 + i) * 6.0) * Pixel.STAND
-		_drones[i].position = ground + Vector2(0, -hover)
-		var glow: Sprite2D = _drones[i].get_child(0)
+		var drone := _drones[i]
+		drone.position = ground + Vector2(0, -hover)
+		var model: MeshInstance3D = drone.get_meta("volume")
+		model.visible = drone.visible and not _dead
+		model.position = main.to3d(position + ground, hover / Pixel.STAND * 0.01)
+		model.rotation = Vector3(0.6 + sin(a * 2.0) * 0.24, -a, sin(a) * 0.13)
+		var glow: Sprite2D = drone.get_child(0)
 		glow.modulate.a = 0.33 + 0.16 * sin(_anim_t * 12.0 + i)
-		_drones[i].flip_h = sin(a) < 0.0
-		glow.flip_h = _drones[i].flip_h
 		if i < _drone_shadows.size():
 			_drone_shadows[i].position = ground
 
@@ -1566,22 +1569,18 @@ func _draw_ward(canvas: Node2D) -> void:
 func _sync_swords() -> void:
 	var count: int = stats("blades")["count"] if has_active("blades") else 0
 	while _swords.size() < count:
-		var sw := Sprite3D.new()
-		sw.texture = ProjectileArt.texture("blade")
-		sw.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
-		sw.shaded = false
-		sw.double_sided = true
-		sw.billboard = BaseMaterial3D.BILLBOARD_DISABLED
-		sw.pixel_size = ProjectileArt.world_size("blade").x / sw.texture.get_width()
+		var sw := ProjectileArt.volume_instance("blade")
 		main._bill_root.add_child(sw)
 		_swords.append(sw)
 	if count == 0:
+		for sw in _swords:
+			sw.hide()
 		return
 	var s := stats("blades")
 	var r := _blade_radius(s)
 	var charged := _blades_charged > 0.0
 	for i in _swords.size():
-		var sw: Sprite3D = _swords[i]
+		var sw := _swords[i]
 		sw.visible = not _dead and i < count
 		var a := _orbit_angle + TAU * i / count
 		var out := Vector3(cos(a), 0.0, sin(a))
@@ -1592,7 +1591,8 @@ func _sync_swords() -> void:
 		var y_axis := normal.cross(x_axis).normalized()
 		sw.transform = Transform3D(Basis(x_axis, y_axis, normal).scaled(Vector3.ONE * area_mult),
 			main.to3d(position + Vector2(cos(a), sin(a)) * r, 0.55 + sin(_anim_t * 5.0 + i) * 0.06))
-		sw.modulate = Pixel.hdr(Color(0.6, 0.85, 1.0), 1.6) if charged else Pixel.hdr(Color.WHITE, 1.5)
+		var mat := sw.material_override as StandardMaterial3D
+		mat.emission = Pixel.hdr(Color(0.6, 0.85, 1.0), 1.6) if charged else Color.WHITE
 
 
 func _exit_tree() -> void:
@@ -1758,17 +1758,17 @@ func _sync_drones() -> void:
 	var count: int = stats("drones")["count"]
 	while _drones.size() < count:
 		var d := Sprite2D.new()
-		d.texture = ProjectileArt.texture("drone")
-		d.material = Pixel.mat_unshaded()
-		d.modulate = Color(1.08, 1.08, 1.12)
-		var texel_size := ProjectileArt.world_size("drone").x * 100.0 / d.texture.get_width()
-		d.scale = Vector2(1.0, Pixel.STAND) * texel_size
 		add_child(d)
-		main.mirror(d, self, false)
+		var body := ProjectileArt.volume_instance("drone")
+		body.hide()
+		main._bill_root.add_child(body)
+		d.set_meta("volume", body)
+		d.tree_exiting.connect(body.queue_free)
 		var glow := Sprite2D.new()
 		glow.texture = Pixel.glow()
 		glow.material = Pixel.mat_unshaded()
 		glow.modulate = Color(0.65, 0.4, 1.0, 0.45)
+		glow.scale = Vector2(0.55, 0.55 * Pixel.STAND)
 		d.add_child(glow)
 		main.mirror(glow, self, true)
 		var sh := Sprite2D.new()
@@ -1928,9 +1928,9 @@ func _update_weapons(delta: float) -> void:
 
 
 ## Анимация атаки: замах — удар — доводка — возврат.
-const ATTACK_T := 0.35
-const CAST_T := 0.45
-const HURT_T := 0.37
+const ATTACK_T := 0.28
+const CAST_T := 0.36
+const HURT_T := 0.30
 var _attack_t := 0.0
 var _cast_t := 0.0
 var _hurt_t := 0.0
@@ -2265,6 +2265,9 @@ func _tick_vortices(delta: float) -> void:
 			m.set_shader_parameter("t", el * Pixel.MOTION_RATE)
 			mi.rotation.y = -el * 1.35 * Pixel.MOTION_RATE
 			mi.position = main._bl(v["c"], 0.03)
+			var rim := (mi as MeshInstance3D).get_node("VortexRim") as MeshInstance3D
+			rim.rotation.x = sin(el * 5.2) * 0.30 + 0.18
+			rim.rotation.z = cos(el * 5.2) * 0.30
 		if _dead:
 			_end_vortex(v, false)
 			_vortices.remove_at(i)
@@ -2389,6 +2392,22 @@ func _vortex_fx(center: Vector2, r: float):
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.position = main._bl(center, 0.03)
 	main._mirror_root.add_child(mi)
+	var rim := MeshInstance3D.new()
+	rim.name = "VortexRim"
+	var torus := TorusMesh.new()
+	torus.inner_radius = 0.29
+	torus.outer_radius = 0.36
+	torus.rings = 24
+	torus.ring_segments = 6
+	rim.mesh = torus
+	var rim_mat := StandardMaterial3D.new()
+	rim_mat.albedo_color = col.darkened(0.32)
+	rim_mat.emission_enabled = true
+	rim_mat.emission = col * 1.25
+	rim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	rim.material_override = rim_mat
+	rim.position.y = 0.18
+	mi.add_child(rim)
 	mi.scale = Vector3.ONE * 0.2
 	var tw := mi.create_tween()
 	tw.tween_property(mi, "scale", Vector3.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)

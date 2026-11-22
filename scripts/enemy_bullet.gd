@@ -1,7 +1,6 @@
 extends Node2D
 ## Снаряд босса: светящаяся сфера, может наводиться на героя.
 
-const Pixel := preload("res://scripts/pixel.gd")
 const Fx := preload("res://scripts/fx.gd")
 const Art := preload("res://scripts/projectile_art.gd")
 
@@ -16,11 +15,19 @@ var life := 6.0
 var _t := 0.0
 var puppet := false
 var net_pos := Vector2.ZERO
+var _volume: MeshInstance3D
+var _base_scale := 1.0
 
 
 func _ready() -> void:
-	material = Pixel.mat_add()
-	z_index = 6
+	var key := "fire" if color.r > color.b * 1.55 else "spirit"
+	_volume = Art.volume_instance(key)
+	_base_scale = radius * 0.034 / Art.world_size(key).x
+	var mat := _volume.material_override as StandardMaterial3D
+	mat.albedo_color = color.lerp(Color.WHITE, 0.51)
+	mat.emission = color.lerp(Color.WHITE, 0.42)
+	main._bill_root.add_child(_volume)
+	_update_look()
 
 
 func _process(delta: float) -> void:
@@ -28,7 +35,7 @@ func _process(delta: float) -> void:
 	if puppet:
 		net_pos += velocity * delta
 		position = position.lerp(net_pos, 1.0 - exp(-20.0 * delta))
-		queue_redraw()
+		_update_look()
 		return
 	life -= delta
 	if homing and _t < 2.5:
@@ -47,14 +54,15 @@ func _process(delta: float) -> void:
 			Fx.sparks(main, position, color, 8)
 			queue_free()
 			return
-	queue_redraw()
+	_update_look()
 
 
-func _draw() -> void:
-	var pulse := 1.0 + 0.2 * sin(_t * 20.0)
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0, Pixel.STAND))
-	draw_circle(Vector2.ZERO, radius * 1.9 * pulse, Color(color, 0.13))
-	var texture := Art.texture("fire" if color.r > color.b * 1.55 else "spirit")
-	var size := texture.get_size() * (radius * 3.4 * pulse / texture.get_width())
-	draw_set_transform(Vector2.ZERO, velocity.angle(), Vector2(1.0, Pixel.STAND))
-	draw_texture_rect(texture, Rect2(-size * 0.5, size), false, color.lerp(Color.WHITE, 0.51))
+func _update_look() -> void:
+	_volume.position = main.to3d(position, 0.6)
+	_volume.rotation = Vector3(0.8 + sin(_t * 7.0) * 0.25, -velocity.angle(), 0.0)
+	_volume.scale = Vector3.ONE * _base_scale * (1.0 + 0.16 * sin(_t * 20.0))
+
+
+func _exit_tree() -> void:
+	if is_instance_valid(_volume):
+		_volume.queue_free()

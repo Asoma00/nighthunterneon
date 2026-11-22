@@ -71,7 +71,7 @@ const ABILITIES := {
 }
 
 
-const BOSS_SCALE := 1.4          # боссы крупнее обычного
+const BOSS_SCALE := 1.8
 const OUTLINE_COL := Color(1.0, 0.08, 0.06)
 var _outline: Sprite2D
 
