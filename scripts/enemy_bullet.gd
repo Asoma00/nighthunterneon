@@ -3,6 +3,7 @@ extends Node2D
 
 const Pixel := preload("res://scripts/pixel.gd")
 const Fx := preload("res://scripts/fx.gd")
+const Art := preload("res://scripts/projectile_art.gd")
 
 var main: Node2D
 var player: Node2D
@@ -50,8 +51,10 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
-	draw_set_transform(Vector2(0, 0), 0.0, Vector2(1.0, Pixel.STAND))
 	var pulse := 1.0 + 0.2 * sin(_t * 20.0)
-	draw_circle(Vector2.ZERO, radius * 2.2 * pulse, Color(color, 0.18))
-	draw_circle(Vector2.ZERO, radius * pulse, Pixel.hdr(color, 1.6))
-	draw_circle(Vector2.ZERO, radius * 0.5, Pixel.hdr(Color.WHITE, 1.8))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0, Pixel.STAND))
+	draw_circle(Vector2.ZERO, radius * 1.9 * pulse, Color(color, 0.13))
+	var texture := Art.texture("fire" if color.r > color.b * 1.55 else "spirit")
+	var size := texture.get_size() * (radius * 3.4 * pulse / texture.get_width())
+	draw_set_transform(Vector2.ZERO, velocity.angle(), Vector2(1.0, Pixel.STAND))
+	draw_texture_rect(texture, Rect2(-size * 0.5, size), false, color.lerp(Color.WHITE, 0.51))

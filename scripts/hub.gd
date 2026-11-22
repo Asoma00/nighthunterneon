@@ -206,7 +206,7 @@ func _build_post() -> void:
 
 # ================= 3D-мир =================
 
-const RENDER_H := 540  # высота 3D-картинки в пикселях — размер «пикселя» одинаков на любом мониторе
+const RENDER_H := 720  # высота 3D-картинки без пиксельного эффекта
 var _view_rect: TextureRect
 
 
@@ -301,8 +301,11 @@ func _resize_view() -> void:
 	var aspect := s.x / maxf(s.y, 1.0)
 	# Высота картинки растёт с разрешением экрана (настройка чёткости текстур)
 	var rh := int(RENDER_H * Settings.tex_scale())
-	if Settings.pixel_art > 0:
-		rh = int(Settings.PIXEL_TARGET[Settings.pixel_art])   # пиксельный 3D: такая же сетка, как в бою
+	if Settings.pixel_art > 0 and DisplayServer.get_name() != "headless":
+		var window_size := get_window().size
+		rh = maxi(1, int(mini(window_size.x, window_size.y) / Settings.pixel_px()))
+	elif Settings.is_mobile() or OS.has_feature("web"):
+		rh = mini(rh, 540)
 	# Вертикальный экран: сетка считается по короткой стороне (ширине), иначе картинка мылится
 	var vsz := Vector2(rh, rh / maxf(aspect, 0.1)) if aspect < 1.0 else Vector2(rh * aspect, rh)
 	# В браузере (iPhone) — не больше ~0.5 Мп: при нехватке памяти Safari теряет WebGL
@@ -3013,24 +3016,22 @@ func _fill_wardrobe() -> void:
 	tm.wait_time = 0.06
 	tm.autostart = true
 	_panel_box.add_child(tm)
-	var st := {"f": 0}
+	var st := {"t": 0.0}
 	tm.timeout.connect(func():
 		Pixel.pump(30000)
 		for it in icons:
 			var ic2: TextureRect = it[0]
 			if ic2.texture == null:
-				var fr0 := _skin_frames(it[1])
-				if not fr0.is_empty():
-					ic2.texture = Pixel.portrait(it[1], false)
-					ic2.modulate = Color.WHITE if it[2] else Color(0.75, 0.75, 0.8)
+				ic2.texture = Pixel.portrait(it[1], false)
+				ic2.modulate = Color.WHITE if it[2] else Color(0.75, 0.75, 0.8)
+				break
 		var fr := _skin_frames(key)
 		if fr.is_empty():
 			return
-		st["n"] = int(st.get("n", 0)) + 1
-		if int(st["n"]) % 2 == 0:
-			st["f"] = (int(st["f"]) + 1) % 6
-		pic.texture = fr["base"][st["f"]]
-		glow.texture = fr["emit"][st["f"]])
+		st["t"] = float(st["t"]) + tm.wait_time
+		var frame := Pixel.hero_frame(fr, "idle", st["t"])
+		pic.texture = fr["base"][frame]
+		glow.texture = fr["emit"][frame])
 
 
 func _skin_applied(sid: String) -> void:
@@ -3887,11 +3888,11 @@ func _update_villagers(delta: float) -> void:
 		var pose: String = v.get("pose", "")
 		if fr["base"].size() >= Pixel.CITIZEN_FRAMES:
 			if moving:
-				f = 6 + int(v["t"] * (16.0 if role == "kid" else 12.0)) % 8
+				f = Pixel.loop_frame(fr, 6, 8, v["t"] * (16.0 if role == "kid" else 12.0))
 			elif pose == "work" or (role in ["smith", "blacksmith", "engineer", "trainee"] and v.has("home")):
-				f = 14 + int(v["t"] * 7.0) % 5
+				f = Pixel.loop_frame(fr, 14, 5, v["t"] * 7.0)
 			else:
-				f = int(v["t"] * 5.0) % 6
+				f = Pixel.loop_frame(fr, 0, 6, v["t"] * 5.0)
 		elif role == "robot":
 			f = int(v["t"] * 8.0) % 4
 		else:

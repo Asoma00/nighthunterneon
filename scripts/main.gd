@@ -3448,6 +3448,7 @@ func _build_snapshot() -> Dictionary:
 	var p_c := PackedColorArray()
 	var p_r := PackedFloat32Array()
 	var p_o := PackedByteArray()
+	var p_art := PackedStringArray()
 	var relay := players.size() > 2
 	for p in projectiles_node.get_children():
 		if p.is_queued_for_deletion():
@@ -3462,11 +3463,12 @@ func _build_snapshot() -> Dictionary:
 		p_o.append(po)
 		p_id.append(p.get_instance_id())
 		p_s.append(st if st != null else "eb")
+		p_art.append(str(p.get("art_key")) if st != null else "")
 		p_xy.append(p.position)
 		p_v.append(p.velocity)
 		p_c.append(p.color)
 		p_r.append(p.zap_radius if st != null else p.radius)
-	s["p"] = [p_id, p_s, p_xy, p_v, p_c, p_r, p_o]
+	s["p"] = [p_id, p_s, p_xy, p_v, p_c, p_r, p_o, p_art]
 	# Кристаллы и сундуки
 	var g_id := PackedInt64Array()
 	var g_k := PackedByteArray()
@@ -3517,11 +3519,13 @@ func _net_client_tick(delta: float) -> void:
 		var p_v := PackedVector2Array()
 		var p_c := PackedColorArray()
 		var p_r := PackedFloat32Array()
+		var p_art := PackedStringArray()
 		for p in projectiles_node.get_children():
 			if p.puppet or p.is_queued_for_deletion() or p.get("style") == null:
 				continue
 			p_id.append(p.get_instance_id())
 			p_s.append(p.style)
+			p_art.append(p.art_key)
 			p_xy.append(p.position)
 			p_v.append(p.velocity)
 			p_c.append(p.color)
@@ -3531,7 +3535,7 @@ func _net_client_tick(delta: float) -> void:
 			if zz.puppet or zz.is_queued_for_deletion():
 				continue
 			z.append([zz.get_instance_id(), zz.position, zz.radius, zz.color, 1 if zz.flask else (2 if zz.cloud else 0)])
-		Net.send_client_state({"pl": me.net_row(), "p": [p_id, p_s, p_xy, p_v, p_c, p_r], "z": z})
+		Net.send_client_state({"pl": me.net_row(), "p": [p_id, p_s, p_xy, p_v, p_c, p_r, PackedByteArray(), p_art], "z": z})
 
 
 ## Клиент: применить снимок мира от хоста.
@@ -3651,6 +3655,7 @@ func _apply_enemies(e: Array) -> void:
 
 func _apply_projectiles(p: Array, key := "p", owner: Node2D = null) -> void:
 	var own: PackedByteArray = p[6] if p.size() > 6 else PackedByteArray()
+	var art: PackedStringArray = p[7] if p.size() > 7 else PackedStringArray()
 	var ids = p[0]
 	if not own.is_empty() and my_idx > 0:
 		# Свои снаряды, пересланные хостом, у клиента уже есть
@@ -3673,6 +3678,8 @@ func _apply_projectiles(p: Array, key := "p", owner: Node2D = null) -> void:
 			else:
 				n = preload("res://scripts/projectile.gd").new()
 				n.style = st
+				if i < art.size():
+					n.art_key = art[i]
 				var oi := int(own[i]) if not own.is_empty() else 0
 				n.owner_pl = owner if owner != null else (players[oi] if oi > 0 and oi < players.size() else player)
 				n.zap_radius = p[5][i]

@@ -6,6 +6,7 @@ const Awaken := preload("res://scripts/awaken.gd")
 const Data := preload("res://scripts/data.gd")
 const Pixel := preload("res://scripts/pixel.gd")
 const Fx := preload("res://scripts/fx.gd")
+const ProjectileArt := preload("res://scripts/projectile_art.gd")
 const Drawer := preload("res://scripts/drawer.gd")
 const ProjectileScript := preload("res://scripts/projectile.gd")
 
@@ -150,7 +151,6 @@ var _aura_glow: Sprite2D
 var _aura_ring: Sprite2D
 var _aura_embers: Node2D
 var _blades: Node2D
-var _blade_tex: Texture2D
 var _overlay: Node2D
 var _drones: Array[Sprite2D] = []
 var _swords: Array[Sprite3D] = []
@@ -270,7 +270,7 @@ func _ready() -> void:
 	_body = Sprite2D.new()
 	_body.texture = _frames["base"][0]
 	_body.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND) * float(_frames.get("k", 1.0))
-	_body.offset = Vector2(0, -size.y / 2.0 + 3.0)
+	_body.offset = Vector2(0, -size.y / 2.0 + 3.0 * float(_frames.get("resolution", 1)))
 	add_child(_body)
 	_emit = Sprite2D.new()
 	_emit.texture = _frames["emit"][0]
@@ -315,7 +315,6 @@ func _ready() -> void:
 		main.mirror(_outline, self, true)
 	main.mirror_light(_light, self, 1.4)
 
-	_blade_tex = Pixel.frames("blade")["emit"][0]
 	_blades = Drawer.new()
 	_blades.draw_fn = _draw_blades
 	_blades.material = Pixel.mat_add()
@@ -505,7 +504,7 @@ func _sync_outline() -> void:
 	_outline.visible = _body.visible and (not _dead or (main != null and main.coop and not main.game_over))
 	if not _outline.visible:
 		return
-	var t := Pixel.ring_outline(_body.texture)
+	var t := Pixel.ring_outline(_body.texture, int(_frames.get("resolution", 1)))
 	if _outline.texture != t:
 		_outline.texture = t
 	_outline.flip_h = _body.flip_h
@@ -614,7 +613,7 @@ func _process_body(delta: float) -> void:
 			# Анимация гибели: оседает, падает и тает
 			_death_t += delta
 			if _death_t < 1.2 and _frames["base"].size() >= Pixel.HERO_FRAMES:
-				var f := Pixel.hero_frame_k("death", _death_t / 1.0)
+				var f := Pixel.hero_frame_k(_frames, "death", _death_t / 1.0)
 				_body.texture = _frames["base"][f]
 				_emit.texture = _frames["emit"][f]
 			else:
@@ -1402,11 +1401,11 @@ func _animate(delta: float) -> void:
 	_hurt_t = maxf(0.0, _hurt_t - delta)
 	var rich: bool = _frames["base"].size() >= Pixel.HERO_FRAMES
 	if rich and _hurt_t > 0.0:
-		f = Pixel.hero_frame_k("hurt", 1.0 - _hurt_t / 0.3)
+		f = Pixel.hero_frame_k(_frames, "hurt", 1.0 - _hurt_t / 0.3)
 	elif rich and _cast_t > 0.0:
-		f = Pixel.hero_frame_k("cast", 1.0 - _cast_t / CAST_T)
+		f = Pixel.hero_frame_k(_frames, "cast", 1.0 - _cast_t / CAST_T)
 	elif rich and _attack_t > 0.0:
-		f = Pixel.hero_frame_k("attack", 1.0 - _attack_t / ATTACK_T)
+		f = Pixel.hero_frame_k(_frames, "attack", 1.0 - _attack_t / ATTACK_T)
 	elif rich and _dash_t > 0.0:
 		f = Pixel.hero_frame(_frames, "dash", _anim_t)
 	elif moving:
@@ -1475,17 +1474,14 @@ func _animate(delta: float) -> void:
 	_sync_swords()
 
 	# Дроны кружат вокруг героя
-	var dfr := Pixel.frames("drone")
 	for i in _drones.size():
 		var a := _anim_t * 1.4 + TAU * i / _drones.size()
 		# Дрон летает по кругу вокруг героя на высоте головы, покачиваясь
 		var ground := Vector2(cos(a) * 75.0, sin(a) * 50.0)
 		var hover := (95.0 + sin(_anim_t * 4.0 + i) * 6.0) * Pixel.STAND
 		_drones[i].position = ground + Vector2(0, -hover)
-		var df := int(_anim_t * 16.0 + i) % 2
-		_drones[i].texture = dfr["base"][df]
 		var glow: Sprite2D = _drones[i].get_child(0)
-		glow.texture = dfr["emit"][df]
+		glow.modulate.a = 0.33 + 0.16 * sin(_anim_t * 12.0 + i)
 		_drones[i].flip_h = sin(a) < 0.0
 		glow.flip_h = _drones[i].flip_h
 		if i < _drone_shadows.size():
@@ -1569,12 +1565,12 @@ func _sync_swords() -> void:
 	var count: int = stats("blades")["count"] if has_active("blades") else 0
 	while _swords.size() < count:
 		var sw := Sprite3D.new()
-		sw.texture = Pixel.frames("blade")["emit"][0]
-		sw.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		sw.texture = ProjectileArt.texture("blade")
+		sw.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
 		sw.shaded = false
 		sw.double_sided = true
 		sw.billboard = BaseMaterial3D.BILLBOARD_DISABLED
-		sw.pixel_size = 0.03
+		sw.pixel_size = ProjectileArt.world_size("blade").x / sw.texture.get_width()
 		main._bill_root.add_child(sw)
 		_swords.append(sw)
 	if count == 0:
@@ -1760,16 +1756,17 @@ func _sync_drones() -> void:
 	var count: int = stats("drones")["count"]
 	while _drones.size() < count:
 		var d := Sprite2D.new()
-		d.texture = Pixel.frames("drone")["emit"][0]
+		d.texture = ProjectileArt.texture("drone")
 		d.material = Pixel.mat_unshaded()
-		d.modulate = Pixel.hdr(Color.WHITE, 1.8)
-		d.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND) * 0.8
+		d.modulate = Color(1.08, 1.08, 1.12)
+		var texel_size := ProjectileArt.world_size("drone").x * 100.0 / d.texture.get_width()
+		d.scale = Vector2(1.0, Pixel.STAND) * texel_size
 		add_child(d)
 		main.mirror(d, self, false)
 		var glow := Sprite2D.new()
-		glow.texture = Pixel.frames("drone")["emit"][0]
+		glow.texture = Pixel.glow()
 		glow.material = Pixel.mat_unshaded()
-		glow.modulate = Pixel.hdr(Color.WHITE, 1.4)
+		glow.modulate = Color(0.65, 0.4, 1.0, 0.45)
 		d.add_child(glow)
 		main.mirror(glow, self, true)
 		var sh := Sprite2D.new()
@@ -2336,6 +2333,7 @@ const VORTEX_SHADER := """
 shader_type spatial;
 render_mode unshaded, blend_mix, depth_draw_never, cull_disabled, shadows_disabled;
 uniform vec4 col : source_color = vec4(0.7, 0.35, 1.0, 1.0);
+uniform sampler2D artwork : source_color, filter_linear, repeat_disable;
 uniform float t = 0.0;
 uniform float fade = 1.0;
 void fragment() {
@@ -2347,11 +2345,10 @@ void fragment() {
 	float arms = sin(a * 3.0 + r * 9.0 - t * 7.0) * 0.5 + 0.5;
 	float rim = smoothstep(1.0, 0.85, r) * smoothstep(0.55, 0.95, r);
 	float core = smoothstep(0.3, 0.0, r);
-	vec3 c = mix(col.rgb * 2.2 * arms, vec3(0.0), core);
-	c += vec3(1.0, 0.55, 0.9) * rim * 0.8;
-	float alpha = (arms * 0.55 * smoothstep(1.0, 0.2, r) + core * 0.95 + rim * 0.6) * fade;
-	ALBEDO = c;
-	ALPHA = clamp(alpha, 0.0, 1.0);
+	vec4 sprite = texture(artwork, UV);
+	ALBEDO = sprite.rgb * mix(col.rgb, vec3(1.0), 0.68) * (0.92 + arms * 0.3);
+	EMISSION = col.rgb * rim * arms * sprite.a * 0.32;
+	ALPHA = max(sprite.a, core * 0.65) * fade;
 }
 """
 static var _vortex_sh: Shader
@@ -2373,6 +2370,7 @@ func _vortex_fx(center: Vector2, r: float):
 	var m := ShaderMaterial.new()
 	m.shader = _vortex_sh
 	m.set_shader_parameter("col", col)
+	m.set_shader_parameter("artwork", ProjectileArt.texture("vortex"))
 	m.render_priority = 2
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

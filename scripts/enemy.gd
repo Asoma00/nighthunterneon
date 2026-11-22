@@ -123,7 +123,7 @@ func _ready() -> void:
 	_body = Sprite2D.new()
 	_body.texture = _frames["base"][0]
 	_body.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND) * size_mult * _k
-	_body.offset = Vector2(0, -size.y / 2.0 + 2.0)
+	_body.offset = Vector2(0, -size.y / 2.0 + 2.0 * float(_frames.get("resolution", 1)))
 	add_child(_body)
 	_emit = Sprite2D.new()
 	_emit.texture = _frames["emit"][0]
@@ -494,8 +494,8 @@ const EMIT_HELL := Color(2.2, 0.99, 0.44, 1.0)
 
 
 func _animate(dir: Vector2) -> void:
-	var count: int = _frames["base"].size()
-	var f := int(_t * _fps * speed_mult()) % count
+	var count: int = _frames["base"].size() / Pixel.subframes(_frames)
+	var f := Pixel.loop_frame(_frames, 0, count, _t * _fps * speed_mult())
 	if is_boss and count >= 20:
 		# Босс: ярость при смене фазы, урон, особый приём, удар, движение
 		var dt := get_process_delta_time()
@@ -505,28 +505,28 @@ func _animate(dir: Vector2) -> void:
 			set("spc_anim", maxf(0.0, sa - dt))
 		var pt: float = get("_phase_t") if get("_phase_t") != null else 0.0
 		if pt > 0.0:
-			f = 18 + int(_t * 8.0) % 2
+			f = Pixel.loop_frame(_frames, 18, 2, _t * 8.0)
 		elif _flash > 0.0:
-			f = 16 + int(_t * 12.0) % 2
+			f = Pixel.loop_frame(_frames, 16, 2, _t * 12.0)
 		elif count >= 36 and str(get("pose")) in POSE_BASE:
 			# Читаемые позы босса: замах, рывок, заклинание, призыв
 			var ps := str(get("pose"))
-			f = int(POSE_BASE[ps]) + int(_t * float(POSE_FPS[ps])) % 4
+			f = Pixel.loop_frame(_frames, POSE_BASE[ps], 4, _t * float(POSE_FPS[ps]))
 		elif sa > 0.0:
-			f = 12 + clampi(int((1.0 - sa / 0.7) * 4.0), 0, 3)
+			f = Pixel.timed_frame(_frames, 12, 4, 1.0 - sa / 0.7)
 		elif atk_anim > 0.0 or _dash_t > 0.0 or (get("_charge_t") != null and float(get("_charge_t")) > 0.0):
-			f = 6 + clampi(int((1.0 - atk_anim / 0.55) * 6.0), 0, 5)
+			f = Pixel.timed_frame(_frames, 6, 6, 1.0 - atk_anim / 0.55)
 		else:
-			f = int(_t * _fps * speed_mult()) % 6
+			f = Pixel.loop_frame(_frames, 0, 6, _t * _fps * speed_mult())
 	elif _beast:
 		atk_anim = maxf(0.0, atk_anim - get_process_delta_time())
 		var close: bool = player != null and is_instance_valid(player) and position.distance_squared_to(player.position) < pow(radius + 50.0, 2)
 		if _flash > 0.0:
-			f = 10 + int(_t * 12.0) % 2
+			f = Pixel.loop_frame(_frames, 10, 2, _t * 12.0)
 		elif atk_anim > 0.0 or close or _dash_t > 0.0:
-			f = 6 + int(_t * 10.0) % 4
+			f = Pixel.loop_frame(_frames, 6, 4, _t * 10.0)
 		else:
-			f = int(_t * _fps * speed_mult()) % 6
+			f = Pixel.loop_frame(_frames, 0, 6, _t * _fps * speed_mult())
 	# Свойства спрайта меняем только при изменении: каждое присваивание — перерисовка
 	var bt: Texture2D = _frames["base"][f]
 	if _body.texture != bt:
@@ -625,7 +625,7 @@ func _tick_statuses(delta: float) -> void:
 		main.status_fx_budget -= 1
 		var st: String = statuses.keys()[randi() % statuses.size()]
 		var c: Color = Data.STATUSES[st]["color"]
-		var top := position + Vector2(randf_range(-radius, radius), -_frames["size"].y * Pixel.PX * 0.5)
+		var top := position + Vector2(randf_range(-radius, radius), -Pixel.logical_size(_frames).y * Pixel.PX * 0.5)
 		match st:
 			"burn":
 				Fx.burst(main, top, [Pixel.hdr(c, 2.0), Color(1.0, 0.2, 0.1, 0.0)], 3, 40.0, 0.5, 3.0, true, Vector2(0, -60))
@@ -664,7 +664,7 @@ func apply_status(st: String) -> void:
 
 func _react(key: String) -> void:
 	preload("res://scripts/meta.gd").discover("r:" + key)
-	var center := position + Vector2(0, -_frames["size"].y * Pixel.PX * 0.4)
+	var center := position + Vector2(0, -Pixel.logical_size(_frames).y * Pixel.PX * 0.4)
 	main.on_reaction(key, center)
 	_react_effect(key, center)
 
@@ -776,7 +776,7 @@ func _cloud(center: Vector2, r: float, dmg: float, st: String, col: Color, dur: 
 
 func _draw_hp(canvas: Node2D) -> void:
 	var w := 70.0
-	var y: float = -_frames["size"].y * Pixel.PX * Pixel.STAND - 10.0
+	var y := -Pixel.logical_size(_frames).y * Pixel.PX * Pixel.STAND - 10.0
 	canvas.draw_rect(Rect2(-w / 2 - 1, y - 1, w + 2, 7), Color(0.05, 0.02, 0.08))
 	canvas.draw_rect(Rect2(-w / 2, y, w * hp / max_hp, 5), Pixel.hdr(Color(1.0, 0.5, 0.1), 1.5))
 
@@ -823,12 +823,12 @@ func hit(amount: float, from: Vector2, knockback: float = 160.0, status := "") -
 	if armor > 0.0 and not statuses.has("shock"):
 		amount *= 1.0 - armor
 	if crit:
-		Fx.number(main, position + Vector2(0, -_frames["size"].y * Pixel.PX * 0.8), amount, Color(1.0, 0.3, 0.3), 22)
+		Fx.number(main, position + Vector2(0, -Pixel.logical_size(_frames).y * Pixel.PX * 0.8), amount, Color(1.0, 0.3, 0.3), 22)
 	_flash = 0.1
 	if puppet:
 		# Клиент: урон посчитан здесь, хост только применяет его к настоящему врагу
 		if not crit:
-			Fx.number(main, position + Vector2(0, -_frames["size"].y * Pixel.PX * 0.6), amount, Color(1.0, 0.95, 0.6) if amount < 30.0 else Color(1.0, 0.5, 0.3), 14 if amount < 30.0 else 18)
+			Fx.number(main, position + Vector2(0, -Pixel.logical_size(_frames).y * Pixel.PX * 0.6), amount, Color(1.0, 0.95, 0.6) if amount < 30.0 else Color(1.0, 0.5, 0.3), 14 if amount < 30.0 else 18)
 		var inf2: String = atk.infuse_for(status) if status != "" else ""
 		Net.client_hit(net_id, amount, status, crit, src)
 		if inf2 != "" and randf() < 0.4:
@@ -864,10 +864,10 @@ func _take(amount: float, col := Color(1.0, 0.95, 0.6), size := 14) -> void:
 	hp -= amount
 	if _net_quiet:
 		Net.replaying = true   # цифру уже показал клиент — у него не дублируем
-		Fx.number(main, position + Vector2(0, -_frames["size"].y * Pixel.PX * 0.6), amount, col, size)
+		Fx.number(main, position + Vector2(0, -Pixel.logical_size(_frames).y * Pixel.PX * 0.6), amount, col, size)
 		Net.replaying = false
 	else:
-		Fx.number(main, position + Vector2(0, -_frames["size"].y * Pixel.PX * 0.6), amount, col, size)
+		Fx.number(main, position + Vector2(0, -Pixel.logical_size(_frames).y * Pixel.PX * 0.6), amount, col, size)
 	Sound.play("hit", -14.0, 1.0, 0.2, 0.05)
 	if hp <= 0.0:
 		_die()
@@ -882,7 +882,7 @@ func _die() -> void:
 		for p in main.players:
 			if p.position.distance_to(position) < 110.0:
 				p.take_damage(damage * 1.5)
-	var center: Vector2 = position + Vector2(0, -_frames["size"].y * Pixel.PX * 0.4)
+	var center: Vector2 = position + Vector2(0, -Pixel.logical_size(_frames).y * Pixel.PX * 0.4)
 	Fx.death(main, center, color, is_elite or is_boss)
 	if is_elite or is_boss:
 		Fx.light_flash(main, center, color, 3.0, 6.0, 0.6)

@@ -10,6 +10,9 @@ const STAND := 1.45
 const OUT := Color(0.04, 0.02, 0.08)
 
 static var _cache := {}
+static var _actor_cache := {}
+static var _actor_cache_bytes := 0
+const ACTOR_CACHE_BUDGET := 88 * 1024 * 1024
 const Icons := preload("res://scripts/icons.gd")
 const Bosses := preload("res://scripts/bosses.gd")
 const Data := preload("res://scripts/data.gd")
@@ -261,13 +264,12 @@ static func frames(key: String, cache_key := "") -> Dictionary:
 	var spec := _spec(key)
 	var path := ActorAtlases.path_for(key)
 	if not path.is_empty():
-		if not _cache.has(path):
-			var bundled := _from_actor_atlas(path, spec)
-			if not bundled.is_empty():
-				_cache[path] = bundled
-		if _cache.has(path):
-			_cache[cache_key] = _cache[path]
-			return _cache[cache_key]
+		var bundled := _cached_actor(path)
+		if not bundled.is_empty():
+			return bundled
+		bundled = _from_actor_atlas(path, spec)
+		if not bundled.is_empty():
+			return bundled
 	var w: int = spec[0]
 	var h: int = spec[1]
 	var count: int = spec[2]
@@ -316,21 +318,52 @@ static func _empty_result(spec: Array) -> Dictionary:
 	return {"base": [], "emit": [], "flash": [], "size": Vector2(spec[0], spec[1]), "k": float(spec[4]) if spec.size() > 4 else 1.0}
 
 
+static func _hd_result(spec: Array, size: Vector2i) -> Dictionary:
+	var result := _empty_result(spec)
+	result["size"] = Vector2(size)
+	result["k"] /= ActorAtlases.RESOLUTION
+	result["resolution"] = ActorAtlases.RESOLUTION
+	if int(spec[2]) > 1:
+		result["subframes"] = 2
+	return result
+
+
+static func _cached_actor(key: String) -> Dictionary:
+	if not _actor_cache.has(key):
+		return {}
+	var item: Array = _actor_cache[key]
+	_actor_cache.erase(key)
+	_actor_cache[key] = item
+	return item[0]
+
+
+static func _cache_actor(key: String, result: Dictionary, byte_count: int) -> void:
+	while not _actor_cache.is_empty() and _actor_cache_bytes + byte_count > ACTOR_CACHE_BUDGET:
+		var oldest: String = _actor_cache.keys()[0]
+		_actor_cache_bytes -= int(_actor_cache[oldest][1])
+		_actor_cache.erase(oldest)
+	_actor_cache[key] = [result, byte_count]
+	_actor_cache_bytes += byte_count
+
+
 static func _from_actor_atlas(path: String, spec: Array) -> Dictionary:
-	var size := Vector2i(spec[0], spec[1])
+	var size := ActorAtlases.frame_size(Vector2i(spec[0], spec[1]), spec[2])
 	var atlas := ActorAtlases.read_atlas(path, size, spec[2])
 	if atlas == null:
 		return {}
-	var result := _empty_result(spec)
+	var result := _hd_result(spec, size)
 	var textures := {}
 	for column in ActorAtlases.FRAME_COLUMNS[spec[2]]:
 		if not textures.has(column):
 			var layers: Array[ImageTexture] = []
 			for row in ActorAtlases.LAYERS.size():
-				layers.append(tex(ActorAtlases.frame_image(atlas, size, column, row)))
+				var texture := tex(ActorAtlases.frame_image(atlas, size, column, row))
+				texture.set_meta("icon2x", true)
+				layers.append(texture)
 			textures[column] = layers
 		for row in ActorAtlases.LAYERS.size():
 			result[ActorAtlases.LAYERS[row]].append(textures[column][row])
+	_cache_actor(path, result, textures.size() * size.x * size.y * ActorAtlases.LAYERS.size() * 4)
 	return result
 
 
@@ -386,16 +419,19 @@ static func _store_frame(f: int, result: Dictionary, save_atlas: Image, layers: 
 
 ## Снаряжение рисуется поверх PNG; тело, оружие и поза берутся из атласа.
 static func _render_equipped_frame(key: String, spec: Array, f: int, result: Dictionary, save_atlas: Image, source: Image) -> void:
-	var size := Vector2i(spec[0], spec[1])
+	var size := Vector2i(result["size"])
 	var column: int = ActorAtlases.FRAME_COLUMNS[spec[2]][f]
 	var body := ActorAtlases.frame_image(source, size, column, 0)
 	var emit := ActorAtlases.frame_image(source, size, column, 1)
-	if f >= HERO_ANIM["death"][0] and f < HERO_ANIM["dash"][0]:
+	var pose := f / int(result["subframes"])
+	if pose >= HERO_ANIM["death"][0] and pose < HERO_ANIM["dash"][0]:
 		_store_frame(f, result, save_atlas, [body, emit, ActorAtlases.frame_image(source, size, column, 2)])
 		return
-	_anc = _equipped_anchors(key, body.get_used_rect(), size.x, f)
-	_paint_mods(body, emit, f)
+	_attachment_scale = HS * ActorAtlases.RESOLUTION
+	_anc = _equipped_anchors(key, body.get_used_rect(), size.x, pose)
+	_paint_mods(body, emit, pose)
 	_anc = {}
+	_attachment_scale = HS
 	_store_frame(f, result, save_atlas, [body, emit, silhouette(body)])
 
 
@@ -404,9 +440,9 @@ static func _equipped_anchors(key: String, bounds: Rect2i, width: int, f: int) -
 	var appearance := look(key)
 	var weapon: String = appearance["weapon"]
 	var pose := _rig_pose(f, weapon in ["katana", "hammer", "scythe", "blade", "mace"])
-	var height := float(bounds.size.y) / HS
-	var ground := float(bounds.end.y - 1) / HS
-	var cx := (float(width) - 1.0) / (2.0 * HS) + float(pose["lean"]) * 0.6
+	var height := float(bounds.size.y) / _attachment_scale
+	var ground := float(bounds.end.y - 1) / _attachment_scale
+	var cx := (float(width) - 1.0) / (2.0 * _attachment_scale) + float(pose["lean"]) * 0.6
 	var shoulder := ground - height * 0.58
 	var hip := ground - height * 0.32
 	var build: int = appearance["build"]
@@ -425,9 +461,7 @@ static func _equipped_anchors(key: String, bounds: Rect2i, width: int, f: int) -
 
 
 # ---------- Порционная отрисовка (без фризов) ----------
-# Перерисовка героя целиком (35 кадров) занимает 50–250 мс — в бою это заметный рывок
-# при каждом новом модуле. Такие спрайты рисуются по нескольку кадров за кадр игры,
-# а до готовности герой показывается в прежнем виде.
+# Экипировку добавляем порциями. До готовности герой виден с прежним набором.
 static var _jobs := {}
 
 
@@ -436,17 +470,26 @@ static func hero_frames_async(key: String, mods: Dictionary) -> Dictionary:
 	var path := ActorAtlases.path_for(key)
 	if mods.is_empty() and not path.is_empty():
 		return frames(key)
-	var ck := _mods_key(key, mods) + ("|actor-png" if not path.is_empty() else "")
+	var ck := _mods_key(key, mods)
+	if not path.is_empty():
+		var cached := _cached_actor(ck)
+		if not cached.is_empty():
+			return cached
 	if _cache.has(ck):
 		return _cache[ck]
-	var ready := _from_disk(key, ck)
-	if not ready.is_empty():
-		return ready
 	if not _jobs.has(ck):
 		var spec := _spec(key)
-		var disk := _disk_path(ck)
-		var source := ActorAtlases.read_atlas(path, Vector2i(spec[0], spec[1]), spec[2])
-		_jobs[ck] = {"key": key, "mods": mods.duplicate(), "f": 0, "spec": spec, "res": _empty_result(spec),
+		var size := ActorAtlases.frame_size(Vector2i(spec[0], spec[1]), spec[2])
+		var source := ActorAtlases.read_atlas(path, size, spec[2])
+		var disk := ""
+		if source == null:
+			var ready := _from_disk(key, ck)
+			if not ready.is_empty():
+				return ready
+			disk = _disk_path(ck)
+		var result := _hd_result(spec, size) if source != null else _empty_result(spec)
+		var count := int(spec[2]) * subframes(result)
+		_jobs[ck] = {"key": key, "mods": mods.duplicate(), "f": 0, "spec": spec, "res": result, "count": count,
 			"atlas": Image.create(int(spec[0]) * int(spec[2]), int(spec[1]) * 3, false, Image.FORMAT_RGBA8) if disk != "" else null,
 			"disk": disk, "source": source}
 	return {}
@@ -460,15 +503,19 @@ static func pump(budget_usec := 3000) -> void:
 	for ck in _jobs.keys():
 		var j: Dictionary = _jobs[ck]
 		_mods = j["mods"]
-		while Time.get_ticks_usec() - t0 < budget_usec and int(j["f"]) < int(j["spec"][2]):
+		while Time.get_ticks_usec() - t0 < budget_usec and int(j["f"]) < int(j["count"]):
 			if j["source"] != null:
 				_render_equipped_frame(j["key"], j["spec"], int(j["f"]), j["res"], j["atlas"], j["source"])
 			else:
 				_render_frame(j["key"], j["spec"], int(j["f"]), j["res"], j["atlas"])
 			j["f"] = int(j["f"]) + 1
 		_mods = {}
-		if int(j["f"]) >= int(j["spec"][2]):
-			_cache[ck] = j["res"]
+		if int(j["f"]) >= int(j["count"]):
+			if j["source"] != null:
+				var size := Vector2i(j["res"]["size"])
+				_cache_actor(ck, j["res"], size.x * size.y * int(j["count"]) * ActorAtlases.LAYERS.size() * 4)
+			else:
+				_cache[ck] = j["res"]
 			_jobs.erase(ck)
 			if j["atlas"] != null:
 				(j["atlas"] as Image).save_png(j["disk"])
@@ -1774,9 +1821,24 @@ static func portrait(sprite: String, dark := false) -> ImageTexture:
 	var key := "portrait_" + sprite + ("_d" if dark else "")
 	if _cache.has(key):
 		return _cache[key]
-	var fr := frames(sprite)
-	var bi: Image = (fr["base"][0] as ImageTexture).get_image()
-	var ei: Image = (fr["emit"][0] as ImageTexture).get_image()
+	var bi: Image
+	var ei: Image
+	var spec := _spec(sprite)
+	var atlas_path := ActorAtlases.path_for(sprite)
+	var size := ActorAtlases.frame_size(Vector2i(spec[0], spec[1]), spec[2])
+	var atlas := ActorAtlases.read_atlas(atlas_path, size, spec[2])
+	if atlas != null:
+		bi = ActorAtlases.frame_image(atlas, size, 0, 0)
+		ei = ActorAtlases.frame_image(atlas, size, 0, 1)
+		var portrait_width: int = int(spec[0]) * ActorAtlases.RESOLUTION
+		if size.x > portrait_width:
+			var r := Rect2i((size.x - portrait_width) / 2, 0, portrait_width, size.y)
+			bi = bi.get_region(r)
+			ei = ei.get_region(r)
+	else:
+		var fr := frames(sprite)
+		bi = (fr["base"][0] as ImageTexture).get_image()
+		ei = (fr["emit"][0] as ImageTexture).get_image()
 	var im := bi.duplicate() as Image
 	im.convert(Image.FORMAT_RGBA8)
 	ei.convert(Image.FORMAT_RGBA8)
@@ -1790,6 +1852,8 @@ static func portrait(sprite: String, dark := false) -> ImageTexture:
 				c = Color(0.12, 0.1, 0.18, c.a)
 			im.set_pixel(x, y, c)
 	var t := tex(im)
+	if atlas != null:
+		t.set_meta("icon2x", true)
 	_cache[key] = t
 	return t
 
@@ -2790,6 +2854,7 @@ const HERO_FRAMES := 35
 ## крупнее: контуры, эллипсы и линии получаются плавнее, а детали дорисовываются
 ## отдельными проходами в полном разрешении.
 const HS := 1.5
+static var _attachment_scale := HS
 
 ## Внешность: цвета и «детали» каждого героя.
 const LOOKS := {
@@ -2950,6 +3015,24 @@ static func _citizen_extras(b: Image, e: Image, L: Dictionary, f: int) -> void:
 	spx(e, int(cx + tw - 2), int(sh + 2), Color(L["neon2"], 0.85))
 
 
+static func subframes(fr: Dictionary) -> int:
+	return int(fr.get("subframes", 1))
+
+
+static func logical_size(fr: Dictionary) -> Vector2:
+	return Vector2(fr["size"]) / float(fr.get("resolution", 1))
+
+
+static func loop_frame(fr: Dictionary, start: int, count: int, phase: float) -> int:
+	var steps := subframes(fr)
+	return start * steps + posmod(floori(phase * steps), count * steps)
+
+
+static func timed_frame(fr: Dictionary, start: int, count: int, progress: float) -> int:
+	var steps := subframes(fr)
+	return start * steps + clampi(floori(progress * count * steps), 0, count * steps - 1)
+
+
 static func hero_frame(fr: Dictionary, state: String, t: float) -> int:
 	var n: int = fr["base"].size()
 	if n < HERO_FRAMES:
@@ -2958,42 +3041,42 @@ static func hero_frame(fr: Dictionary, state: String, t: float) -> int:
 	var a: Array = HERO_ANIM.get(state, HERO_ANIM["idle"])
 	var spd := {"idle": 5.0, "run": 14.0, "attack": 18.0, "cast": 14.0, "hurt": 10.0, "death": 7.0, "dash": 16.0}.get(state, 5.0) as float
 	if state == "death":
-		return int(a[0]) + mini(int(t * spd), int(a[1]) - 1)   # смерть не зацикливается
-	return int(a[0]) + int(t * spd) % int(a[1])
+		return timed_frame(fr, a[0], a[1], t * spd / float(a[1]))
+	return loop_frame(fr, a[0], a[1], t * spd)
 
 
 ## Кадр анимации по доле (0..1) — для удара/способности/смерти, привязанных ко времени.
-static func hero_frame_k(state: String, k: float) -> int:
+static func hero_frame_k(fr: Dictionary, state: String, k: float) -> int:
 	var a: Array = HERO_ANIM[state]
-	return int(a[0]) + clampi(int(k * float(a[1])), 0, int(a[1]) - 1)
+	return timed_frame(fr, a[0], a[1], k)
 
 
 # ---- Масштабирующие примитивы рига (логические координаты × HS) ----
 static func srect(im: Image, x: int, y: int, w: int, h: int, c: Color) -> void:
-	rect(im, int(floor(x * HS)), int(floor(y * HS)), maxi(1, int(ceil(w * HS))), maxi(1, int(ceil(h * HS))), c)
+	rect(im, floori(x * _attachment_scale), floori(y * _attachment_scale), maxi(1, ceili(w * _attachment_scale)), maxi(1, ceili(h * _attachment_scale)), c)
 
 
 static func sell(im: Image, cx: float, cy: float, rx: float, ry: float, c: Color) -> void:
-	ellipse(im, cx * HS, cy * HS, rx * HS, ry * HS, c)
+	ellipse(im, cx * _attachment_scale, cy * _attachment_scale, rx * _attachment_scale, ry * _attachment_scale, c)
 
 
 static func sline(im: Image, x0: int, y0: int, x1: int, y1: int, c: Color) -> void:
-	line(im, int(round(x0 * HS)), int(round(y0 * HS)), int(round(x1 * HS)), int(round(y1 * HS)), c)
+	line(im, roundi(x0 * _attachment_scale), roundi(y0 * _attachment_scale), roundi(x1 * _attachment_scale), roundi(y1 * _attachment_scale), c)
 
 
 static func spoly(im: Image, pts: PackedVector2Array, c: Color) -> void:
 	var q := PackedVector2Array()
 	for p in pts:
-		q.append(p * HS)
+		q.append(p * _attachment_scale)
 	poly(im, q, c)
 
 
 static func spx(im: Image, x: int, y: int, c: Color) -> void:
-	px(im, int(round(x * HS)), int(round(y * HS)), c)
+	px(im, roundi(x * _attachment_scale), roundi(y * _attachment_scale), c)
 
 
 static func slimb(im: Image, a: Vector2, c: Vector2, w: int, col: Color) -> void:
-	_limb(im, a * HS, c * HS, int(round(w * HS)), col)
+	_limb(im, a * _attachment_scale, c * _attachment_scale, roundi(w * _attachment_scale), col)
 
 
 ## Кадр героя 48×60: поза рига + смерть/рывок/способность + проходы детализации.

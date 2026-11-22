@@ -105,7 +105,7 @@ func _sync_outline() -> void:
 	if _outline == null or _body == null:
 		return
 	_outline.visible = _body.visible and not dead
-	var t := Pixel.ring_outline(_body.texture, 2)
+	var t := Pixel.ring_outline(_body.texture, 2 * int(_frames.get("resolution", 1)))
 	if _outline.texture != t:
 		_outline.texture = t
 	_outline.flip_h = _body.flip_h
@@ -623,7 +623,7 @@ func _fire(angle: float, spd: float, col: Color, homing := false) -> Node2D:
 	var b := BulletScript.new()
 	b.main = main
 	b.player = player
-	b.position = position + Vector2(0, -_frames["size"].y * Pixel.PX * 0.45)
+	b.position = position + Vector2(0, -Pixel.logical_size(_frames).y * Pixel.PX * 0.45)
 	b.velocity = Vector2.RIGHT.rotated(angle) * spd
 	b.damage = damage * 0.7
 	b.color = col

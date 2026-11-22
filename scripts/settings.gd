@@ -1,5 +1,5 @@
 extends Node
-const REV := 15036   # версия скрипта автозагрузки (см. hotswap.gd)
+const REV := 15051   # версия скрипта автозагрузки (см. hotswap.gd)
 ## Настройки экрана и звука: режим окна, формат, разрешение, громкость.
 ## Сохраняются в user://settings.cfg и применяются при каждом запуске.
 ## Подключён как автозагрузка «Settings».
@@ -473,7 +473,7 @@ signal orientation_changed(portrait: bool)
 var _base_3d := 1.0        # из настройки разрешения / чёткости
 ## Пиксельный 3D (HD-2D): сцена рендерится в низком разрешении и растягивается
 ## чёткими пикселями. Интерфейс — всегда в родном разрешении.
-## 0 — выкл, 1 — мелкие пиксели (~540 строк), 2 — средние (~400), 3 — крупные (~300).
+## 0 — выкл, 1 — мелкие пиксели, 2 — средние (~400), 3 — крупные (~300).
 var pixel_art := 1
 ## Сенсорный джойстик: "float" — плавающий невидимый, "fixed" — фиксированный слева снизу
 var joystick := "float"
@@ -496,7 +496,7 @@ func apply_brightness(env: Environment) -> void:
 	env.adjustment_brightness = brightness
 ## Объёмные эффекты (3D-частицы, огненные шары, обломки)
 var fx3d := true
-const PIXEL_TARGET := [0.0, 540.0, 400.0, 300.0]
+const PIXEL_TARGET := [0.0, 900.0, 400.0, 300.0]
 signal pixel_changed
 
 
@@ -506,7 +506,10 @@ func pixel_px() -> float:
 	var w := get_window()
 	# По короткой стороне: в вертикальном режиме пиксели того же размера, что и в горизонтальном
 	var h := float(mini(w.size.x, w.size.y)) if w != null else 720.0
-	return maxf(1.0, h / float(PIXEL_TARGET[clampi(pixel_art, 1, 3)]))
+	var target := float(PIXEL_TARGET[clampi(pixel_art, 1, 3)])
+	if is_mobile() or OS.has_feature("web"):
+		target = minf(target, 540.0)
+	return maxf(1.0, h / target)
 
  ## Взгляд героя: мышь / правый стик (ПК и Steam Deck). На телефоне — автоприцел.
 var manual_aim := true

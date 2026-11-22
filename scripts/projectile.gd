@@ -4,6 +4,7 @@ extends Node2D
 
 const Pixel := preload("res://scripts/pixel.gd")
 const Fx := preload("res://scripts/fx.gd")
+const Art := preload("res://scripts/projectile_art.gd")
 
 var main: Node2D
 var owner_pl: Node2D   # чей снаряд (кооператив)
@@ -19,6 +20,7 @@ var color := Color(0.3, 0.85, 1.0)
 var homing := false
 var explode := 0.0
 var style := "orb"  # orb | shard | wave | arrow | spirit | ball | flask | shuriken
+var art_key := ""
 var can_ignite := true
 var source := ""
 var boomerang := false
@@ -86,21 +88,9 @@ func _ready() -> void:
 
 	_life0 = life
 	_core = Sprite2D.new()
-	match style:
-		"shard":
-			_core.texture = Pixel.frames("shard")["emit"][0]
-		"wave":
-			_core.texture = null
-		"arrow":
-			_core.texture = Pixel.frames("arrow")["emit"][0]
-		"spirit":
-			_core.texture = Pixel.frames("spirit")["emit"][0]
-		"shuriken":
-			_core.texture = Pixel.frames("shuriken")["base"][0]
-		"flask":
-			_core.texture = Pixel.frames("flaskp")["base"][0]
-		_:
-			_core.texture = Pixel.frames("orb")["emit"][0]
+	if not Art.TEXTURES.has(art_key):
+		art_key = Art.select(style, source, status)
+	_core.texture = Art.texture(art_key)
 	_core.material = Pixel.mat_unshaded()
 	_core.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND) * 0.9
 	add_child(_core)
@@ -132,6 +122,8 @@ func _billboard_mat(t: Texture2D, additive: bool, nearest: bool) -> StandardMate
 
 func _build_3d() -> void:
 	_height = {"orb": 0.6, "shard": 0.45, "wave": 0.5, "arrow": 0.55, "spirit": 0.7, "ball": 0.6, "shuriken": 0.5, "flask": 0.6}.get(style, 0.6)
+	if art_key == "mine":
+		_height = 0.18
 	_v3 = Node3D.new()
 	main._bill_root.add_child(_v3)
 	_glow3 = MeshInstance3D.new()
@@ -140,20 +132,19 @@ func _build_3d() -> void:
 	_glow3.mesh = gq
 	_glow3.material_override = _billboard_mat(Pixel.glow(), true, false)
 	_v3.add_child(_glow3)
-	if style != "wave" and style != "ball":
+	if style != "ball":
 		_core3 = MeshInstance3D.new()
 		var cq := QuadMesh.new()
-		var t: Texture2D = _core.texture
-		cq.size = Vector2(t.get_width(), t.get_height()) * 0.03
+		cq.size = Art.world_size(art_key)
 		_core3.mesh = cq
-		_core3.material_override = _billboard_mat(t, false, true)
-		if style == "arrow":
-			# Стрела летит остриём по направлению полёта
-			(_core3.material_override as StandardMaterial3D).billboard_mode = BaseMaterial3D.BILLBOARD_DISABLED
-			(_core3.material_override as StandardMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+		var material_3d := _billboard_mat(_core.texture, false, false)
+		material_3d.billboard_mode = BaseMaterial3D.BILLBOARD_DISABLED
+		material_3d.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_core3.material_override = material_3d
+		_core3.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_v3.add_child(_core3)
 	# При толпе снарядов хвосты не рисуем (полёт и урон не меняются)
-	if main.projectiles_node.get_child_count() > 140:
+	if art_key == "mine" or main.projectiles_node.get_child_count() > 140:
 		return
 	_trail3 = MeshInstance3D.new()
 	_trail3.mesh = _trail_im
@@ -174,10 +165,19 @@ func _update_3d() -> void:
 		h = _height + sin(clampf(1.0 - life / maxf(_life0, 0.01), 0.0, 1.0) * PI) * 1.4
 	var p: Vector3 = main.to3d(position, h)
 	_v3.position = p
-	if style == "arrow" and _core3:
-		var d := Vector3(velocity.x, 0.0, velocity.y).normalized()
-		# Стрела лежит почти горизонтально, повёрнута по направлению полёта
-		_core3.rotation = Vector3(-1.0, atan2(-d.z, d.x), 0.0)
+	if _core3:
+		if art_key in Art.DIRECTIONAL and velocity.length_squared() > 0.01:
+			var dir := Vector3(velocity.x, 0.0, velocity.y).normalized()
+			var side := Vector3.UP.cross(dir)
+			var up := (Vector3.UP * 0.63 + side * 0.78).normalized()
+			_core3.basis = Basis(dir, up, dir.cross(up))
+		else:
+			var camera := main._cam3d as Camera3D
+			var facing := camera.global_basis.orthonormalized()
+			var pulse := 1.0 + 0.07 * sin(_t * 19.0)
+			_core3.basis = facing.rotated(facing.z, _t * float(Art.SPIN.get(art_key, 0.0))).scaled(Vector3.ONE * pulse)
+	if _trail3 == null:
+		return
 	_trail_pts.append(p)
 	while _trail_pts.size() > (12 if style == "wave" else 8):
 		_trail_pts.remove_at(0)
@@ -197,13 +197,13 @@ func _update_3d() -> void:
 
 
 func _build_ball() -> void:
-	# Яркое ядро
+	# Конденсатор с нарисованным ядром; поверх него живые дуги и орбиты.
 	_ball_core = MeshInstance3D.new()
 	var cq := QuadMesh.new()
-	cq.size = Vector2(0.42, 0.42)
+	cq.size = Art.world_size("ball")
 	_ball_core.mesh = cq
-	_ball_core.material_override = _billboard_mat(Pixel.glow(), true, false)
-	(_ball_core.material_override as StandardMaterial3D).albedo_color = Color(1.6, 1.8, 2.0, 1.0)
+	_ball_core.material_override = _billboard_mat(Art.texture("ball"), false, false)
+	_ball_core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_v3.add_child(_ball_core)
 	# Кольца и дуги рисуются одной лентой каждый кадр
 	_ball_fx = MeshInstance3D.new()
@@ -280,6 +280,7 @@ func _update_ball(delta: float) -> void:
 	var col := color.lerp(Color(1.0, 0.65, 0.3), heat)
 	var hot := 1.0 + _hot * 2.0
 	_ball_core.scale = Vector3.ONE * (0.9 + 0.25 * sin(_t * 31.0)) * grow * (1.0 + _hot)
+	(_ball_core.material_override as StandardMaterial3D).albedo_color = col.lerp(Color.WHITE, 0.68)
 	(_glow3.material_override as StandardMaterial3D).albedo_color = Color(col, 0.55 * flick)
 	_glow3.scale = Vector3.ONE * grow * (1.0 + 0.1 * sin(_t * 9.0) + _hot * 0.5)
 	_ball_light.energy = (0.55 + 0.3 * flick) * hot
@@ -480,7 +481,7 @@ func _recolor() -> void:
 	if _glow3:
 		(_glow3.material_override as StandardMaterial3D).albedo_color = Color(color, 0.45)
 	if _core3:
-		(_core3.material_override as StandardMaterial3D).albedo_color = color.lerp(Color.WHITE, 0.45)
+		(_core3.material_override as StandardMaterial3D).albedo_color = color.lerp(Color.WHITE, 0.68)
 
 
 func _process(delta: float) -> void:
@@ -501,8 +502,6 @@ func _process_body(delta: float) -> void:
 		_update_3d()
 		if style == "ball":
 			_update_ball(delta)
-		if _core3 and style in ["orb", "shuriken", "flask"]:
-			_core3.rotation.z += delta * (25.0 if style == "shuriken" else 10.0)
 		return
 	var prev := position
 	if homing:
@@ -519,10 +518,6 @@ func _process_body(delta: float) -> void:
 	if _infuse_t <= 0.0:
 		_infuse_t = 0.1
 		_check_infuse()
-	if _core3 and style in ["orb", "shuriken", "flask"]:
-		_core3.rotation.z += delta * (25.0 if style == "shuriken" else 10.0)
-		var sc := 0.85 + 0.15 * sin(_t * 30.0)
-		_core3.scale = Vector3(sc, sc, sc)
 	_trail.add_point(global_position)
 	while _trail.get_point_count() > (12 if style == "wave" else 9):
 		_trail.remove_point(0)

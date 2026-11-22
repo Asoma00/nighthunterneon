@@ -1,17 +1,22 @@
 extends RefCounted
-## PNG атласы персонажей: одна колонка на позу, строки тела, свечения и вспышки.
-## Повторяющиеся позы делят колонку; порядок кадров совпадает с анимациями игры.
+## Sprite sheets have up to eight columns of poses. Each band contains body, emission and flash rows.
+## The frame order reuses held poses and includes a half-step between moving poses.
 
 const DIRECTORY := "res://assets/actors/"
 const LAYERS := ["base", "emit", "flash"]
+const RESOLUTION := 2
+const GRID_COLUMNS := 8
 const FRAME_COLUMNS := {
 	1: [0],
-	12: [0, 1, 0, 1, 0, 1, 0, 2, 2, 1, 3, 0],
-	19: [0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 1, 1, 2, 2, 0, 3, 3, 3, 0],
-	35: [0, 1, 2, 3, 2, 1, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 10,
-		11, 12, 12, 13, 13, 12, 14, 0, 16, 17, 18, 18, 19, 19, 5, 15, 7],
-	36: [0, 0, 1, 1, 0, 1, 6, 6, 2, 2, 0, 1, 0, 3, 3, 0, 4, 0, 5, 5,
-		0, 6, 6, 6, 0, 7, 7, 1, 0, 8, 8, 0, 1, 9, 9, 0],
+	12: [0, 4, 1, 5, 0, 4, 1, 5, 0, 4, 1, 5, 0, 6, 2, 2, 2, 7, 1, 1, 3, 8, 0, 0],
+	19: [0, 7, 4, 8, 5, 9, 6, 10, 5, 11, 4, 12, 1, 1, 1, 13, 2, 2, 2, 14, 1, 1, 1, 13, 2, 2, 2, 14,
+		0, 15, 3, 3, 3, 3, 3, 16, 0, 0],
+	35: [0, 20, 1, 21, 2, 22, 3, 23, 2, 24, 1, 25, 4, 4, 4, 26, 5, 5, 5, 27, 6, 6, 6, 28, 7, 7, 7, 29,
+		8, 8, 8, 30, 9, 31, 10, 32, 11, 11, 12, 12, 12, 33, 13, 13, 13, 34, 12, 12, 14, 35, 0, 0, 16, 36, 17, 37,
+		18, 18, 18, 38, 19, 19, 19, 19, 5, 39, 15, 40, 7, 41],
+	36: [0, 0, 0, 10, 1, 1, 1, 11, 0, 10, 1, 11, 6, 6, 6, 12, 2, 2, 2, 13, 0, 10, 1, 1, 0, 14, 3, 3,
+		3, 15, 0, 0, 4, 16, 0, 0, 5, 5, 5, 5, 0, 17, 6, 6, 6, 6, 6, 18, 0, 19, 7, 7, 7, 20, 1, 11,
+		0, 21, 8, 8, 8, 22, 0, 0, 1, 23, 9, 9, 9, 24, 0, 10],
 }
 
 
@@ -34,29 +39,38 @@ static func path_for(key: String) -> String:
 
 
 static func _existing_path(key: String) -> String:
-	var path := DIRECTORY + key + ".png"
-	return path if ResourceLoader.exists(path, "Texture2D") else ""
+	var path := DIRECTORY + key + ".webp.bytes"
+	return path if FileAccess.file_exists(path) else ""
+
+
+static func frame_size(legacy_size: Vector2i, count: int) -> Vector2i:
+	if count == 35:
+		return Vector2i(168, 120)
+	if count == 19:
+		return Vector2i(128, 120)
+	return legacy_size * RESOLUTION
 
 
 static func read_atlas(path: String, size: Vector2i, count: int) -> Image:
 	if path.is_empty() or not FRAME_COLUMNS.has(count):
 		return null
-	var atlas := ResourceLoader.load(path, "Texture2D", ResourceLoader.CACHE_MODE_IGNORE) as Texture2D
-	var columns: Array = FRAME_COLUMNS[count]
-	var expected_size := Vector2i(size.x * (int(columns.max()) + 1), size.y * LAYERS.size())
-	if atlas == null or Vector2i(atlas.get_size()) != expected_size:
-		push_error("Неверный размер атласа: " + path)
-		return null
-	var image := atlas.get_image()
-	if image == null or image.is_empty():
+	var frames: Array = FRAME_COLUMNS[count]
+	var poses := int(frames.max()) + 1
+	var cols := mini(GRID_COLUMNS, poses)
+	var expected_size := Vector2i(size.x * cols, size.y * LAYERS.size() * ceili(float(poses) / cols))
+	var image := Image.new()
+	if image.load_webp_from_buffer(FileAccess.get_file_as_bytes(path)) != OK:
 		push_error("Не удалось прочитать атлас: " + path)
 		return null
-	if image.is_compressed() and image.decompress() != OK:
-		push_error("Не удалось распаковать атлас: " + path)
+	if image.get_size() != expected_size:
+		push_error("Неверный размер атласа: " + path)
 		return null
 	image.convert(Image.FORMAT_RGBA8)
 	return image
 
 
 static func frame_image(atlas: Image, size: Vector2i, column: int, layer: int) -> Image:
-	return atlas.get_region(Rect2i(Vector2i(column * size.x, layer * size.y), size))
+	var cols := atlas.get_width() / size.x
+	var x := (column % cols) * size.x
+	var y := (column / cols * LAYERS.size() + layer) * size.y
+	return atlas.get_region(Rect2i(Vector2i(x, y), size))
