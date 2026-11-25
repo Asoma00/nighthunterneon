@@ -3562,7 +3562,9 @@ func _make_npc(role: String, pos: Vector3, seed: int, nm: String) -> Dictionary:
 	node.position = pos
 	_world.add_child(node)
 	var frames: Dictionary
-	if Scenes.BY_NAME.has(nm) and role != "robot":
+	if role == "robot":
+		frames = Pixel.frames("drone")
+	elif Scenes.BY_NAME.has(nm):
 		frames = Pixel.frames(str(Scenes.CAST[Scenes.BY_NAME[nm]]["sprite"]))
 	else:
 		frames = Pixel.frames("citizen_%s_%d" % [role, seed])
@@ -3570,7 +3572,7 @@ func _make_npc(role: String, pos: Vector3, seed: int, nm: String) -> Dictionary:
 		# показываем простой (и пишем в журнал, чтобы найти причину)
 		if not _sprite_ok(frames):
 			push_warning("Житель %s/%d: детальный спрайт пуст, беру простой" % [role, seed])
-			frames = Pixel.frames("drone" if role == "robot" else "villager_%d" % seed)
+			frames = Pixel.frames("villager_%d" % seed)
 	var pair := _sprite_pair(node, frames)
 	if role != "robot":
 		# Жители — чуть крупнее и светлее: не теряются на тёмной площади ночью

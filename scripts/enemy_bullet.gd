@@ -1,6 +1,7 @@
 extends Node2D
 ## Снаряд босса: светящаяся сфера, может наводиться на героя.
 
+const Pixel := preload("res://scripts/pixel.gd")
 const Fx := preload("res://scripts/fx.gd")
 const Art := preload("res://scripts/projectile_art.gd")
 
@@ -16,17 +17,20 @@ var _t := 0.0
 var puppet := false
 var net_pos := Vector2.ZERO
 var _volume: MeshInstance3D
-var _base_scale := 1.0
 
 
 func _ready() -> void:
-	var key := "fire" if color.r > color.b * 1.55 else "spirit"
-	_volume = Art.volume_instance(key)
-	_base_scale = radius * 0.034 / Art.world_size(key).x
+	_volume = Art.energy_sphere()
 	var mat := _volume.material_override as StandardMaterial3D
-	mat.albedo_color = color.lerp(Color.WHITE, 0.51)
-	mat.emission = color.lerp(Color.WHITE, 0.42)
+	mat.albedo_color = Pixel.hdr(color.lerp(Color.WHITE, 0.30), 1.5)
 	main._bill_root.add_child(_volume)
+	var glow := Sprite3D.new()
+	glow.texture = Pixel.glow()
+	glow.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	glow.pixel_size = 4.4 / glow.texture.get_width()
+	glow.modulate = Color(color, 0.45)
+	glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_volume.add_child(glow)
 	_update_look()
 
 
@@ -59,8 +63,7 @@ func _process(delta: float) -> void:
 
 func _update_look() -> void:
 	_volume.position = main.to3d(position, 0.6)
-	_volume.rotation = Vector3(0.8 + sin(_t * 7.0) * 0.25, -velocity.angle(), 0.0)
-	_volume.scale = Vector3.ONE * _base_scale * (1.0 + 0.16 * sin(_t * 20.0))
+	_volume.scale = Vector3.ONE * radius * 0.02 * (1.0 + 0.2 * sin(_t * 20.0))
 
 
 func _exit_tree() -> void:

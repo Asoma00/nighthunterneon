@@ -8,48 +8,19 @@ const TEXTURES := {
 	"spirit": preload("res://assets/projectiles/spirit.png"),
 	"shuriken": preload("res://assets/projectiles/shuriken.png"),
 	"flask": preload("res://assets/projectiles/flask.png"),
-	"fire": preload("res://assets/projectiles/fire.png"),
-	"ball": preload("res://assets/projectiles/ball.png"),
-	"acid": preload("res://assets/projectiles/acid.png"),
-	"ice": preload("res://assets/projectiles/ice.png"),
-	"wave": preload("res://assets/projectiles/wave.png"),
-	"pellet": preload("res://assets/projectiles/pellet.png"),
 	"blade": preload("res://assets/projectiles/blade.png"),
-	"mine": preload("res://assets/projectiles/mine.png"),
 	"drone": preload("res://assets/projectiles/drone.png"),
-	"vortex": preload("res://assets/projectiles/vortex.png"),
 }
-const WORLD_SPAN := {
-	"bolt": 0.67, "shard": 0.58, "arrow": 0.81, "spirit": 0.73,
-	"shuriken": 0.42, "flask": 0.43, "fire": 0.75, "ball": 0.77,
-	"acid": 0.52, "ice": 0.68, "wave": 1.28, "pellet": 0.43,
-	"blade": 0.74, "mine": 0.65, "drone": 0.78,
-}
-const DIRECTIONAL := ["bolt", "shard", "arrow", "spirit", "fire", "ice", "wave", "pellet"]
-const SPIN := {"shuriken": 19.0, "flask": 8.0, "acid": 3.0}
-const SPIRIT_ATLAS := preload("res://assets/projectiles/spirit_motion.png")
-const SPIRIT_FRAME_SIZE := Vector2i(128, 80)
-const SPIRIT_BIRTH := [8, 9, 0]
-const SPIRIT_GLIDE := [0, 1, 4, 5, 2, 3, 2, 1]
-const SPIRIT_LUNGE := [6, 10, 7, 10]
-const SPIRIT_FLASH := 7
-const SPIRIT_BREAKUP := 11
-static var _spirit_frames: Array[ImageTexture] = []
+const ORIGINAL_TEXEL := 0.03
+const SPIRIT_FRAMES := [TEXTURES["spirit"], preload("res://assets/projectiles/spirit_b.png")]
+const SHURIKEN_FRAMES := [TEXTURES["shuriken"], preload("res://assets/projectiles/shuriken_b.png")]
+const DRONE_FRAMES := [TEXTURES["drone"], preload("res://assets/projectiles/drone_b.png")]
 static var _volumes := {}
+static var _energy_mesh: SphereMesh
 
 
-static func select(style: String, source: String, status: String) -> String:
-	if source == "mines":
-		return "mine"
-	if source == "scatter":
-		return "pellet"
-	if style != "orb" and TEXTURES.has(style):
-		return style
-	match status:
-		"burn": return "fire"
-		"poison", "toxin": return "acid"
-		"chill", "freeze": return "ice"
-		_: return "bolt"
+static func select(style: String) -> String:
+	return style if TEXTURES.has(style) or style in ["ball", "wave"] else "bolt"
 
 
 static func texture(key: String) -> Texture2D:
@@ -57,25 +28,11 @@ static func texture(key: String) -> Texture2D:
 
 
 static func world_size(key: String) -> Vector2:
-	var size := texture(key).get_size()
-	return size * (float(WORLD_SPAN.get(key, 0.6)) / maxf(size.x, size.y))
+	return texture(key).get_size() * (ORIGINAL_TEXEL / 2.0)
 
 
 static func spirit_pose(age: float, phase: float, lunging: bool) -> int:
-	if age < 0.24:
-		return SPIRIT_BIRTH[mini(2, floori(age / 0.08))]
-	var sequence := SPIRIT_LUNGE if lunging else SPIRIT_GLIDE
-	var fps := 17.0 if lunging else 11.0
-	return sequence[posmod(floori((age - 0.24) * fps + phase), sequence.size())]
-
-
-static func spirit_frame(frame: int) -> Texture2D:
-	if _spirit_frames.is_empty():
-		var atlas := SPIRIT_ATLAS.get_image()
-		for index in 12:
-			var start := Vector2i(index % 4, index / 4) * SPIRIT_FRAME_SIZE
-			_spirit_frames.append(ImageTexture.create_from_image(atlas.get_region(Rect2i(start, SPIRIT_FRAME_SIZE))))
-	return _spirit_frames[frame]
+	return posmod(floori(age * (14.0 if lunging else 8.0) + phase), SPIRIT_FRAMES.size())
 
 
 ## Объёмная оболочка по силуэту текстуры. Меш переиспользуется всеми
@@ -88,10 +45,8 @@ static func volume(key: String, art: Texture2D = null) -> ArrayMesh:
 		return _volumes[cache_key]
 	var image := art.get_image()
 	var extent := world_size(key)
-	if key == "spirit" and art.get_size() == Vector2(SPIRIT_FRAME_SIZE):
-		extent = Vector2(SPIRIT_FRAME_SIZE) * (float(WORLD_SPAN["spirit"]) / SPIRIT_FRAME_SIZE.x)
-	var depth: float = {"spirit": 0.85, "wave": 0.34, "shuriken": 0.28, "blade": 0.28,
-		"ball": 1.0, "arrow": 0.43, "mine": 0.62, "drone": 0.67}.get(key, 0.74)
+	var depth: float = {"spirit": 0.85, "shuriken": 0.28, "blade": 0.28,
+		"arrow": 0.43, "drone": 0.67}.get(key, 0.74)
 	var silhouette := image.get_used_rect()
 	var rings: Array[PackedVector3Array] = []
 	var normals: Array[PackedVector3Array] = []
@@ -173,5 +128,27 @@ static func volume_instance(key: String, art: Texture2D = null) -> MeshInstance3
 	var body := MeshInstance3D.new()
 	body.mesh = volume(key, art)
 	body.material_override = volume_material(art)
+	body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return body
+
+
+static func update_volume(body: MeshInstance3D, key: String, art: Texture2D) -> void:
+	var mat := body.material_override as StandardMaterial3D
+	if mat.albedo_texture != art:
+		body.mesh = volume(key, art)
+		mat.albedo_texture = art
+		mat.emission_texture = art
+
+
+static func energy_sphere() -> MeshInstance3D:
+	if _energy_mesh == null:
+		_energy_mesh = SphereMesh.new()
+		_energy_mesh.radial_segments = 16
+		_energy_mesh.rings = 8
+	var body := MeshInstance3D.new()
+	body.mesh = _energy_mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	body.material_override = mat
 	body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return body

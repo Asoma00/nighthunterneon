@@ -1485,6 +1485,7 @@ func _animate(delta: float) -> void:
 		drone.position = ground + Vector2(0, -hover)
 		var model: MeshInstance3D = drone.get_meta("volume")
 		model.visible = drone.visible and not _dead
+		ProjectileArt.update_volume(model, "drone", ProjectileArt.DRONE_FRAMES[int(_anim_t * 8.0) % 2])
 		model.position = main.to3d(position + ground, hover / Pixel.STAND * 0.01)
 		model.rotation = Vector3(0.6 + sin(a * 2.0) * 0.24, -a, sin(a) * 0.13)
 		var glow: Sprite2D = drone.get_child(0)
@@ -2339,32 +2340,19 @@ const VORTEX_SHADER := """
 shader_type spatial;
 render_mode unshaded, blend_mix, depth_draw_never, cull_disabled, shadows_disabled;
 uniform vec4 col : source_color = vec4(0.7, 0.35, 1.0, 1.0);
-uniform sampler2D artwork : source_color, filter_linear, repeat_disable;
 uniform float t = 0.0;
 uniform float fade = 1.0;
-vec2 whirl(vec2 p, float angle) {
-	float s = sin(angle);
-	float c = cos(angle);
-	return vec2(c * p.x - s * p.y, s * p.x + c * p.y);
-}
 
 void fragment() {
 	vec2 d = UV - 0.5;
 	float r = length(d) * 2.0;
 	if (r > 1.0) discard;
 	float a = atan(d.y, d.x);
-	float inner = 1.0 - smoothstep(0.38, 0.88, r);
-	float twist = inner * (t * 3.2 + r * 4.0);
-	vec4 sprite = texture(artwork, 0.5 + whirl(d, twist));
-	float arm = pow(0.5 + 0.5 * cos(a * 3.0 + r * 15.0 - t * 7.0), 6.0);
-	float inflow = pow(0.5 + 0.5 * cos(r * 33.0 + t * 10.0), 9.0);
-	float field = smoothstep(0.19, 0.34, r) * (1.0 - smoothstep(0.81, 1.0, r));
-	float energy = arm * field * (0.23 + 0.77 * inflow);
-	float core = 1.0 - smoothstep(0.1, 0.33, r);
-	vec3 tint = mix(col.rgb, vec3(1.0), 0.56);
-	ALBEDO = sprite.rgb * tint * (0.88 + 0.22 * cos(t * 5.0));
-	EMISSION = mix(col.rgb, vec3(0.64, 0.92, 1.0), inflow * 0.64) * energy * 1.55;
-	ALPHA = clamp(max(sprite.a, core * 0.66) + energy * 0.46, 0.0, 1.0) * fade;
+	float arms = 0.5 + 0.5 * sin(a * 3.0 + r * 9.0 - t * 7.0);
+	float rim = (1.0 - smoothstep(0.85, 1.0, r)) * smoothstep(0.55, 0.95, r);
+	float core = 1.0 - smoothstep(0.0, 0.3, r);
+	ALBEDO = mix(col.rgb * 2.2 * arms, vec3(0.0), core) + vec3(1.0, 0.55, 0.9) * rim * 0.8;
+	ALPHA = clamp((arms * 0.55 * (1.0 - smoothstep(0.2, 1.0, r)) + core * 0.95 + rim * 0.6) * fade, 0.0, 1.0);
 }
 """
 static var _vortex_sh: Shader
@@ -2386,7 +2374,6 @@ func _vortex_fx(center: Vector2, r: float):
 	var m := ShaderMaterial.new()
 	m.shader = _vortex_sh
 	m.set_shader_parameter("col", col)
-	m.set_shader_parameter("artwork", ProjectileArt.texture("vortex"))
 	m.render_priority = 2
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

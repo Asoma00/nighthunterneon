@@ -90,12 +90,10 @@ func _ready() -> void:
 
 	_life0 = life
 	_core = Sprite2D.new()
-	if not Art.TEXTURES.has(art_key):
-		art_key = Art.select(style, source, status)
+	art_key = Art.select(style)
 	if style == "spirit":
 		_spirit_phase = float(get_instance_id() % 13) * 0.31
-		_core.texture = Art.spirit_frame(Art.SPIRIT_BIRTH[0])
-	else:
+	if style not in ["ball", "wave"]:
 		_core.texture = Art.texture(art_key)
 	_core.material = Pixel.mat_unshaded()
 	_core.scale = Vector2(Pixel.PX, Pixel.PX * Pixel.STAND) * 0.9
@@ -128,8 +126,6 @@ func _billboard_mat(t: Texture2D, additive: bool, nearest: bool) -> StandardMate
 
 func _build_3d() -> void:
 	_height = {"orb": 0.6, "shard": 0.45, "wave": 0.5, "arrow": 0.55, "spirit": 0.7, "ball": 0.6, "shuriken": 0.5, "flask": 0.6}.get(style, 0.6)
-	if art_key == "mine":
-		_height = 0.18
 	_v3 = Node3D.new()
 	main._bill_root.add_child(_v3)
 	_glow3 = MeshInstance3D.new()
@@ -138,11 +134,11 @@ func _build_3d() -> void:
 	_glow3.mesh = gq
 	_glow3.material_override = _billboard_mat(Pixel.glow(), true, false)
 	_v3.add_child(_glow3)
-	if style != "ball":
+	if _core.texture != null:
 		_core3 = Art.volume_instance(art_key, _core.texture)
 		_v3.add_child(_core3)
 	# При толпе снарядов хвосты не рисуем (полёт и урон не меняются)
-	if art_key == "mine" or main.projectiles_node.get_child_count() > 140:
+	if main.projectiles_node.get_child_count() > 140:
 		return
 	_trail3 = MeshInstance3D.new()
 	_trail3.mesh = _trail_im
@@ -166,32 +162,27 @@ func _update_3d() -> void:
 		var phase := _t * 7.0 + _spirit_phase
 		h += sin(phase) * 0.13 + sin(phase * 0.57) * 0.05
 		art_pos += velocity.normalized().orthogonal() * sin(phase * 0.76) * 4.0
-		var frame := Art.spirit_frame(Art.spirit_pose(_t, _spirit_phase, _spirit_near_target))
-		if _core.texture != frame:
-			_core.texture = frame
-			_core3.mesh = Art.volume("spirit", frame)
-			var mat := _core3.material_override as StandardMaterial3D
-			mat.albedo_texture = frame
-			mat.emission_texture = frame
+		Art.update_volume(_core3, "spirit", Art.SPIRIT_FRAMES[Art.spirit_pose(_t, _spirit_phase, _spirit_near_target)])
 		_glow3.scale = Vector3.ONE * (0.88 + 0.15 * sin(phase))
+	elif style == "shuriken":
+		Art.update_volume(_core3, "shuriken", Art.SHURIKEN_FRAMES[int(_t * 18.0) % 2])
 	var p: Vector3 = main.to3d(art_pos, h)
 	_v3.position = p
 	if _core3:
-		if art_key in Art.DIRECTIONAL and velocity.length_squared() > 0.01:
+		if style == "arrow" and velocity.length_squared() > 0.01:
 			var dir := Vector3(velocity.x, 0.0, velocity.y).normalized()
 			var side := Vector3.UP.cross(dir)
 			var up := (Vector3.UP * 0.63 + side * 0.78).normalized()
 			_core3.basis = Basis(dir, up, dir.cross(up))
-			if style == "spirit":
-				_core3.rotate(dir, sin(_t * 8.0 + _spirit_phase) * 0.19)
-		elif art_key == "mine":
-			_core3.basis = Basis(Vector3.RIGHT, Vector3.FORWARD, Vector3.UP)
 		else:
 			var camera := main._cam3d as Camera3D
 			var facing := camera.global_basis.orthonormalized()
-			var pulse := 1.0 + 0.07 * sin(_t * 19.0)
-			var spinning := facing.rotated(facing.z, _t * float(Art.SPIN.get(art_key, 0.0)))
-			_core3.basis = spinning.rotated(facing.y, sin(_t * 9.0) * 0.48).scaled(Vector3.ONE * pulse)
+			var roll := _t * 17.0 if style == "shuriken" else 0.0
+			var tilt := sin(_t * 8.0 + _spirit_phase) * 0.18 if style == "spirit" else 0.0
+			var pulse := 1.0 + 0.06 * sin(_t * 19.0)
+			if style == "spirit":
+				pulse *= lerpf(0.45, 1.0, clampf(_t * 9.0, 0.0, 1.0))
+			_core3.basis = facing.rotated(facing.z, roll).rotated(facing.y, tilt).scaled(Vector3.ONE * pulse)
 	if _trail3 == null:
 		return
 	_trail_pts.append(p)
@@ -213,7 +204,8 @@ func _update_3d() -> void:
 
 
 func _spirit_dissolve(impact: bool) -> void:
-	var trace := Art.volume_instance("spirit", Art.spirit_frame(Art.SPIRIT_FLASH if impact else Art.SPIRIT_BREAKUP))
+	var last_pose := (_core3.material_override as StandardMaterial3D).albedo_texture
+	var trace := Art.volume_instance("spirit", last_pose)
 	var mat := trace.material_override as StandardMaterial3D
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.albedo_color = color.lerp(Color.WHITE, 0.72)
@@ -222,19 +214,14 @@ func _spirit_dissolve(impact: bool) -> void:
 	var tween := trace.create_tween()
 	if impact:
 		tween.tween_interval(0.06)
-		tween.tween_callback(func():
-			var frame := Art.spirit_frame(Art.SPIRIT_BREAKUP)
-			trace.mesh = Art.volume("spirit", frame)
-			mat.albedo_texture = frame
-			mat.emission_texture = frame
-		)
 	tween.tween_property(mat, "albedo_color:a", 0.0, 0.17)
+	tween.parallel().tween_property(mat, "emission_energy_multiplier", 0.0, 0.17)
 	tween.parallel().tween_property(trace, "scale", trace.scale * 1.12, 0.17)
 	tween.tween_callback(trace.queue_free)
 
 
 func _build_ball() -> void:
-	_ball_core = Art.volume_instance("ball")
+	_ball_core = Art.energy_sphere()
 	_v3.add_child(_ball_core)
 	# Кольца и дуги рисуются одной лентой каждый кадр
 	_ball_fx = MeshInstance3D.new()
@@ -310,9 +297,8 @@ func _update_ball(delta: float) -> void:
 	var heat := clampf(grow - 1.0, 0.0, 1.0)
 	var col := color.lerp(Color(1.0, 0.65, 0.3), heat)
 	var hot := 1.0 + _hot * 2.0
-	_ball_core.scale = Vector3.ONE * (0.9 + 0.25 * sin(_t * 31.0)) * grow * (1.0 + _hot)
-	_ball_core.rotation = Vector3(0.35 + sin(_t * 3.0) * 0.22, _t * 1.7, _t * 0.62)
-	(_ball_core.material_override as StandardMaterial3D).albedo_color = col.lerp(Color.WHITE, 0.68)
+	_ball_core.scale = Vector3.ONE * (0.22 + 0.06 * flick) * grow * (1.0 + _hot)
+	(_ball_core.material_override as StandardMaterial3D).albedo_color = col.lerp(Color.WHITE, 0.74) * 1.6
 	(_glow3.material_override as StandardMaterial3D).albedo_color = Color(col, 0.55 * flick)
 	_glow3.scale = Vector3.ONE * grow * (1.0 + 0.1 * sin(_t * 9.0) + _hot * 0.5)
 	_ball_light.energy = (0.55 + 0.3 * flick) * hot

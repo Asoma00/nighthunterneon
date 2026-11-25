@@ -272,15 +272,14 @@ static func frames(key: String, cache_key := "") -> Dictionary:
 		bundled = _from_actor_atlas(path, spec)
 		if not bundled.is_empty():
 			return bundled
-	var w: int = spec[0]
-	var h: int = spec[1]
 	var count: int = spec[2]
 	var result := _from_disk(key, cache_key)
 	if not result.is_empty():
 		return result
-	result = _empty_result(spec)
+	result = _raster_result(key, spec)
+	var size := Vector2i(result["size"])
 	var disk := _disk_path(cache_key)
-	var save_atlas: Image = Image.create(w * count, h * 3, false, Image.FORMAT_RGBA8) if disk != "" else null
+	var save_atlas: Image = Image.create(size.x * count, size.y * 3, false, Image.FORMAT_RGBA8) if disk != "" else null
 	for f in count:
 		_render_frame(key, spec, f, result, save_atlas)
 	_cache[cache_key] = result
@@ -298,9 +297,7 @@ static func _spec(key: String) -> Array:
 		base = str(Data.ENEMIES.get(base, {}).get("sprite", base))
 	if SPECS.has(base):
 		return SPECS[base]
-	if key.begins_with("citizen_") or key.begins_with("npc_"):
-		return [48, 60, CITIZEN_FRAMES, true, 0.5]
-	if key.begins_with("villager_") and not ActorAtlases.path_for(key).is_empty():
+	if key.begins_with("citizen_"):
 		return [48, 60, CITIZEN_FRAMES, true, 0.5]
 	return [18, 24, 8, true]
 
@@ -320,24 +317,18 @@ static func _empty_result(spec: Array) -> Dictionary:
 	return {"base": [], "emit": [], "flash": [], "size": Vector2(spec[0], spec[1]), "k": float(spec[4]) if spec.size() > 4 else 1.0}
 
 
-static func _hd_result(spec: Array, size: Vector2i, path: String, atlas: Image) -> Dictionary:
+static func _hd_result(spec: Array) -> Dictionary:
 	var result := _empty_result(spec)
-	result["size"] = Vector2(size)
+	result["size"] *= ActorAtlases.RESOLUTION
 	result["k"] /= ActorAtlases.RESOLUTION
 	result["resolution"] = ActorAtlases.RESOLUTION
-	if int(spec[2]) > 1:
-		result["subframes"] = 2
-	# Пятьдесят видимых пикселей взрослого жителя в 0.15.50 при масштабе 0.5.
-	var stature := 0.0
-	var key := base_key(path.get_file().trim_suffix(".webp.bytes"))
-	match int(spec[2]):
-		19: stature = 25.0
-		35: stature = {"bram": 23.5, "orm": 30.0}.get(key, 27.5)
-	if stature > 0.0:
-		var standing := ActorAtlases.frame_image(atlas, size, 0, 0).get_used_rect()
-		if standing.size.y > 0:
-			result["k"] = stature / standing.size.y
 	return result
+
+
+static func _raster_result(key: String, spec: Array) -> Dictionary:
+	if key.begins_with("citizen_") or key.begins_with("villager_") or base_key(key) in BOSS_KEYS or base_key(key) in HERO_KEYS:
+		return _hd_result(spec)
+	return _empty_result(spec)
 
 
 static func _cached_actor(key: String) -> Dictionary:
@@ -359,23 +350,18 @@ static func _cache_actor(key: String, result: Dictionary, byte_count: int) -> vo
 
 
 static func _from_actor_atlas(path: String, spec: Array) -> Dictionary:
-	var size := ActorAtlases.frame_size(Vector2i(spec[0], spec[1]), spec[2])
+	var size := Vector2i(spec[0], spec[1]) * ActorAtlases.RESOLUTION
 	var atlas := ActorAtlases.read_atlas(path, size, spec[2])
 	if atlas == null:
 		return {}
-	var result := _hd_result(spec, size, path, atlas)
-	var textures := {}
-	for column in ActorAtlases.FRAME_COLUMNS[spec[2]]:
-		if not textures.has(column):
-			var layers: Array[ImageTexture] = []
-			for row in ActorAtlases.LAYERS.size():
-				var texture := tex(ActorAtlases.frame_image(atlas, size, column, row))
-				texture.set_meta("icon2x", true)
-				layers.append(texture)
-			textures[column] = layers
+	var result := _hd_result(spec)
+	var count: int = ActorAtlases.FRAME_COUNTS[spec[2]]
+	for column in count:
 		for row in ActorAtlases.LAYERS.size():
-			result[ActorAtlases.LAYERS[row]].append(textures[column][row])
-	_cache_actor(path, result, textures.size() * size.x * size.y * ActorAtlases.LAYERS.size() * 4)
+			var texture := tex(ActorAtlases.frame_image(atlas, size, column, row))
+			texture.set_meta("icon2x", true)
+			result[ActorAtlases.LAYERS[row]].append(texture)
+	_cache_actor(path, result, count * size.x * size.y * ActorAtlases.LAYERS.size() * 4)
 	return result
 
 
@@ -384,16 +370,15 @@ static func _from_disk(key: String, cache_key: String) -> Dictionary:
 	if disk == "" or not FileAccess.file_exists(disk):
 		return {}
 	var spec := _spec(key)
-	var w: int = spec[0]
-	var h: int = spec[1]
+	var result := _raster_result(key, spec)
+	var size := Vector2i(result["size"])
 	var count: int = spec[2]
 	var atlas := Image.load_from_file(disk)
-	if atlas == null or atlas.get_width() != w * count or atlas.get_height() != h * 3:
+	if atlas == null or atlas.get_width() != size.x * count or atlas.get_height() != size.y * 3:
 		return {}
-	var result := _empty_result(spec)
 	for f in count:
 		for row in 3:
-			var fr_img := atlas.get_region(Rect2i(f * w, row * h, w, h))
+			var fr_img := atlas.get_region(Rect2i(f * size.x, row * size.y, size.x, size.y))
 			result[["base", "emit", "flash"][row]].append(ImageTexture.create_from_image(fr_img))
 	_cache[cache_key] = result
 	return result
@@ -420,6 +405,10 @@ static func _render_frame(key: String, spec: Array, f: int, result: Dictionary, 
 		shade(base)
 	if not key.begins_with("puddle") and not key.begins_with("decal_"):
 		outline(base, Color(0.08, 0.2, 0.3) if key == "wraith" else OUT)
+	if int(result.get("resolution", 1)) > 1:
+		var size := Vector2i(result["size"])
+		base.resize(size.x, size.y, Image.INTERPOLATE_NEAREST)
+		emit.resize(size.x, size.y, Image.INTERPOLATE_NEAREST)
 	_store_frame(f, result, save_atlas, [base, emit, silhouette(base)])
 
 
@@ -432,14 +421,13 @@ static func _store_frame(f: int, result: Dictionary, save_atlas: Image, layers: 
 
 
 ## Снаряжение рисуется поверх PNG; тело, оружие и поза берутся из атласа.
-static func _render_equipped_frame(key: String, spec: Array, f: int, result: Dictionary, save_atlas: Image, source: Image) -> void:
+static func _render_equipped_frame(key: String, f: int, result: Dictionary, save_atlas: Image, source: Image) -> void:
 	var size := Vector2i(result["size"])
-	var column: int = ActorAtlases.FRAME_COLUMNS[spec[2]][f]
-	var body := ActorAtlases.frame_image(source, size, column, 0)
-	var emit := ActorAtlases.frame_image(source, size, column, 1)
-	var pose := f / int(result["subframes"])
+	var body := ActorAtlases.frame_image(source, size, f, 0)
+	var emit := ActorAtlases.frame_image(source, size, f, 1)
+	var pose := f
 	if pose >= HERO_ANIM["death"][0] and pose < HERO_ANIM["dash"][0]:
-		_store_frame(f, result, save_atlas, [body, emit, ActorAtlases.frame_image(source, size, column, 2)])
+		_store_frame(f, result, save_atlas, [body, emit, ActorAtlases.frame_image(source, size, f, 2)])
 		return
 	_attachment_scale = HS * ActorAtlases.RESOLUTION
 	_anc = _equipped_anchors(key, body.get_used_rect(), size.x, pose)
@@ -500,7 +488,7 @@ static func hero_frames_async(key: String, mods: Dictionary) -> Dictionary:
 		return _cache[ck]
 	if not _jobs.has(ck):
 		var spec := _spec(key)
-		var size := ActorAtlases.frame_size(Vector2i(spec[0], spec[1]), spec[2])
+		var size := Vector2i(spec[0], spec[1]) * ActorAtlases.RESOLUTION
 		var source := ActorAtlases.read_atlas(path, size, spec[2])
 		var disk := ""
 		if source == null:
@@ -508,10 +496,11 @@ static func hero_frames_async(key: String, mods: Dictionary) -> Dictionary:
 			if not ready.is_empty():
 				return ready
 			disk = _disk_path(ck)
-		var result := _hd_result(spec, size, path, source) if source != null else _empty_result(spec)
-		var count: int = ActorAtlases.FRAME_COLUMNS[spec[2]].size() if source != null else spec[2]
+		var result := _hd_result(spec) if source != null else _raster_result(key, spec)
+		var count: int = ActorAtlases.FRAME_COUNTS[spec[2]] if source != null else spec[2]
+		var frame_size := Vector2i(result["size"])
 		_jobs[ck] = {"key": key, "mods": mods.duplicate(), "f": 0, "spec": spec, "res": result, "count": count,
-			"atlas": Image.create(int(spec[0]) * int(spec[2]), int(spec[1]) * 3, false, Image.FORMAT_RGBA8) if disk != "" else null,
+			"atlas": Image.create(frame_size.x * count, frame_size.y * 3, false, Image.FORMAT_RGBA8) if disk != "" else null,
 			"disk": disk, "source": source}
 	return {}
 
@@ -526,7 +515,7 @@ static func pump(budget_usec := 3000) -> void:
 		_mods = j["mods"]
 		while Time.get_ticks_usec() - t0 < budget_usec and int(j["f"]) < int(j["count"]):
 			if j["source"] != null:
-				_render_equipped_frame(j["key"], j["spec"], int(j["f"]), j["res"], j["atlas"], j["source"])
+				_render_equipped_frame(j["key"], int(j["f"]), j["res"], j["atlas"], j["source"])
 			else:
 				_render_frame(j["key"], j["spec"], int(j["f"]), j["res"], j["atlas"])
 			j["f"] = int(j["f"]) + 1
@@ -1789,7 +1778,7 @@ static func portrait(sprite: String, dark := false) -> ImageTexture:
 	var ei: Image
 	var spec := _spec(sprite)
 	var atlas_path := ActorAtlases.path_for(sprite)
-	var size := ActorAtlases.frame_size(Vector2i(spec[0], spec[1]), spec[2])
+	var size := Vector2i(spec[0], spec[1]) * ActorAtlases.RESOLUTION
 	var atlas := ActorAtlases.read_atlas(atlas_path, size, spec[2])
 	if atlas != null:
 		bi = ActorAtlases.frame_image(atlas, size, 0, 0)
